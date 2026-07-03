@@ -1,0 +1,24 @@
+{
+  "originHash" : "0b6f7b38a78c43b20382c9355d2b56a576acdfc35f830435c3c0ebc9216e5bc2",
+  "pins" : [
+    {
+      "identity" : "potassiumchannel",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:OpenCow42/potassiumChannel.git",
+      "state" : {
+        "revision" : "0fb38821a23ebde7de6051f298637a192ab8690b",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "sqlite.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stephencelis/SQLite.swift.git",
+      "state" : {
+        "revision" : "964c300fb0736699ce945c9edb56ecd62eba27a3",
+        "version" : "0.16.0"
+      }
+    }
+  ],
+  "version" : 3
+}

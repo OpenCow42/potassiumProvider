@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */; };
+		C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C02FF8491700CB8B7E /* PotassiumKDrive */; };
+		C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C22FF8491700CB8B7E /* PotassiumOAuth */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		C09842942FF847B000CB8B7E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +58,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */,
+				C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */,
+				C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +121,9 @@
 			);
 			name = potassiumProvider;
 			packageProductDependencies = (
+				C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */,
+				C09842C02FF8491700CB8B7E /* PotassiumKDrive */,
+				C09842C22FF8491700CB8B7E /* PotassiumOAuth */,
 			);
 			productName = potassiumProvider;
 			productReference = C09842862FF847AD00CB8B7E /* potassiumProvider.app */;
@@ -195,6 +207,10 @@
 			);
 			mainGroup = C098427D2FF847AD00CB8B7E;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */,
+				C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C09842872FF847AD00CB8B7E /* Products */;
 			projectDirPath = "";
@@ -615,6 +631,43 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stephencelis/SQLite.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.16.0;
+			};
+		};
+		C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "git@github.com:OpenCow42/potassiumChannel.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;
+			productName = PotassiumChannelCore;
+		};
+		C09842C02FF8491700CB8B7E /* PotassiumKDrive */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;
+			productName = PotassiumKDrive;
+		};
+		C09842C22FF8491700CB8B7E /* PotassiumOAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;
+			productName = PotassiumOAuth;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C098427E2FF847AD00CB8B7E /* Project object */;
 }
