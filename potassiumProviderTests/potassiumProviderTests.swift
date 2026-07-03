@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import UniformTypeIdentifiers
+@testable import potassiumProvider
 import PotassiumProviderCore
 
 struct PotassiumProviderCoreTests {
@@ -115,6 +116,73 @@ struct PotassiumProviderCoreTests {
         #expect(changes.deletedItemIDs == [2])
     }
 
+    @MainActor
+    @Test func appModelStoresManualTokenAndLoadsDrives() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let tokenStore = InMemoryOAuthTokenStore()
+        let drive = KDriveDriveSummary(
+            id: 42,
+            name: "Work Drive",
+            accountID: 100,
+            role: "admin",
+            status: "ok",
+            isInMaintenance: false
+        )
+        let model = PotassiumProviderAppModel(
+            domainStore: domainStore,
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            fileProviderFactory: { token in
+                #expect(token == "manual-token")
+                return FakeKDriveFileProvider(drives: [drive])
+            }
+        )
+
+        model.manualAccessToken = " manual-token "
+
+        await model.saveManualAccessToken()
+
+        #expect(model.isConnected)
+        #expect(model.manualAccessToken.isEmpty)
+        #expect(model.drives == [drive])
+        #expect(model.selectedDriveID == drive.id)
+        #expect(tokenStore.loadToken()?.accessToken == "manual-token")
+    }
+
+    @MainActor
+    @Test func appModelAddsAndRemovesDomainConfigurations() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let model = PotassiumProviderAppModel(
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
+        )
+
+        model.manualDriveID = " 42 "
+        model.manualDriveName = "Work Drive"
+        model.domainDisplayName = "Team Files"
+
+        model.addDomain()
+
+        let domain = try #require(model.domains.first)
+        #expect(domain.displayName == "Team Files")
+        #expect(domain.driveID == 42)
+        #expect(domain.driveName == "Work Drive")
+        #expect(try domainStore.allConfigurations().count == 1)
+
+        model.removeDomain(domain)
+
+        #expect(model.domains.isEmpty)
+        #expect(try domainStore.allConfigurations().isEmpty)
+    }
+
     private func makeItem(
         id: Int,
         name: String,
@@ -136,4 +204,85 @@ struct PotassiumProviderCoreTests {
             updatedAt: Date(timeIntervalSince1970: 300)
         )
     }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("potassium-provider-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
+@MainActor
+private final class FakeKDriveOAuthAuthenticator: KDriveOAuthAuthenticating {
+    private let token: KDriveOAuthToken
+
+    init(token: KDriveOAuthToken = KDriveOAuthToken(
+        accessToken: "oauth-token",
+        tokenType: "Bearer",
+        refreshToken: nil,
+        scope: "drive",
+        idToken: nil,
+        expiresAt: nil
+    )) {
+        self.token = token
+    }
+
+    func authenticate() async throws -> KDriveOAuthToken {
+        token
+    }
+}
+
+private struct FakeKDriveFileProvider: KDriveFileProviding {
+    let drives: [KDriveDriveSummary]
+
+    func listDrives() async throws -> [KDriveDriveSummary] {
+        drives
+    }
+
+    func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func downloadFile(driveID: Int, fileID: Int) async throws -> Data {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func renameItem(driveID: Int, fileID: Int, name: String) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func trashItem(driveID: Int, fileID: Int) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func deleteTrashedItem(driveID: Int, fileID: Int) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+}
+
+private enum FakeKDriveFileProviderError: Error {
+    case unimplemented
 }

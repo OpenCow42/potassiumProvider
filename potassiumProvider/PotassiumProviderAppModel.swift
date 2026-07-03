@@ -1,0 +1,279 @@
+import Combine
+import Foundation
+import PotassiumProviderCore
+
+@MainActor
+final class PotassiumProviderAppModel: ObservableObject {
+    @Published private(set) var token: KDriveOAuthToken?
+    @Published private(set) var drives: [KDriveDriveSummary] = []
+    @Published private(set) var domains: [ProviderDomainConfiguration] = []
+    @Published private(set) var isConnecting = false
+    @Published private(set) var isLoadingDrives = false
+    @Published private(set) var statusMessage: String?
+    @Published var errorMessage: String?
+    @Published var manualAccessToken = ""
+    @Published var selectedDriveID: Int?
+    @Published var manualDriveID = ""
+    @Published var manualDriveName = ""
+    @Published var domainDisplayName = ""
+
+    private let domainStore: any DomainConfigurationStoring
+    private let tokenStore: any OAuthTokenStoring
+    private let oauthAuthenticator: any KDriveOAuthAuthenticating
+    private let fileProviderFactory: (String) -> any KDriveFileProviding
+
+    init(
+        domainStore: (any DomainConfigurationStoring)? = nil,
+        tokenStore: (any OAuthTokenStoring)? = nil,
+        oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
+        fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
+    ) {
+        self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
+        self.tokenStore = tokenStore ?? KeychainOAuthTokenStore()
+        self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
+        self.fileProviderFactory = fileProviderFactory
+        reloadStoredState()
+    }
+
+    var isConnected: Bool {
+        token != nil
+    }
+
+    var canLoadDrives: Bool {
+        token != nil && isLoadingDrives == false
+    }
+
+    var canAddDomain: Bool {
+        resolvedDriveDraft() != nil
+    }
+
+    var selectedDrive: KDriveDriveSummary? {
+        guard let selectedDriveID else { return nil }
+        return drives.first { $0.id == selectedDriveID }
+    }
+
+    func reloadStoredState() {
+        do {
+            token = try tokenStore.loadToken()
+            domains = try domainStore.allConfigurations()
+            errorMessage = nil
+            statusMessage = token == nil ? "Not connected" : "Connected to kDrive."
+        } catch {
+            errorMessage = "Could not load saved provider state: \(error.localizedDescription)"
+        }
+    }
+
+    func connectWithOAuth() async {
+        isConnecting = true
+        errorMessage = nil
+        statusMessage = "Opening Infomaniak login."
+        defer { isConnecting = false }
+
+        do {
+            let token = try await oauthAuthenticator.authenticate()
+            try await saveConnectedToken(token)
+            statusMessage = "Connected. Loading kDrives."
+            await loadDrives()
+        } catch {
+            errorMessage = "Could not connect with Infomaniak: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func saveManualAccessToken() async {
+        let accessToken = manualAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard accessToken.isEmpty == false else {
+            errorMessage = "Enter an access token before saving."
+            statusMessage = nil
+            return
+        }
+
+        let token = KDriveOAuthToken(
+            accessToken: accessToken,
+            tokenType: "Bearer",
+            refreshToken: nil,
+            scope: "drive",
+            idToken: nil,
+            expiresAt: nil
+        )
+
+        do {
+            try await saveConnectedToken(token)
+            manualAccessToken = ""
+            statusMessage = "Access token saved. Loading kDrives."
+            await loadDrives()
+        } catch {
+            errorMessage = "Could not save the access token: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func loadDrives() async {
+        do {
+            let token = try await usableToken()
+            isLoadingDrives = true
+            errorMessage = nil
+            defer { isLoadingDrives = false }
+
+            drives = try await fileProviderFactory(token.accessToken).listDrives()
+            if selectedDriveID == nil || drives.contains(where: { $0.id == selectedDriveID }) == false {
+                selectedDriveID = drives.first?.id
+            }
+            refreshDraftFromSelectedDrive()
+            statusMessage = drives.isEmpty ? "No kDrives returned for this account." : "Loaded \(drives.count) kDrive account."
+        } catch {
+            errorMessage = "Could not load kDrives: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func addDomain() {
+        guard let draft = resolvedDriveDraft() else {
+            errorMessage = "Choose or enter a kDrive before adding a domain."
+            statusMessage = nil
+            return
+        }
+
+        do {
+            let now = Date()
+            let displayName = trimmed(domainDisplayName).nilIfEmpty ?? draft.name
+            let configuration = ProviderDomainConfiguration(
+                displayName: displayName,
+                driveID: draft.id,
+                driveName: draft.name,
+                createdAt: now,
+                updatedAt: now
+            )
+
+            try domainStore.save(configuration)
+            domains = try domainStore.allConfigurations()
+            domainDisplayName = ""
+            statusMessage = "Added \(configuration.displayName)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func removeDomain(_ configuration: ProviderDomainConfiguration) {
+        do {
+            try domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+            domains = try domainStore.allConfigurations()
+            statusMessage = "Removed \(configuration.displayName)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not remove the provider domain: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func disconnect() {
+        do {
+            try tokenStore.deleteToken()
+            token = nil
+            drives = []
+            selectedDriveID = nil
+            manualAccessToken = ""
+            statusMessage = "Disconnected."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not remove the saved token: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    private func saveConnectedToken(_ token: KDriveOAuthToken) async throws {
+        guard token.hasKDriveScope else {
+            throw PotassiumProviderAppModelError.missingDriveScope(token.scopes)
+        }
+        try tokenStore.saveToken(token)
+        self.token = token
+        errorMessage = nil
+    }
+
+    private func usableToken() async throws -> KDriveOAuthToken {
+        var loadedToken = token
+        if loadedToken == nil {
+            loadedToken = try tokenStore.loadToken()
+        }
+
+        guard var token = loadedToken else {
+            throw PotassiumProviderAppModelError.missingToken
+        }
+
+        if token.shouldRefresh() {
+            guard let refreshToken = token.refreshToken else {
+                throw PotassiumProviderAppModelError.expiredToken
+            }
+            token = try await KDriveOAuthClient.refresh(refreshToken: refreshToken)
+            try tokenStore.saveToken(token)
+            self.token = token
+        }
+
+        return token
+    }
+
+    private func refreshDraftFromSelectedDrive() {
+        guard let selectedDrive else { return }
+        manualDriveID = String(selectedDrive.id)
+        manualDriveName = selectedDrive.name
+        if domainDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            domainDisplayName = selectedDrive.name
+        }
+    }
+
+    private func resolvedDriveDraft() -> (id: Int, name: String)? {
+        if let selectedDrive {
+            return (selectedDrive.id, selectedDrive.name)
+        }
+
+        guard let id = Int(trimmed(manualDriveID)), id > 0 else {
+            return nil
+        }
+        let name = trimmed(manualDriveName).nilIfEmpty ?? "kDrive \(id)"
+        return (id, name)
+    }
+
+    private static func makeDefaultDomainStore() -> any DomainConfigurationStoring {
+        if let appGroupStore = try? DomainConfigurationFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier) {
+            return appGroupStore
+        }
+
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first ?? FileManager.default.temporaryDirectory
+        return DomainConfigurationFileStore(
+            directoryURL: applicationSupport
+                .appendingPathComponent("potassiumProvider", isDirectory: true)
+                .appendingPathComponent("DomainConfigurations", isDirectory: true)
+        )
+    }
+
+    private func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
+    case missingToken
+    case expiredToken
+    case missingDriveScope([String])
+
+    var errorDescription: String? {
+        switch self {
+        case .missingToken:
+            return "Connect to kDrive before loading drives."
+        case .expiredToken:
+            return "The saved access token has expired. Reconnect to kDrive."
+        case .missingDriveScope(let scopes):
+            let grantedScopes = scopes.isEmpty ? "none" : scopes.joined(separator: " ")
+            return "Infomaniak granted '\(grantedScopes)', but kDrive access requires the drive or all scope."
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
