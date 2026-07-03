@@ -21,6 +21,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let tokenStore: any OAuthTokenStoring
     private let oauthAuthenticator: any KDriveOAuthAuthenticating
     private let domainRegistrar: any ProviderDomainRegistering
+    private let snapshotStore: (any KDriveSnapshotStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
 
     init(
@@ -28,12 +29,14 @@ final class PotassiumProviderAppModel: ObservableObject {
         tokenStore: (any OAuthTokenStoring)? = nil,
         oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
         domainRegistrar: (any ProviderDomainRegistering)? = nil,
+        snapshotStore: (any KDriveSnapshotStoring)? = nil,
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
     ) {
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
         self.tokenStore = tokenStore ?? KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
         self.domainRegistrar = domainRegistrar ?? FileProviderDomainRegistrar()
+        self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.fileProviderFactory = fileProviderFactory
         reloadStoredState()
     }
@@ -163,6 +166,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     func removeDomain(_ configuration: ProviderDomainConfiguration) async {
         do {
             try await domainRegistrar.removeDomain(for: configuration)
+            try snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
             try domainStore.remove(domainIdentifier: configuration.domainIdentifier)
             domains = try domainStore.allConfigurations()
             statusMessage = "Removed \(configuration.displayName) from Files."
@@ -252,6 +256,10 @@ final class PotassiumProviderAppModel: ObservableObject {
                 .appendingPathComponent("potassiumProvider", isDirectory: true)
                 .appendingPathComponent("DomainConfigurations", isDirectory: true)
         )
+    }
+
+    private static func makeDefaultSnapshotStore() -> (any KDriveSnapshotStoring)? {
+        try? KDriveSnapshotFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
     }
 
     private func trimmed(_ value: String) -> String {

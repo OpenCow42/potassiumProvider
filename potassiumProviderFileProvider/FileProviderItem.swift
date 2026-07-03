@@ -30,9 +30,9 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
         super.init()
     }
 
-    init(remoteItem: KDriveRemoteItem) {
+    init(remoteItem: KDriveRemoteItem, rootFileID: Int = ProviderConstants.defaultRootFileID) {
         self.itemIdentifier = NSFileProviderItemIdentifier(KDriveItemIdentifier.item(remoteItem.id).rawValue)
-        self.parentItemIdentifier = remoteItem.parentID == ProviderConstants.defaultRootFileID
+        self.parentItemIdentifier = remoteItem.parentID == rootFileID
             ? .rootContainer
             : NSFileProviderItemIdentifier(KDriveItemIdentifier.item(remoteItem.parentID).rawValue)
         self.filename = remoteItem.name

@@ -117,9 +117,13 @@ public enum KDriveItemIdentifier: Equatable, Hashable, Sendable {
     }
 
     public var fileID: Int? {
+        fileID(rootFileID: ProviderConstants.defaultRootFileID)
+    }
+
+    public func fileID(rootFileID: Int) -> Int? {
         switch self {
         case .root:
-            return ProviderConstants.defaultRootFileID
+            return rootFileID
         case .trash:
             return nil
         case .item(let id):

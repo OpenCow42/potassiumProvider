@@ -31,6 +31,26 @@ struct PotassiumProviderCoreTests {
         #expect(try store.allConfigurations().isEmpty)
     }
 
+    @Test func snapshotStorePersistsAndRemovesDomainSnapshots() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = KDriveSnapshotFileStore(directoryURL: directory)
+        let rootSnapshot = KDriveSnapshot(anchor: "root-anchor", items: [makeItem(id: 1, name: "Root.txt")])
+        let trashSnapshot = KDriveSnapshot(anchor: "trash-anchor", items: [makeItem(id: 2, name: "Trash.txt")])
+
+        try store.save(rootSnapshot, domainIdentifier: "domain/1", containerIdentifier: "root")
+        try store.save(trashSnapshot, domainIdentifier: "domain/1", containerIdentifier: "trash")
+
+        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == rootSnapshot)
+        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == trashSnapshot)
+
+        try store.removeSnapshots(domainIdentifier: "domain/1")
+
+        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
+        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
+    }
+
     @Test func oauthAuthorizationRequestContainsPkceStateAndScopes() throws {
         let request = try KDriveOAuthClient.makeAuthorizationRequest(
             configuration: KDriveOAuthConfiguration(scopes: ["accounts", "drive"]),
@@ -85,6 +105,7 @@ struct PotassiumProviderCoreTests {
         #expect(try KDriveItemIdentifier(rawValue: "123") == .item(123))
         #expect(KDriveItemIdentifier.item(456).rawValue == "456")
         #expect(KDriveItemIdentifier.root.fileID == ProviderConstants.defaultRootFileID)
+        #expect(KDriveItemIdentifier.root.fileID(rootFileID: 999) == 999)
         #expect(throws: KDriveItemIdentifierError.invalid("not-a-number")) {
             try KDriveItemIdentifier(rawValue: "not-a-number")
         }
@@ -159,11 +180,13 @@ struct PotassiumProviderCoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let snapshotStore = KDriveSnapshotFileStore(directoryURL: directory.appendingPathComponent("Snapshots", isDirectory: true))
         let model = PotassiumProviderAppModel(
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: NoopProviderDomainRegistrar(),
+            snapshotStore: snapshotStore,
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
 
@@ -178,11 +201,17 @@ struct PotassiumProviderCoreTests {
         #expect(domain.driveID == 42)
         #expect(domain.driveName == "Work Drive")
         #expect(try domainStore.allConfigurations().count == 1)
+        try snapshotStore.save(
+            KDriveSnapshot(anchor: "anchor", items: [makeItem(id: 7, name: "Cached.txt")]),
+            domainIdentifier: domain.domainIdentifier,
+            containerIdentifier: "root"
+        )
 
         await model.removeDomain(domain)
 
         #expect(model.domains.isEmpty)
         #expect(try domainStore.allConfigurations().isEmpty)
+        #expect(try snapshotStore.snapshot(domainIdentifier: domain.domainIdentifier, containerIdentifier: "root") == nil)
     }
 
     private func makeItem(

@@ -6,21 +6,47 @@ struct FileProviderRuntime: Sendable {
     let configuration: ProviderDomainConfiguration
     let token: KDriveOAuthToken
     let remote: any KDriveFileProviding
+    let snapshotStore: any KDriveSnapshotStoring
 
-    init(domain: NSFileProviderDomain) throws {
+    private init(configuration: ProviderDomainConfiguration, token: KDriveOAuthToken, snapshotStore: any KDriveSnapshotStoring) {
+        self.configuration = configuration
+        self.token = token
+        self.remote = PotassiumKDriveService(bearerToken: token.accessToken)
+        self.snapshotStore = snapshotStore
+    }
+
+    static func load(domain: NSFileProviderDomain) async throws -> FileProviderRuntime {
+        let configuration = try loadConfiguration(domain: domain)
+        let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
+        guard var token = try tokenStore.loadToken() else {
+            throw NSFileProviderError(.notAuthenticated)
+        }
+
+        if token.shouldRefresh() {
+            guard let refreshToken = token.refreshToken else {
+                throw NSFileProviderError(.notAuthenticated)
+            }
+            token = try await KDriveOAuthClient.refresh(refreshToken: refreshToken)
+            try tokenStore.saveToken(token)
+        }
+
+        return FileProviderRuntime(
+            configuration: configuration,
+            token: token,
+            snapshotStore: try makeSnapshotStore()
+        )
+    }
+
+    static func loadConfiguration(domain: NSFileProviderDomain) throws -> ProviderDomainConfiguration {
         let configurationStore = try DomainConfigurationFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
         guard let configuration = try configurationStore.configuration(domainIdentifier: domain.identifier.rawValue) else {
             throw NSFileProviderError(.notAuthenticated)
         }
+        return configuration
+    }
 
-        let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
-        guard let token = try tokenStore.loadToken() else {
-            throw NSFileProviderError(.notAuthenticated)
-        }
-
-        self.configuration = configuration
-        self.token = token
-        self.remote = PotassiumKDriveService(bearerToken: token.accessToken)
+    static func makeSnapshotStore() throws -> any KDriveSnapshotStoring {
+        try KDriveSnapshotFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
     }
 }
 
@@ -41,7 +67,16 @@ enum FileProviderPageCodec {
     }
 
     static func anchor() -> NSFileProviderSyncAnchor {
-        NSFileProviderSyncAnchor(Data(Date().timeIntervalSince1970.description.utf8))
+        anchor(from: UUID().uuidString)
+    }
+
+    static func anchor(from value: String) -> NSFileProviderSyncAnchor {
+        NSFileProviderSyncAnchor(Data(value.utf8))
+    }
+
+    static func anchorString(from anchor: NSFileProviderSyncAnchor) -> String? {
+        guard anchor.rawValue.isEmpty == false else { return nil }
+        return String(data: anchor.rawValue, encoding: .utf8)
     }
 }
 

@@ -26,19 +26,19 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             completionHandler(nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
-                let runtime = try FileProviderRuntime(domain: self.domain)
+                let runtime = try await FileProviderRuntime.load(domain: self.domain)
                 if identifier == .rootContainer {
                     completionHandler(FileProviderItem(configuration: runtime.configuration), nil)
                     return
                 }
 
                 let itemIdentifier = try KDriveItemIdentifier(rawValue: identifier.rawValue)
-                guard let fileID = itemIdentifier.fileID else {
+                guard let fileID = itemIdentifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
                 let item = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
-                completionHandler(FileProviderItem(remoteItem: item), nil)
+                completionHandler(FileProviderItem(remoteItem: item, rootFileID: runtime.configuration.rootFileID), nil)
             } catch {
                 completionHandler(nil, providerError(error))
             }
@@ -55,9 +55,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
-                let runtime = try FileProviderRuntime(domain: self.domain)
+                let runtime = try await FileProviderRuntime.load(domain: self.domain)
                 let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
-                guard let fileID = identifier.fileID else {
+                guard let fileID = identifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
@@ -67,7 +67,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     .appendingPathComponent("download-\(UUID().uuidString)")
                     .appendingPathExtension((item.name as NSString).pathExtension)
                 try data.write(to: temporaryURL, options: [.atomic])
-                completionHandler(temporaryURL, FileProviderItem(remoteItem: item), nil)
+                completionHandler(temporaryURL, FileProviderItem(remoteItem: item, rootFileID: runtime.configuration.rootFileID), nil)
             } catch {
                 completionHandler(nil, nil, providerError(error))
             }
@@ -86,7 +86,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
-                let runtime = try FileProviderRuntime(domain: self.domain)
+                let runtime = try await FileProviderRuntime.load(domain: self.domain)
                 let parentID = try self.fileID(forParentIdentifier: itemTemplate.parentItemIdentifier, runtime: runtime)
                 let createdItem: KDriveRemoteItem
 
@@ -107,7 +107,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                 }
 
-                completionHandler(FileProviderItem(remoteItem: createdItem), [], false, nil)
+                completionHandler(FileProviderItem(remoteItem: createdItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
             } catch {
                 completionHandler(nil, [], false, providerError(error))
             }
@@ -127,9 +127,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
-                let runtime = try FileProviderRuntime(domain: self.domain)
+                let runtime = try await FileProviderRuntime.load(domain: self.domain)
                 let identifier = try KDriveItemIdentifier(rawValue: item.itemIdentifier.rawValue)
-                guard let fileID = identifier.fileID else {
+                guard let fileID = identifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
@@ -168,7 +168,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 }
 
-                completionHandler(FileProviderItem(remoteItem: updatedItem), [], false, nil)
+                completionHandler(FileProviderItem(remoteItem: updatedItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
             } catch {
                 completionHandler(nil, [], false, providerError(error))
             }
@@ -186,9 +186,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
-                let runtime = try FileProviderRuntime(domain: self.domain)
+                let runtime = try await FileProviderRuntime.load(domain: self.domain)
                 let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
-                guard let fileID = identifier.fileID else {
+                guard let fileID = identifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
@@ -204,8 +204,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        let runtime = try FileProviderRuntime(domain: domain)
-        return FileProviderEnumerator(containerItemIdentifier: containerItemIdentifier, runtime: runtime)
+        return FileProviderEnumerator(containerItemIdentifier: containerItemIdentifier, domain: domain)
     }
 
     private func fileID(
@@ -218,7 +217,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         guard parentIdentifier != .trashContainer else {
             throw NSFileProviderError(.cannotSynchronize)
         }
-        return try KDriveItemIdentifier(rawValue: parentIdentifier.rawValue).fileID
+        return try KDriveItemIdentifier(rawValue: parentIdentifier.rawValue).fileID(rootFileID: runtime.configuration.rootFileID)
             ?? runtime.configuration.rootFileID
     }
 }
