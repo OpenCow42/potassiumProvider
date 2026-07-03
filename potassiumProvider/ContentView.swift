@@ -108,7 +108,7 @@ struct ContentView: View {
             TextField("Drive name", text: $model.manualDriveName)
 
             Button {
-                model.addDomain()
+                Task { await model.addDomain() }
             } label: {
                 Label("Add Domain", systemImage: "folder.badge.plus")
             }
@@ -124,7 +124,7 @@ struct ContentView: View {
             } else {
                 ForEach(model.domains) { domain in
                     DomainConfigurationRow(configuration: domain) {
-                        model.removeDomain(domain)
+                        Task { await model.removeDomain(domain) }
                     }
                 }
             }

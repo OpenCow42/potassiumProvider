@@ -13,6 +13,8 @@
 		D00000042FF9000000000004 /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = D00001012FF9000000000001 /* PotassiumChannelCore */; };
 		D00000052FF9000000000005 /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = D00001022FF9000000000002 /* PotassiumKDrive */; };
 		D00000062FF9000000000006 /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = D00001032FF9000000000003 /* PotassiumOAuth */; };
+		D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
+		D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */; };
 		C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C02FF8491700CB8B7E /* PotassiumKDrive */; };
 		C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C22FF8491700CB8B7E /* PotassiumOAuth */; };
@@ -27,6 +29,20 @@
 			remoteInfo = PotassiumProviderCore;
 		};
 		D00000122FF9000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D00000612FF9000000000001;
+			remoteInfo = PotassiumProviderCore;
+		};
+		D10000112FFB000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D10000612FFB000000000001;
+			remoteInfo = potassiumProviderFileProvider;
+		};
+		D10000122FFB000000000002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
 			proxyType = 1;
@@ -61,10 +77,22 @@
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D10000212FFB000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		D00000312FF9000000000001 /* PotassiumProviderCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = PotassiumProviderCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = potassiumProviderFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C09842862FF847AD00CB8B7E /* potassiumProvider.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = potassiumProvider.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C09842932FF847B000CB8B7E /* potassiumProviderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = potassiumProviderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C098429D2FF847B000CB8B7E /* potassiumProviderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = potassiumProviderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -89,6 +117,11 @@
 		D00000412FF9000000000001 /* PotassiumProviderCore */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PotassiumProviderCore;
+			sourceTree = "<group>";
+		};
+		D10000412FFB000000000001 /* potassiumProviderFileProvider */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = potassiumProviderFileProvider;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -130,6 +163,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D10000512FFB000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -138,6 +179,7 @@
 			children = (
 				C09842882FF847AD00CB8B7E /* potassiumProvider */,
 				D00000412FF9000000000001 /* PotassiumProviderCore */,
+				D10000412FFB000000000001 /* potassiumProviderFileProvider */,
 				C09842962FF847B000CB8B7E /* potassiumProviderTests */,
 				C09842A02FF847B000CB8B7E /* potassiumProviderUITests */,
 				C09842872FF847AD00CB8B7E /* Products */,
@@ -149,6 +191,7 @@
 			children = (
 				C09842862FF847AD00CB8B7E /* potassiumProvider.app */,
 				D00000312FF9000000000001 /* PotassiumProviderCore.framework */,
+				D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */,
 				C09842932FF847B000CB8B7E /* potassiumProviderTests.xctest */,
 				C098429D2FF847B000CB8B7E /* potassiumProviderUITests.xctest */,
 			);
@@ -176,11 +219,13 @@
 				C09842832FF847AD00CB8B7E /* Frameworks */,
 				C09842842FF847AD00CB8B7E /* Resources */,
 				D00000212FF9000000000001 /* Embed Frameworks */,
+				D10000212FFB000000000001 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				D00000712FF9000000000001 /* PBXTargetDependency */,
+				D10000712FFB000000000001 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C09842882FF847AD00CB8B7E /* potassiumProvider */,
@@ -268,6 +313,29 @@
 			productReference = D00000312FF9000000000001 /* PotassiumProviderCore.framework */;
 			productType = "com.apple.product-type.framework";
 		};
+		D10000612FFB000000000001 /* potassiumProviderFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D10000912FFB000000000001 /* Build configuration list for PBXNativeTarget "potassiumProviderFileProvider" */;
+			buildPhases = (
+				D10000532FFB000000000003 /* Sources */,
+				D10000512FFB000000000001 /* Frameworks */,
+				D10000522FFB000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D10000722FFB000000000002 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D10000412FFB000000000001 /* potassiumProviderFileProvider */,
+			);
+			name = potassiumProviderFileProvider;
+			packageProductDependencies = (
+			);
+			productName = potassiumProviderFileProvider;
+			productReference = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -292,6 +360,9 @@
 					D00000612FF9000000000001 = {
 						CreatedOnToolsVersion = 26.5;
 					};
+					D10000612FFB000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+					};
 				};
 			};
 			buildConfigurationList = C09842812FF847AD00CB8B7E /* Build configuration list for PBXProject "potassiumProvider" */;
@@ -314,6 +385,7 @@
 			targets = (
 				C09842852FF847AD00CB8B7E /* potassiumProvider */,
 				D00000612FF9000000000001 /* PotassiumProviderCore */,
+				D10000612FFB000000000001 /* potassiumProviderFileProvider */,
 				C09842922FF847B000CB8B7E /* potassiumProviderTests */,
 				C098429C2FF847B000CB8B7E /* potassiumProviderUITests */,
 			);
@@ -343,6 +415,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		D00000532FF9000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000522FFB000000000002 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -380,6 +459,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D10000532FFB000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -402,6 +488,16 @@
 			isa = PBXTargetDependency;
 			target = D00000612FF9000000000001 /* PotassiumProviderCore */;
 			targetProxy = D00000122FF9000000000002 /* PBXContainerItemProxy */;
+		};
+		D10000712FFB000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D10000612FFB000000000001 /* potassiumProviderFileProvider */;
+			targetProxy = D10000112FFB000000000001 /* PBXContainerItemProxy */;
+		};
+		D10000722FFB000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D00000612FF9000000000001 /* PotassiumProviderCore */;
+			targetProxy = D10000122FFB000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -527,6 +623,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/potassiumProvider.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
@@ -572,6 +669,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/potassiumProvider.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
@@ -806,6 +904,66 @@
 			};
 			name = Release;
 		};
+		D10000812FFB000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/potassiumProviderFileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2LST6WT4P6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/potassiumProviderFileProviderInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider.FileProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D10000822FFB000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/potassiumProviderFileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2LST6WT4P6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/potassiumProviderFileProviderInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider.FileProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -850,6 +1008,15 @@
 			buildConfigurations = (
 				D00000812FF9000000000001 /* Debug */,
 				D00000822FF9000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D10000912FFB000000000001 /* Build configuration list for PBXNativeTarget "potassiumProviderFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D10000812FFB000000000001 /* Debug */,
+				D10000822FFB000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

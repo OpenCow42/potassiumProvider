@@ -135,6 +135,7 @@ struct PotassiumProviderCoreTests {
             domainStore: domainStore,
             tokenStore: tokenStore,
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
             fileProviderFactory: { token in
                 #expect(token == "manual-token")
                 return FakeKDriveFileProvider(drives: [drive])
@@ -153,7 +154,7 @@ struct PotassiumProviderCoreTests {
     }
 
     @MainActor
-    @Test func appModelAddsAndRemovesDomainConfigurations() throws {
+    @Test func appModelAddsAndRemovesDomainConfigurations() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -162,6 +163,7 @@ struct PotassiumProviderCoreTests {
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
 
@@ -169,7 +171,7 @@ struct PotassiumProviderCoreTests {
         model.manualDriveName = "Work Drive"
         model.domainDisplayName = "Team Files"
 
-        model.addDomain()
+        await model.addDomain()
 
         let domain = try #require(model.domains.first)
         #expect(domain.displayName == "Team Files")
@@ -177,7 +179,7 @@ struct PotassiumProviderCoreTests {
         #expect(domain.driveName == "Work Drive")
         #expect(try domainStore.allConfigurations().count == 1)
 
-        model.removeDomain(domain)
+        await model.removeDomain(domain)
 
         #expect(model.domains.isEmpty)
         #expect(try domainStore.allConfigurations().isEmpty)
@@ -285,4 +287,10 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
 
 private enum FakeKDriveFileProviderError: Error {
     case unimplemented
+}
+
+@MainActor
+private struct NoopProviderDomainRegistrar: ProviderDomainRegistering {
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
 }

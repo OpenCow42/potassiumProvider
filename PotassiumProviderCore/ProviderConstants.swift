@@ -2,6 +2,7 @@ import Foundation
 
 public enum ProviderConstants {
     public static let appGroupIdentifier = "group.net.weavee.potassiumProvider"
+    public static let keychainAccessGroup = "2LST6WT4P6.net.weavee.potassiumProvider"
     public static let keychainService = "net.weavee.potassiumProvider.kDrive"
     public static let keychainAccount = "oauthToken"
     public static let oauthCallbackScheme = "com.infomaniak.drive"

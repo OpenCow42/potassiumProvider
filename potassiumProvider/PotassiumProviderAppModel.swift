@@ -20,17 +20,20 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let domainStore: any DomainConfigurationStoring
     private let tokenStore: any OAuthTokenStoring
     private let oauthAuthenticator: any KDriveOAuthAuthenticating
+    private let domainRegistrar: any ProviderDomainRegistering
     private let fileProviderFactory: (String) -> any KDriveFileProviding
 
     init(
         domainStore: (any DomainConfigurationStoring)? = nil,
         tokenStore: (any OAuthTokenStoring)? = nil,
         oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
+        domainRegistrar: (any ProviderDomainRegistering)? = nil,
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
     ) {
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
-        self.tokenStore = tokenStore ?? KeychainOAuthTokenStore()
+        self.tokenStore = tokenStore ?? KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
+        self.domainRegistrar = domainRegistrar ?? FileProviderDomainRegistrar()
         self.fileProviderFactory = fileProviderFactory
         reloadStoredState()
     }
@@ -127,7 +130,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
-    func addDomain() {
+    func addDomain() async {
         guard let draft = resolvedDriveDraft() else {
             errorMessage = "Choose or enter a kDrive before adding a domain."
             statusMessage = nil
@@ -147,8 +150,9 @@ final class PotassiumProviderAppModel: ObservableObject {
 
             try domainStore.save(configuration)
             domains = try domainStore.allConfigurations()
+            try await domainRegistrar.addDomain(for: configuration)
             domainDisplayName = ""
-            statusMessage = "Added \(configuration.displayName)."
+            statusMessage = "Added \(configuration.displayName) to Files."
             errorMessage = nil
         } catch {
             errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
@@ -156,11 +160,12 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
-    func removeDomain(_ configuration: ProviderDomainConfiguration) {
+    func removeDomain(_ configuration: ProviderDomainConfiguration) async {
         do {
+            try await domainRegistrar.removeDomain(for: configuration)
             try domainStore.remove(domainIdentifier: configuration.domainIdentifier)
             domains = try domainStore.allConfigurations()
-            statusMessage = "Removed \(configuration.displayName)."
+            statusMessage = "Removed \(configuration.displayName) from Files."
             errorMessage = nil
         } catch {
             errorMessage = "Could not remove the provider domain: \(error.localizedDescription)"
