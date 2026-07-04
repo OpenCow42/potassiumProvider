@@ -140,6 +140,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             return
         }
 
+        var savedConfiguration: ProviderDomainConfiguration?
         do {
             let now = Date()
             let displayName = trimmed(domainDisplayName).nilIfEmpty ?? draft.name
@@ -152,12 +153,16 @@ final class PotassiumProviderAppModel: ObservableObject {
             )
 
             try domainStore.save(configuration)
+            savedConfiguration = configuration
             domains = try domainStore.allConfigurations()
             try await domainRegistrar.addDomain(for: configuration)
             domainDisplayName = ""
             statusMessage = "Added \(configuration.displayName) to Files."
             errorMessage = nil
         } catch {
+            if let savedConfiguration {
+                rollbackFailedDomainAddition(savedConfiguration)
+            }
             errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
             statusMessage = nil
         }
@@ -196,6 +201,17 @@ final class PotassiumProviderAppModel: ObservableObject {
         try tokenStore.saveToken(token)
         self.token = token
         errorMessage = nil
+    }
+
+    private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) {
+        try? snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
+        try? domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+
+        if let storedDomains = try? domainStore.allConfigurations() {
+            domains = storedDomains
+        } else {
+            domains.removeAll { $0.domainIdentifier == configuration.domainIdentifier }
+        }
     }
 
     private func usableToken() async throws -> KDriveOAuthToken {

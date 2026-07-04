@@ -230,6 +230,31 @@ struct PotassiumProviderCoreTests {
         #expect(try snapshotStore.snapshot(domainIdentifier: domain.domainIdentifier, containerIdentifier: "root") == nil)
     }
 
+    @MainActor
+    @Test func appModelRollsBackDomainConfigurationWhenRegistrationFails() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let model = PotassiumProviderAppModel(
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: FailingProviderDomainRegistrar(),
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
+        )
+
+        model.manualDriveID = "42"
+        model.manualDriveName = "Work Drive"
+        model.domainDisplayName = "Team Files"
+
+        await model.addDomain()
+
+        #expect(model.domains.isEmpty)
+        #expect(try domainStore.allConfigurations().isEmpty)
+        #expect(model.errorMessage?.contains("The application cannot be used right now") == true)
+    }
+
     private func makeItem(
         id: Int,
         name: String,
@@ -426,4 +451,21 @@ private enum FakeKDriveFileProviderError: Error {
 private struct NoopProviderDomainRegistrar: ProviderDomainRegistering {
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+}
+
+@MainActor
+private struct FailingProviderDomainRegistrar: ProviderDomainRegistering {
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        throw FailingProviderDomainRegistrarError.applicationUnavailable
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+}
+
+private enum FailingProviderDomainRegistrarError: LocalizedError {
+    case applicationUnavailable
+
+    var errorDescription: String? {
+        "The application cannot be used right now"
+    }
 }
