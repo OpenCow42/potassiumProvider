@@ -14,7 +14,7 @@
 		D00000052FF9000000000005 /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = D00001022FF9000000000002 /* PotassiumKDrive */; };
 		D00000062FF9000000000006 /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = D00001032FF9000000000003 /* PotassiumOAuth */; };
 		D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
-		D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */; };
 		C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C02FF8491700CB8B7E /* PotassiumKDrive */; };
 		C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C22FF8491700CB8B7E /* PotassiumOAuth */; };

@@ -21,7 +21,7 @@ struct ContentView: View {
             }
             .navigationTitle("potassiumProvider")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: refreshToolbarPlacement) {
                     Button {
                         Task { await model.loadDrives() }
                     } label: {
@@ -65,9 +65,7 @@ struct ContentView: View {
 
             HStack {
                 SecureField("Access token", text: $model.manualAccessToken)
-                    .textContentType(.password)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
+                    .platformPasswordEntry()
                 Button {
                     Task { await model.saveManualAccessToken() }
                 } label: {
@@ -104,7 +102,7 @@ struct ContentView: View {
         Section("Domain") {
             TextField("Display name", text: $model.domainDisplayName)
             TextField("Drive ID", text: $model.manualDriveID)
-                .keyboardType(.numberPad)
+                .platformNumberEntry()
             TextField("Drive name", text: $model.manualDriveName)
 
             Button {
@@ -140,6 +138,14 @@ struct ContentView: View {
             }
         }
     }
+
+    private var refreshToolbarPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        .automatic
+        #else
+        .topBarTrailing
+        #endif
+    }
 }
 
 private struct DomainConfigurationRow: View {
@@ -174,4 +180,27 @@ private struct DomainConfigurationRow: View {
         ),
         tokenStore: InMemoryOAuthTokenStore()
     ))
+}
+
+private extension View {
+    @ViewBuilder
+    func platformPasswordEntry() -> some View {
+        #if canImport(UIKit)
+        self
+            .textContentType(.password)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func platformNumberEntry() -> some View {
+        #if canImport(UIKit)
+        self.keyboardType(.numberPad)
+        #else
+        self
+        #endif
+    }
 }
