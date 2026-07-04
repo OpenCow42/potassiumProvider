@@ -6,20 +6,17 @@ public struct KDriveOAuthConfiguration: Equatable, Sendable {
     public let clientID: String
     public let clientSecret: String?
     public let redirectURI: URL
-    public let scopes: [String]
     public let hidesCreateAccountButton: Bool
 
     public init(
         clientID: String = ProviderConstants.oauthClientID,
         clientSecret: String? = nil,
         redirectURI: URL = ProviderConstants.oauthRedirectURI,
-        scopes: [String] = ProviderConstants.oauthScopes,
         hidesCreateAccountButton: Bool = true
     ) {
         self.clientID = clientID
         self.clientSecret = clientSecret
         self.redirectURI = redirectURI
-        self.scopes = scopes
         self.hidesCreateAccountButton = hidesCreateAccountButton
     }
 }
@@ -55,15 +52,6 @@ public struct KDriveOAuthToken: Codable, Equatable, Sendable {
         self.expiresAt = expiresAt
     }
 
-    public var scopes: [String] {
-        scope?.split(separator: " ").map(String.init) ?? []
-    }
-
-    public var hasKDriveScope: Bool {
-        let normalized = Set(scopes.map { $0.lowercased() })
-        return normalized.contains("drive") || normalized.contains("all")
-    }
-
     public func shouldRefresh(now: Date = Date(), leeway: TimeInterval = 300) -> Bool {
         guard let expiresAt else { return false }
         return expiresAt.timeIntervalSince(now) <= leeway
@@ -94,7 +82,6 @@ public enum KDriveOAuthClient {
         let url = try InfomaniakOAuthRequests.authorizationURL(
             clientId: configuration.clientID,
             redirectURI: configuration.redirectURI,
-            scopes: configuration.scopes,
             state: state,
             codeChallenge: codeChallenge(for: codeVerifier),
             additionalQueryItems: configuration.hidesCreateAccountButton ? [URLQueryItem(name: "hide_create_account", value: "")] : []
@@ -156,8 +143,7 @@ public enum KDriveOAuthClient {
         let request = try InfomaniakOAuthRequests.refreshTokenRequest(
             clientId: configuration.clientID,
             clientSecret: configuration.clientSecret,
-            refreshToken: refreshToken,
-            scopes: configuration.scopes
+            refreshToken: refreshToken
         )
         return try await sendTokenRequest(request, session: session)
     }

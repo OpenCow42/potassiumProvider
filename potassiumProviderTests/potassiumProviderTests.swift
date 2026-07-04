@@ -51,9 +51,8 @@ struct PotassiumProviderCoreTests {
         #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
     }
 
-    @Test func oauthAuthorizationRequestContainsPkceStateAndScopes() throws {
+    @Test func oauthAuthorizationRequestContainsPkceStateAndNoScopes() throws {
         let request = try KDriveOAuthClient.makeAuthorizationRequest(
-            configuration: KDriveOAuthConfiguration(scopes: ["accounts", "drive"]),
             state: "known-state",
             codeVerifier: "known-verifier"
         )
@@ -66,12 +65,30 @@ struct PotassiumProviderCoreTests {
         #expect(components.host == "login.infomaniak.com")
         #expect(query["response_type"] == "code")
         #expect(query["client_id"] == ProviderConstants.oauthClientID)
+        #expect(ProviderConstants.oauthClientID == "9473D73C-C20F-4971-9E10-D957C563FA68")
         #expect(query["redirect_uri"] == ProviderConstants.oauthRedirectURI.absoluteString)
-        #expect(query["scope"] == "accounts drive")
+        #expect(query["scope"] == nil)
         #expect(query["state"] == "known-state")
         #expect(query["code_challenge_method"] == "S256")
         #expect(query["code_challenge"] == KDriveOAuthClient.codeChallenge(for: "known-verifier"))
         #expect(request.callbackScheme == "com.infomaniak.drive")
+    }
+
+    @Test func oauthRefreshRequestDoesNotSpecifyScopes() async throws {
+        OAuthRequestCapturingURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OAuthRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        _ = try await KDriveOAuthClient.refresh(refreshToken: "refresh-token", session: session)
+
+        let body = try #require(OAuthRequestCapturingURLProtocol.lastBody())
+        let form = try decodedFormBody(from: body)
+        #expect(form["grant_type"] == "refresh_token")
+        #expect(form["client_id"] == ProviderConstants.oauthClientID)
+        #expect(form["refresh_token"] == "refresh-token")
+        #expect(form["scope"] == nil)
     }
 
     @Test func oauthCallbackValidatesStateAndAuthorizationCode() throws {
@@ -83,7 +100,7 @@ struct PotassiumProviderCoreTests {
         }
     }
 
-    @Test func tokenScopeAndRefreshLeewayAreComputed() {
+    @Test func tokenRefreshLeewayIsComputed() {
         let token = KDriveOAuthToken(
             accessToken: "redacted",
             tokenType: "Bearer",
@@ -93,8 +110,6 @@ struct PotassiumProviderCoreTests {
             expiresAt: Date(timeIntervalSince1970: 1_000)
         )
 
-        #expect(token.scopes == ["profile", "drive"])
-        #expect(token.hasKDriveScope)
         #expect(token.shouldRefresh(now: Date(timeIntervalSince1970: 800), leeway: 300))
         #expect(!token.shouldRefresh(now: Date(timeIntervalSince1970: 600), leeway: 300))
     }
@@ -172,6 +187,7 @@ struct PotassiumProviderCoreTests {
         #expect(model.drives == [drive])
         #expect(model.selectedDriveID == drive.id)
         #expect(tokenStore.loadToken()?.accessToken == "manual-token")
+        #expect(tokenStore.loadToken()?.scope == nil)
     }
 
     @MainActor
@@ -240,6 +256,94 @@ struct PotassiumProviderCoreTests {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("potassium-provider-tests-\(UUID().uuidString)", isDirectory: true)
     }
+
+    private func decodedFormBody(from body: Data) throws -> [String: String] {
+        let encodedBody = String(decoding: body, as: UTF8.self)
+        let components = try #require(URLComponents(string: "?\(encodedBody)"))
+        return Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
+    }
+}
+
+private final class OAuthRequestCapturingURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var capturedRequest: URLRequest?
+    private static var capturedBody: Data?
+
+    static func reset() {
+        lock.lock()
+        capturedRequest = nil
+        capturedBody = nil
+        lock.unlock()
+    }
+
+    static func lastRequest() -> URLRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        return capturedRequest
+    }
+
+    static func lastBody() -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return capturedBody
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        Self.lock.lock()
+        Self.capturedRequest = request
+        Self.capturedBody = request.httpBody ?? Self.readBodyStream(from: request)
+        Self.lock.unlock()
+
+        let data = """
+        {
+          "access_token": "refreshed-token",
+          "token_type": "Bearer",
+          "expires_in": 3600,
+          "refresh_token": "new-refresh-token"
+        }
+        """.data(using: .utf8)!
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func readBodyStream(from request: URLRequest) -> Data? {
+        guard let stream = request.httpBodyStream else {
+            return nil
+        }
+
+        stream.open()
+        defer { stream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(&buffer, maxLength: buffer.count)
+            guard bytesRead > 0 else {
+                break
+            }
+            data.append(buffer, count: bytesRead)
+        }
+        return data
+    }
 }
 
 @MainActor
@@ -250,7 +354,7 @@ private final class FakeKDriveOAuthAuthenticator: KDriveOAuthAuthenticating {
         accessToken: "oauth-token",
         tokenType: "Bearer",
         refreshToken: nil,
-        scope: "drive",
+        scope: nil,
         idToken: nil,
         expiresAt: nil
     )) {

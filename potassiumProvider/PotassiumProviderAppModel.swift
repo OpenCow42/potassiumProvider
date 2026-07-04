@@ -98,7 +98,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accessToken: accessToken,
             tokenType: "Bearer",
             refreshToken: nil,
-            scope: "drive",
+            scope: nil,
             idToken: nil,
             expiresAt: nil
         )
@@ -193,9 +193,6 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private func saveConnectedToken(_ token: KDriveOAuthToken) async throws {
-        guard token.hasKDriveScope else {
-            throw PotassiumProviderAppModelError.missingDriveScope(token.scopes)
-        }
         try tokenStore.saveToken(token)
         self.token = token
         errorMessage = nil
@@ -270,7 +267,6 @@ final class PotassiumProviderAppModel: ObservableObject {
 enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
     case missingToken
     case expiredToken
-    case missingDriveScope([String])
 
     var errorDescription: String? {
         switch self {
@@ -278,9 +274,6 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
             return "Connect to kDrive before loading drives."
         case .expiredToken:
             return "The saved access token has expired. Reconnect to kDrive."
-        case .missingDriveScope(let scopes):
-            let grantedScopes = scopes.isEmpty ? "none" : scopes.joined(separator: " ")
-            return "Infomaniak granted '\(grantedScopes)', but kDrive access requires the drive or all scope."
         }
     }
 }
