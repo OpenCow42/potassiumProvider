@@ -24,7 +24,8 @@ Provider extension after the system asks for an enumerator.
 Provider domain to a kDrive:
 
 - `domainIdentifier`: stable identifier used as `NSFileProviderDomainIdentifier`
-- `displayName`: name shown by the Files app
+- `displayName`: Finder/Files-visible name derived from `driveName`, for
+  example `Work Drive`
 - `driveID`: kDrive identifier used in API calls
 - `driveName`: display name returned by kDrive or entered manually
 - `rootFileID`: kDrive root folder ID; currently defaults to `1`
@@ -41,7 +42,8 @@ The add flow is:
 2. The app loads kDrives through `PotassiumKDriveService.listDrives()`.
 3. The user selects a drive or enters a manual drive ID/name.
 4. `PotassiumProviderAppModel.addDomain()` creates a
-   `ProviderDomainConfiguration`.
+   `ProviderDomainConfiguration` whose display name is derived from the drive
+   name.
 5. The app saves the configuration to the app group.
 6. `FileProviderDomainRegistrar.addDomain(for:)` registers an
    `NSFileProviderDomain` with Apple's File Provider manager.
@@ -50,6 +52,11 @@ The add flow is:
 
 The configuration is saved before registration so the extension can find it when
 the system starts calling into the new domain.
+
+On reload, the app also normalizes stored configurations to the current
+Finder-visible display-name policy and re-adds each stored
+`NSFileProviderDomain`. Re-adding a domain with the same identifier updates the
+system's registered display name.
 
 ## Removing A Domain
 

@@ -100,7 +100,6 @@ struct ContentView: View {
 
     private var domainFormSection: some View {
         Section("Domain") {
-            TextField("Display name", text: $model.domainDisplayName)
             TextField("Drive ID", text: $model.manualDriveID)
                 .platformNumberEntry()
             TextField("Drive name", text: $model.manualDriveName)

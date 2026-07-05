@@ -15,7 +15,6 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published var selectedDriveID: Int?
     @Published var manualDriveID = ""
     @Published var manualDriveName = ""
-    @Published var domainDisplayName = ""
 
     private let domainStore: any DomainConfigurationStoring
     private let tokenStore: any OAuthTokenStoring
@@ -30,6 +29,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
         domainRegistrar: (any ProviderDomainRegistering)? = nil,
         snapshotStore: (any KDriveSnapshotStoring)? = nil,
+        automaticallyReloadStoredState: Bool = true,
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
     ) {
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
@@ -39,7 +39,9 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.fileProviderFactory = fileProviderFactory
         statusMessage = "Not connected"
-        Task { await reloadStoredState() }
+        if automaticallyReloadStoredState {
+            Task { await reloadStoredState() }
+        }
     }
 
     var isConnected: Bool {
@@ -62,9 +64,15 @@ final class PotassiumProviderAppModel: ObservableObject {
     func reloadStoredState() async {
         do {
             token = try await tokenStore.loadToken()
-            domains = try await domainStore.allConfigurations()
-            errorMessage = nil
-            statusMessage = token == nil ? "Not connected" : "Connected to kDrive."
+            let synchronizedState = try await synchronizedDomainConfigurations()
+            domains = synchronizedState.configurations
+            if let synchronizationError = synchronizedState.registrationError {
+                errorMessage = "Could not refresh Finder domain names: \(synchronizationError.localizedDescription)"
+                statusMessage = nil
+            } else {
+                errorMessage = nil
+                statusMessage = token == nil ? "Not connected" : "Connected to kDrive."
+            }
         } catch {
             errorMessage = "Could not load saved provider state: \(error.localizedDescription)"
         }
@@ -144,9 +152,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         var savedConfiguration: ProviderDomainConfiguration?
         do {
             let now = Date()
-            let displayName = trimmed(domainDisplayName).nilIfEmpty ?? draft.name
             let configuration = ProviderDomainConfiguration(
-                displayName: displayName,
+                displayName: ProviderDomainConfiguration.finderDisplayName(forDriveName: draft.name),
                 driveID: draft.id,
                 driveName: draft.name,
                 createdAt: now,
@@ -157,7 +164,6 @@ final class PotassiumProviderAppModel: ObservableObject {
             savedConfiguration = configuration
             domains = try await domainStore.allConfigurations()
             try await domainRegistrar.addDomain(for: configuration)
-            domainDisplayName = ""
             statusMessage = "Added \(configuration.displayName) to Files."
             errorMessage = nil
         } catch {
@@ -241,9 +247,6 @@ final class PotassiumProviderAppModel: ObservableObject {
         guard let selectedDrive else { return }
         manualDriveID = String(selectedDrive.id)
         manualDriveName = selectedDrive.name
-        if domainDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            domainDisplayName = selectedDrive.name
-        }
     }
 
     private func resolvedDriveDraft() -> (id: Int, name: String)? {
@@ -278,6 +281,30 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     private func trimmed(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func synchronizedDomainConfigurations() async throws -> (configurations: [ProviderDomainConfiguration], registrationError: Error?) {
+        var configurations = try await domainStore.allConfigurations()
+        var registrationError: Error?
+
+        for index in configurations.indices {
+            if configurations[index].normalizeFinderDisplayName() {
+                try await domainStore.save(configurations[index])
+            }
+
+            do {
+                try await domainRegistrar.addDomain(for: configurations[index])
+            } catch {
+                registrationError = registrationError ?? error
+            }
+        }
+
+        return (
+            configurations.sorted { lhs, rhs in
+                lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+            },
+            registrationError
+        )
     }
 }
 

@@ -28,6 +28,23 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
+
+    public static func finderDisplayName(forDriveName driveName: String) -> String {
+        let trimmedDriveName = driveName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedDriveName.isEmpty ? "kDrive" : trimmedDriveName
+    }
+
+    @discardableResult
+    public mutating func normalizeFinderDisplayName(updatedAt: Date = Date()) -> Bool {
+        let normalizedDisplayName = Self.finderDisplayName(forDriveName: driveName)
+        guard displayName != normalizedDisplayName else {
+            return false
+        }
+
+        displayName = normalizedDisplayName
+        self.updatedAt = updatedAt
+        return true
+    }
 }
 
 public protocol DomainConfigurationStoring: Sendable {

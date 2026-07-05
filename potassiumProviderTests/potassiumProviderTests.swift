@@ -32,6 +32,11 @@ struct PotassiumProviderCoreTests {
         #expect(try await store.allConfigurations().isEmpty)
     }
 
+    @Test func providerDomainConfigurationDerivesFinderDisplayName() {
+        #expect(ProviderDomainConfiguration.finderDisplayName(forDriveName: " Work Drive ") == "Work Drive")
+        #expect(ProviderDomainConfiguration.finderDisplayName(forDriveName: "   ") == "kDrive")
+    }
+
     @Test func snapshotStorePersistsAndRemovesDomainSnapshots() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -513,6 +518,7 @@ struct PotassiumProviderCoreTests {
             tokenStore: tokenStore,
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
             fileProviderFactory: { token in
                 #expect(token == "manual-token")
                 return FakeKDriveFileProvider(drives: [drive])
@@ -545,17 +551,17 @@ struct PotassiumProviderCoreTests {
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: NoopProviderDomainRegistrar(),
             snapshotStore: snapshotStore,
+            automaticallyReloadStoredState: false,
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
 
         model.manualDriveID = " 42 "
         model.manualDriveName = "Work Drive"
-        model.domainDisplayName = "Team Files"
 
         await model.addDomain()
 
         let domain = try #require(model.domains.first)
-        #expect(domain.displayName == "Team Files")
+        #expect(domain.displayName == "Work Drive")
         #expect(domain.driveID == 42)
         #expect(domain.driveName == "Work Drive")
         #expect(try await domainStore.allConfigurations().count == 1)
@@ -573,6 +579,48 @@ struct PotassiumProviderCoreTests {
     }
 
     @MainActor
+    @Test func appModelNormalizesLegacyDomainDisplayNameDuringReload() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let legacyUpdatedAt = Date(timeIntervalSince1970: 1_000)
+        let legacyConfiguration = ProviderDomainConfiguration(
+            domainIdentifier: "legacy-domain",
+            displayName: "PotassiumProvider",
+            driveID: 42,
+            driveName: "Work Drive",
+            createdAt: Date(timeIntervalSince1970: 900),
+            updatedAt: legacyUpdatedAt
+        )
+        try await domainStore.save(legacyConfiguration)
+
+        let registrar = RecordingProviderDomainRegistrar()
+        let model = PotassiumProviderAppModel(
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: registrar,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
+        )
+
+        await model.reloadStoredState()
+
+        let domain = try #require(model.domains.first)
+        #expect(domain.displayName == "Work Drive")
+        #expect(domain.driveName == "Work Drive")
+        #expect(domain.updatedAt > legacyUpdatedAt)
+
+        let storedDomain = try #require(await domainStore.configuration(domainIdentifier: "legacy-domain"))
+        #expect(storedDomain.displayName == "Work Drive")
+
+        let registeredDomain = try #require(registrar.addedConfigurations.first)
+        #expect(registeredDomain.domainIdentifier == "legacy-domain")
+        #expect(registeredDomain.displayName == "Work Drive")
+    }
+
+    @MainActor
     @Test func appModelRollsBackDomainConfigurationWhenRegistrationFails() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -583,12 +631,12 @@ struct PotassiumProviderCoreTests {
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: FailingProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
 
         model.manualDriveID = "42"
         model.manualDriveName = "Work Drive"
-        model.domainDisplayName = "Team Files"
 
         await model.addDomain()
 
@@ -983,6 +1031,20 @@ private enum FakeKDriveFileProviderError: Error {
 private struct NoopProviderDomainRegistrar: ProviderDomainRegistering {
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+}
+
+@MainActor
+private final class RecordingProviderDomainRegistrar: ProviderDomainRegistering {
+    private(set) var addedConfigurations: [ProviderDomainConfiguration] = []
+    private(set) var removedConfigurations: [ProviderDomainConfiguration] = []
+
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        addedConfigurations.append(configuration)
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
+        removedConfigurations.append(configuration)
+    }
 }
 
 @MainActor
