@@ -64,8 +64,10 @@ app.
   prefer role-based names, and use precise argument labels.
 - Prefer clarity over brevity, especially around File Provider and networking
   behavior.
-- Use structured concurrency where practical. Keep cancellation and actor/thread
-  expectations explicit when crossing system or network boundaries.
+- Use structured concurrency where practical. Use InfomaniakConcurrency where
+  it fits the problem instead of reaching for semaphores or locks. Keep
+  cancellation and actor/thread expectations explicit when crossing system or
+  network boundaries.
 - Keep public APIs and documentation intentional. Document semantic choices when
   API ergonomics hide non-obvious system behavior.
 - Keep changes small, focused, and easy to review. Do not mix unrelated
