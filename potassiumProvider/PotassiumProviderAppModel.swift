@@ -273,7 +273,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private static func makeDefaultSnapshotStore() -> (any KDriveSnapshotStoring)? {
-        try? KDriveSnapshotFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+        try? KDriveSnapshotSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
     }
 
     private func trimmed(_ value: String) -> String {

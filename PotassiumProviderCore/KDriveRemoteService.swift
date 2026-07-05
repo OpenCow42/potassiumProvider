@@ -6,6 +6,7 @@ public protocol KDriveFileProviding: Sendable {
     func listDrives() async throws -> [KDriveDriveSummary]
     func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem
     func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
+    func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage
     func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
     func downloadFile(driveID: Int, fileID: Int) async throws -> Data
     func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data
@@ -69,6 +70,45 @@ public struct PotassiumKDriveService: KDriveFileProviding {
             options: ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
         )
         return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
+    }
+
+    public func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage {
+        let orderBy = ["type", "name"]
+        let orderFor = ["type": "asc", "name": "asc"]
+
+        let response: CursorPaginatedInfomaniakResponse<KDriveAdvancedDirectoryListing>
+        if let cursor {
+            response = try await service.continueAdvancedDirectoryListing(
+                driveId: driveID,
+                fileId: folderID,
+                cursor: cursor,
+                options: ContinueKDriveAdvancedDirectoryListingOptions(
+                    limit: limit,
+                    orderBy: orderBy,
+                    orderFor: orderFor
+                )
+            )
+        } else {
+            response = try await service.listAdvancedDirectoryListing(
+                driveId: driveID,
+                fileId: folderID,
+                options: ListKDriveAdvancedDirectoryListingOptions(
+                    limit: limit,
+                    orderBy: orderBy,
+                    orderFor: orderFor
+                )
+            )
+        }
+
+        return KDriveAdvancedItemPage(
+            items: response.data.files.map(\.remoteItem),
+            actions: response.data.actions.map {
+                KDriveRemoteFileAction(action: $0.action, fileID: $0.fileId, parentID: $0.parentId)
+            },
+            actionItems: response.data.actionsFiles.map(\.remoteItem),
+            nextCursor: response.cursor,
+            hasMore: response.hasMore
+        )
     }
 
     public func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
@@ -149,6 +189,17 @@ public struct PotassiumKDriveService: KDriveFileProviding {
 
     private static func unixTimestamp(_ date: Date) -> Int {
         Int(date.timeIntervalSince1970)
+    }
+}
+
+public enum KDriveRemoteErrorClassifier {
+    public static func isInvalidCursor(_ error: Error) -> Bool {
+        guard case let APIClientError.unacceptableStatusCode(_, body) = error else {
+            return false
+        }
+
+        let lowercasedBody = body.lowercased()
+        return lowercasedBody.contains("invalid") && lowercasedBody.contains("cursor")
     }
 }
 

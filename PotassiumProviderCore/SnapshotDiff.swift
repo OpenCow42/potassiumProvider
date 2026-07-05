@@ -2,11 +2,40 @@ import Foundation
 
 public struct KDriveSnapshot: Codable, Equatable, Sendable {
     public let anchor: String
+    public let serverCursor: String?
+    public let isFullyEnumerated: Bool
+    public let usesAdvancedListing: Bool
     public let items: [KDriveRemoteItem]
 
-    public init(anchor: String = UUID().uuidString, items: [KDriveRemoteItem]) {
+    public enum CodingKeys: String, CodingKey {
+        case anchor
+        case serverCursor
+        case isFullyEnumerated
+        case usesAdvancedListing
+        case items
+    }
+
+    public init(
+        anchor: String = UUID().uuidString,
+        serverCursor: String? = nil,
+        isFullyEnumerated: Bool = false,
+        usesAdvancedListing: Bool = false,
+        items: [KDriveRemoteItem]
+    ) {
         self.anchor = anchor
+        self.serverCursor = serverCursor
+        self.isFullyEnumerated = isFullyEnumerated
+        self.usesAdvancedListing = usesAdvancedListing
         self.items = items
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.anchor = try container.decode(String.self, forKey: .anchor)
+        self.serverCursor = try container.decodeIfPresent(String.self, forKey: .serverCursor)
+        self.isFullyEnumerated = try container.decodeIfPresent(Bool.self, forKey: .isFullyEnumerated) ?? false
+        self.usesAdvancedListing = try container.decodeIfPresent(Bool.self, forKey: .usesAdvancedListing) ?? false
+        self.items = try container.decode([KDriveRemoteItem].self, forKey: .items)
     }
 }
 

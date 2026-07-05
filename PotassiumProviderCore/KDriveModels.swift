@@ -93,6 +93,153 @@ public struct KDriveItemPage: Equatable, Sendable {
     }
 }
 
+public struct KDriveAdvancedItemPage: Equatable, Sendable {
+    public let items: [KDriveRemoteItem]
+    public let actions: [KDriveRemoteFileAction]
+    public let actionItems: [KDriveRemoteItem]
+    public let nextCursor: String?
+    public let hasMore: Bool
+
+    public init(
+        items: [KDriveRemoteItem],
+        actions: [KDriveRemoteFileAction],
+        actionItems: [KDriveRemoteItem],
+        nextCursor: String?,
+        hasMore: Bool
+    ) {
+        self.items = items
+        self.actions = actions
+        self.actionItems = actionItems
+        self.nextCursor = nextCursor
+        self.hasMore = hasMore
+    }
+}
+
+public struct KDriveRemoteFileAction: Equatable, Sendable {
+    public let action: String
+    public let fileID: Int
+    public let parentID: Int
+
+    public init(action: String, fileID: Int, parentID: Int) {
+        self.action = action
+        self.fileID = fileID
+        self.parentID = parentID
+    }
+}
+
+public enum KDriveAdvancedActionReducer {
+    public static func changes(
+        from actions: [KDriveRemoteFileAction],
+        actionItems: [KDriveRemoteItem]
+    ) -> KDriveSnapshotChangeSet {
+        let actionItemsByID = Dictionary(uniqueKeysWithValues: actionItems.map { ($0.id, $0) })
+        var handledFileIDs = Set<Int>()
+        var updatedItems: [KDriveRemoteItem] = []
+        var deletedItemIDs = Set<Int>()
+
+        for action in actions {
+            guard handledFileIDs.insert(action.fileID).inserted else {
+                continue
+            }
+
+            if isDeleteAction(action.action) {
+                deletedItemIDs.insert(action.fileID)
+                continue
+            }
+
+            guard isUpdateAction(action.action), let item = actionItemsByID[action.fileID] else {
+                continue
+            }
+
+            updatedItems.append(item)
+        }
+
+        return KDriveSnapshotChangeSet(
+            updatedItems: updatedItems,
+            deletedItemIDs: deletedItemIDs.sorted()
+        )
+    }
+
+    public static func applying(
+        actions: [KDriveRemoteFileAction],
+        actionItems: [KDriveRemoteItem],
+        to snapshot: KDriveSnapshot,
+        anchor: String,
+        serverCursor: String?
+    ) -> (snapshot: KDriveSnapshot, changes: KDriveSnapshotChangeSet) {
+        let changes = changes(from: actions, actionItems: actionItems)
+        var itemsByID = Dictionary(uniqueKeysWithValues: snapshot.items.map { ($0.id, $0) })
+        for itemID in changes.deletedItemIDs {
+            itemsByID[itemID] = nil
+        }
+        for item in changes.updatedItems {
+            itemsByID[item.id] = item
+        }
+
+        let existingOrder = snapshot.items.map(\.id)
+        var items: [KDriveRemoteItem] = []
+        var emittedIDs = Set<Int>()
+        for itemID in existingOrder {
+            if let item = itemsByID[itemID] {
+                items.append(item)
+                emittedIDs.insert(itemID)
+            }
+        }
+        let appendedItems = changes.updatedItems
+            .filter { emittedIDs.contains($0.id) == false }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        items.append(contentsOf: appendedItems)
+
+        return (
+            KDriveSnapshot(
+                anchor: anchor,
+                serverCursor: serverCursor,
+                isFullyEnumerated: true,
+                usesAdvancedListing: true,
+                items: items
+            ),
+            changes
+        )
+    }
+
+    private static func isDeleteAction(_ action: String) -> Bool {
+        switch action {
+        case "file_delete", "file_trash", "file_move_out":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isUpdateAction(_ action: String) -> Bool {
+        switch action {
+        case "file_create",
+             "file_rename",
+             "file_move",
+             "file_restore",
+             "file_update",
+             "file_favorite_create",
+             "file_favorite_remove",
+             "file_share_create",
+             "file_share_update",
+             "file_share_delete",
+             "share_link_create",
+             "share_link_update",
+             "share_link_delete",
+             "collaborative_folder_create",
+             "collaborative_folder_update",
+             "collaborative_folder_delete",
+             "file_color_update",
+             "file_color_delete",
+             "file_categorize",
+             "file_uncategorize":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 public enum KDriveItemIdentifier: Equatable, Hashable, Sendable {
     case root
     case trash

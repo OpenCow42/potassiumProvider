@@ -71,7 +71,7 @@ struct FileProviderRuntime: Sendable {
 
     static func makeSnapshotStore() throws -> any KDriveSnapshotStoring {
         do {
-            return try KDriveSnapshotFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+            return try KDriveSnapshotSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
         } catch {
             FileProviderLog.runtime.error("failed to open snapshot store in app group: \(error.localizedDescription, privacy: .public)")
             throw error

@@ -46,7 +46,19 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     containerIdentifier: snapshotContainerIdentifier
                 )
                 FileProviderLog.enumeration.debug("currentSyncAnchor container(\(self.containerItemIdentifier.rawValue, privacy: .public)) snapshotPresent(\(snapshot != nil, privacy: .public))")
-                completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
+
+                if self.usesAdvancedListing {
+                    guard let snapshot,
+                          snapshot.usesAdvancedListing,
+                          snapshot.isFullyEnumerated,
+                          let serverCursor = snapshot.serverCursor else {
+                        completionHandler(nil)
+                        return
+                    }
+                    completionHandler(FileProviderPageCodec.anchor(from: serverCursor))
+                } else {
+                    completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
+                }
             } catch {
                 FileProviderLog.enumeration.error("currentSyncAnchor failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
                 completionHandler(nil)
@@ -60,6 +72,15 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         Task {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                if self.usesAdvancedListing {
+                    try await self.enumerateAdvancedChanges(
+                        for: observer,
+                        runtime: runtime,
+                        requestedCursor: requestedAnchor
+                    )
+                    return
+                }
+
                 let oldSnapshot = try await runtime.snapshotStore.snapshot(
                     domainIdentifier: runtime.configuration.domainIdentifier,
                     containerIdentifier: self.snapshotContainerIdentifier
@@ -92,6 +113,21 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
+    private var usesAdvancedListing: Bool {
+        guard containerItemIdentifier != .workingSet,
+              containerItemIdentifier != .rootContainer,
+              containerItemIdentifier != .trashContainer,
+              let identifier = try? KDriveItemIdentifier(rawValue: containerItemIdentifier.rawValue) else {
+            return false
+        }
+
+        if case .item = identifier {
+            return true
+        }
+
+        return false
+    }
+
     private var snapshotContainerIdentifier: String {
         switch containerItemIdentifier {
         case .workingSet:
@@ -106,6 +142,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     private func listItems(runtime: FileProviderRuntime, startingAt page: NSFileProviderPage) async throws -> KDriveItemPage {
+        if usesAdvancedListing {
+            return try await listAdvancedItems(runtime: runtime, startingAt: page)
+        }
+
+        return try await listLegacyItems(runtime: runtime, startingAt: page)
+    }
+
+    private func listLegacyItems(runtime: FileProviderRuntime, startingAt page: NSFileProviderPage) async throws -> KDriveItemPage {
         let cursor = FileProviderPageCodec.cursor(from: page)
         FileProviderLog.enumeration.debug("listItems container(\(self.containerItemIdentifier.rawValue, privacy: .public)) kind(\(self.snapshotContainerIdentifier, privacy: .public)) cursorPresent(\(cursor != nil, privacy: .public))")
         switch self.containerItemIdentifier {
@@ -137,6 +181,80 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
+    private func listAdvancedItems(runtime: FileProviderRuntime, startingAt page: NSFileProviderPage) async throws -> KDriveItemPage {
+        let cursor = FileProviderPageCodec.cursor(from: page)
+        let folderID = try advancedFolderID(rootFileID: runtime.configuration.rootFileID)
+        FileProviderLog.enumeration.debug("listAdvancedItems container(\(self.containerItemIdentifier.rawValue, privacy: .public)) cursorPresent(\(cursor != nil, privacy: .public))")
+
+        if cursor == nil,
+           let snapshot = try await runtime.snapshotStore.snapshot(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            containerIdentifier: snapshotContainerIdentifier
+           ),
+           snapshot.usesAdvancedListing,
+           snapshot.isFullyEnumerated {
+            return KDriveItemPage(items: snapshot.items, nextCursor: nil, hasMore: false)
+        }
+
+        do {
+            return try await fetchAndStoreAdvancedPage(
+                runtime: runtime,
+                folderID: folderID,
+                cursor: cursor,
+                replaceSnapshot: cursor == nil
+            )
+        } catch let error where cursor != nil && KDriveRemoteErrorClassifier.isInvalidCursor(error) {
+            FileProviderLog.enumeration.error("listAdvancedItems invalid cursor; restarting container(\(self.containerItemIdentifier.rawValue, privacy: .public))")
+            return try await fetchAndStoreAdvancedPage(
+                runtime: runtime,
+                folderID: folderID,
+                cursor: nil,
+                replaceSnapshot: true
+            )
+        }
+    }
+
+    private func fetchAndStoreAdvancedPage(
+        runtime: FileProviderRuntime,
+        folderID: Int,
+        cursor: String?,
+        replaceSnapshot: Bool
+    ) async throws -> KDriveItemPage {
+        let response = try await runtime.remote.listAdvancedDirectory(
+            driveID: runtime.configuration.driveID,
+            folderID: folderID,
+            cursor: cursor,
+            limit: 200
+        )
+        let oldSnapshot = replaceSnapshot ? nil : try await runtime.snapshotStore.snapshot(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            containerIdentifier: snapshotContainerIdentifier
+        )
+        let mergedItems = mergeListingItems(
+            existingItems: oldSnapshot?.items ?? [],
+            pageItems: response.items
+        )
+        let storedCursor = response.actions.isEmpty ? response.nextCursor : cursor
+        let snapshot = KDriveSnapshot(
+            anchor: storedCursor ?? UUID().uuidString,
+            serverCursor: storedCursor,
+            isFullyEnumerated: response.hasMore == false,
+            usesAdvancedListing: true,
+            items: mergedItems
+        )
+        try await runtime.snapshotStore.save(
+            snapshot,
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            containerIdentifier: snapshotContainerIdentifier
+        )
+
+        return KDriveItemPage(
+            items: response.items,
+            nextCursor: response.hasMore ? response.nextCursor : nil,
+            hasMore: response.hasMore
+        )
+    }
+
     private func listAllItems(runtime: FileProviderRuntime) async throws -> [KDriveRemoteItem] {
         var items: [KDriveRemoteItem] = []
         var page = NSFileProviderPage.initialPageSortedByName as NSFileProviderPage
@@ -144,7 +262,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         var pageCount = 0
 
         while true {
-            let itemPage = try await listItems(runtime: runtime, startingAt: page)
+            let itemPage = try await listLegacyItems(runtime: runtime, startingAt: page)
             pageCount += 1
             items.append(contentsOf: itemPage.items)
 
@@ -159,6 +277,137 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 return items
             }
             page = nextPage
+        }
+    }
+
+    private func enumerateAdvancedChanges(
+        for observer: NSFileProviderChangeObserver,
+        runtime: FileProviderRuntime,
+        requestedCursor: String?
+    ) async throws {
+        guard let requestedCursor else {
+            throw NSFileProviderError(.syncAnchorExpired)
+        }
+
+        let folderID = try advancedFolderID(rootFileID: runtime.configuration.rootFileID)
+        guard let oldSnapshot = try await runtime.snapshotStore.snapshot(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            containerIdentifier: snapshotContainerIdentifier
+        ),
+              oldSnapshot.usesAdvancedListing,
+              oldSnapshot.isFullyEnumerated,
+              oldSnapshot.serverCursor == requestedCursor else {
+            throw NSFileProviderError(.syncAnchorExpired)
+        }
+
+        do {
+            let response = try await runtime.remote.listAdvancedDirectory(
+                driveID: runtime.configuration.driveID,
+                folderID: folderID,
+                cursor: requestedCursor,
+                limit: 200
+            )
+            let newCursor = response.nextCursor ?? requestedCursor
+            let result = KDriveAdvancedActionReducer.applying(
+                actions: response.actions,
+                actionItems: response.actionItems,
+                to: oldSnapshot,
+                anchor: newCursor,
+                serverCursor: newCursor
+            )
+            try await runtime.snapshotStore.save(
+                result.snapshot,
+                domainIdentifier: runtime.configuration.domainIdentifier,
+                containerIdentifier: snapshotContainerIdentifier
+            )
+            emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
+            FileProviderLog.enumeration.info("enumerateAdvancedChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
+            observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newCursor), moreComing: response.hasMore)
+        } catch let error where KDriveRemoteErrorClassifier.isInvalidCursor(error) {
+            FileProviderLog.enumeration.error("enumerateAdvancedChanges invalid cursor; rebuilding container(\(self.containerItemIdentifier.rawValue, privacy: .public))")
+            let rebuiltSnapshot = try await rebuildAdvancedSnapshot(runtime: runtime, folderID: folderID)
+            let changes = KDriveSnapshotDiffer.changes(from: oldSnapshot, to: rebuiltSnapshot)
+            try await runtime.snapshotStore.save(
+                rebuiltSnapshot,
+                domainIdentifier: runtime.configuration.domainIdentifier,
+                containerIdentifier: snapshotContainerIdentifier
+            )
+            emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
+            observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: rebuiltSnapshot.anchor), moreComing: false)
+        }
+    }
+
+    private func rebuildAdvancedSnapshot(runtime: FileProviderRuntime, folderID: Int) async throws -> KDriveSnapshot {
+        var items: [KDriveRemoteItem] = []
+        var cursor: String?
+        var storedCursor: String?
+        var seenCursors = Set<String>()
+
+        while true {
+            let response = try await runtime.remote.listAdvancedDirectory(
+                driveID: runtime.configuration.driveID,
+                folderID: folderID,
+                cursor: cursor,
+                limit: 200
+            )
+            items = mergeListingItems(existingItems: items, pageItems: response.items)
+            storedCursor = response.actions.isEmpty ? response.nextCursor : cursor
+
+            guard response.hasMore, let nextCursor = response.nextCursor else {
+                return KDriveSnapshot(
+                    anchor: storedCursor ?? UUID().uuidString,
+                    serverCursor: storedCursor,
+                    isFullyEnumerated: true,
+                    usesAdvancedListing: true,
+                    items: items
+                )
+            }
+
+            guard seenCursors.insert(nextCursor).inserted else {
+                return KDriveSnapshot(
+                    anchor: storedCursor ?? nextCursor,
+                    serverCursor: storedCursor ?? nextCursor,
+                    isFullyEnumerated: true,
+                    usesAdvancedListing: true,
+                    items: items
+                )
+            }
+            cursor = nextCursor
+        }
+    }
+
+    private func advancedFolderID(rootFileID: Int) throws -> Int {
+        let identifier = try KDriveItemIdentifier(rawValue: containerItemIdentifier.rawValue)
+        guard case .item(let folderID) = identifier,
+              folderID != rootFileID else {
+            throw NSFileProviderError(.noSuchItem)
+        }
+        return folderID
+    }
+
+    private func mergeListingItems(existingItems: [KDriveRemoteItem], pageItems: [KDriveRemoteItem]) -> [KDriveRemoteItem] {
+        var items = existingItems
+        var indexesByID = Dictionary(uniqueKeysWithValues: existingItems.enumerated().map { ($0.element.id, $0.offset) })
+
+        for item in pageItems {
+            if let index = indexesByID[item.id] {
+                items[index] = item
+            } else {
+                indexesByID[item.id] = items.count
+                items.append(item)
+            }
+        }
+
+        return items
+    }
+
+    private func emit(_ changes: KDriveSnapshotChangeSet, to observer: NSFileProviderChangeObserver, rootFileID: Int) {
+        if changes.updatedItems.isEmpty == false {
+            observer.didUpdate(changes.updatedItems.map { FileProviderItem(remoteItem: $0, rootFileID: rootFileID) })
+        }
+
+        if changes.deletedItemIDs.isEmpty == false {
+            observer.didDeleteItems(withIdentifiers: changes.deletedItemIDs.map { NSFileProviderItemIdentifier(String($0)) })
         }
     }
 }

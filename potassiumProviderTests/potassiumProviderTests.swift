@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 @testable import potassiumProvider
 import PotassiumProviderCore
 
+@Suite(.serialized)
 struct PotassiumProviderCoreTests {
     @Test func domainConfigurationStorePersistsAndRemovesConfigurations() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -35,8 +36,14 @@ struct PotassiumProviderCoreTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let store = KDriveSnapshotFileStore(directoryURL: directory)
-        let rootSnapshot = KDriveSnapshot(anchor: "root-anchor", items: [makeItem(id: 1, name: "Root.txt")])
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let rootSnapshot = KDriveSnapshot(
+            anchor: "root-anchor",
+            serverCursor: "root-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [makeItem(id: 1, name: "Root.txt")]
+        )
         let trashSnapshot = KDriveSnapshot(anchor: "trash-anchor", items: [makeItem(id: 2, name: "Trash.txt")])
 
         try await store.save(rootSnapshot, domainIdentifier: "domain/1", containerIdentifier: "root")
@@ -49,6 +56,27 @@ struct PotassiumProviderCoreTests {
 
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
+    }
+
+    @Test func snapshotDecodesLegacyFileStoreShape() throws {
+        struct LegacySnapshot: Encodable {
+            let anchor: String
+            let items: [KDriveRemoteItem]
+        }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(LegacySnapshot(anchor: "legacy-anchor", items: [makeItem(id: 7, name: "Legacy.txt")]))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let snapshot = try decoder.decode(KDriveSnapshot.self, from: data)
+
+        #expect(snapshot.anchor == "legacy-anchor")
+        #expect(snapshot.serverCursor == nil)
+        #expect(snapshot.isFullyEnumerated == false)
+        #expect(snapshot.usesAdvancedListing == false)
+        #expect(snapshot.items.first?.id == 7)
     }
 
     @Test func oauthAuthorizationRequestContainsPkceStateAndNoScopes() throws {
@@ -152,6 +180,53 @@ struct PotassiumProviderCoreTests {
         #expect(changes.deletedItemIDs == [2])
     }
 
+    @Test func advancedActionReducerReportsUpdatesAndDeletes() {
+        let updated = makeItem(id: 1, name: "Updated.txt")
+        let created = makeItem(id: 3, name: "Created.txt")
+        let changes = KDriveAdvancedActionReducer.changes(
+            from: [
+                KDriveRemoteFileAction(action: "file_update", fileID: 1, parentID: 10),
+                KDriveRemoteFileAction(action: "file_trash", fileID: 2, parentID: 10),
+                KDriveRemoteFileAction(action: "file_create", fileID: 3, parentID: 10),
+            ],
+            actionItems: [updated, created]
+        )
+
+        #expect(changes.updatedItems.map(\.id) == [1, 3])
+        #expect(changes.deletedItemIDs == [2])
+    }
+
+    @Test func advancedActionReducerUsesNewestActionAndDeletesWithoutActionFile() {
+        let oldSnapshot = KDriveSnapshot(
+            anchor: "old-cursor",
+            serverCursor: "old-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [
+                makeItem(id: 1, name: "Old.txt"),
+                makeItem(id: 2, name: "Deleted.txt"),
+            ]
+        )
+        let newItem = makeItem(id: 1, name: "Newest.txt")
+
+        let result = KDriveAdvancedActionReducer.applying(
+            actions: [
+                KDriveRemoteFileAction(action: "file_delete", fileID: 1, parentID: 10),
+                KDriveRemoteFileAction(action: "file_delete", fileID: 2, parentID: 10),
+                KDriveRemoteFileAction(action: "file_rename", fileID: 1, parentID: 10),
+            ],
+            actionItems: [newItem],
+            to: oldSnapshot,
+            anchor: "new-cursor",
+            serverCursor: "new-cursor"
+        )
+
+        #expect(result.changes.updatedItems.isEmpty)
+        #expect(result.changes.deletedItemIDs == [1, 2])
+        #expect(result.snapshot.items.isEmpty)
+        #expect(result.snapshot.serverCursor == "new-cursor")
+    }
+
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
         await KDriveDataRequestCapturingURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
@@ -180,6 +255,63 @@ struct PotassiumProviderCoreTests {
         #expect(query["height"] == "256")
         #expect(request.value(forHTTPHeaderField: "Accept") == "image/*")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
+    }
+
+    @Test func kdriveServiceFetchesInitialAdvancedListingThroughPotassiumRoute() async throws {
+        await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.advancedListingResponseData)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        let page = try await service.listAdvancedDirectory(driveID: 100, folderID: 42, cursor: nil, limit: 50)
+        let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
+        let requestURL = try #require(request.url)
+        let components = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
+        let queryItems = components.queryItems ?? []
+
+        #expect(request.httpMethod == "GET")
+        #expect(components.path == "/3/drive/100/files/42/listing")
+        #expect(queryItems.contains(URLQueryItem(name: "limit", value: "50")))
+        #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "type")))
+        #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "name")))
+        #expect(queryItems.contains(URLQueryItem(name: "order_for[name]", value: "asc")))
+        #expect(queryItems.contains(URLQueryItem(name: "order_for[type]", value: "asc")))
+        #expect(page.items.first?.id == 43)
+        #expect(page.actions.first?.action == "file_update")
+        #expect(page.actionItems.first?.id == 44)
+        #expect(page.nextCursor == "next-cursor")
+        #expect(page.hasMore == true)
+    }
+
+    @Test func kdriveServiceContinuesAdvancedListingThroughPotassiumRoute() async throws {
+        await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.advancedListingResponseData)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        _ = try await service.listAdvancedDirectory(driveID: 100, folderID: 42, cursor: "old-cursor", limit: 50)
+        let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
+        let requestURL = try #require(request.url)
+        let components = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
+        let queryItems = components.queryItems ?? []
+
+        #expect(request.httpMethod == "GET")
+        #expect(components.path == "/3/drive/100/files/42/listing/continue")
+        #expect(queryItems.contains(URLQueryItem(name: "cursor", value: "old-cursor")))
     }
 
     @MainActor
@@ -227,7 +359,7 @@ struct PotassiumProviderCoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let domainStore = DomainConfigurationFileStore(directoryURL: directory)
-        let snapshotStore = KDriveSnapshotFileStore(directoryURL: directory.appendingPathComponent("Snapshots", isDirectory: true))
+        let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
         let model = PotassiumProviderAppModel(
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
@@ -307,6 +439,62 @@ struct PotassiumProviderCoreTests {
             updatedAt: Date(timeIntervalSince1970: 300)
         )
     }
+
+    private static let advancedListingResponseData = """
+    {
+      "result": "success",
+      "data": {
+        "actions": [
+          {
+            "action": "file_update",
+            "file_id": 44,
+            "parent_id": 42
+          }
+        ],
+        "files": [
+          {
+            "id": 43,
+            "name": "Nested.pdf",
+            "path": "/Documents/Nested.pdf",
+            "type": "file",
+            "status": "active",
+            "visibility": "is_private_space",
+            "drive_id": 100,
+            "parent_id": 42,
+            "depth": 3,
+            "created_at": 1710000000,
+            "last_modified_at": 1710000100,
+            "updated_at": 1710000200,
+            "size": 1024,
+            "mime_type": "application/pdf",
+            "is_favorite": false
+          }
+        ],
+        "actions_files": [
+          {
+            "id": 44,
+            "name": "Changed.txt",
+            "path": "/Documents/Changed.txt",
+            "type": "file",
+            "status": "active",
+            "visibility": "is_private_space",
+            "drive_id": 100,
+            "parent_id": 42,
+            "depth": 3,
+            "created_at": 1710000000,
+            "last_modified_at": 1710000100,
+            "updated_at": 1710000200,
+            "size": 128,
+            "mime_type": "text/plain",
+            "is_favorite": true
+          }
+        ]
+      },
+      "cursor": "next-cursor",
+      "has_more": true,
+      "response_at": 1710000300
+    }
+    """.data(using: .utf8)!
 
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
@@ -430,6 +618,47 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
+    private static let capture = CapturedURLRequestStore()
+    private static let responseStore = CapturedResponseStore()
+
+    static func reset(responseData: Data) async {
+        await capture.reset()
+        await responseStore.set(responseData)
+    }
+
+    static func lastRequest() async -> URLRequest? {
+        await capture.lastRequest()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let request = request
+        Task {
+            await Self.capture.record(request: request)
+            let data = await Self.responseStore.data()
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
 private actor CapturedURLRequestStore {
     private var capturedRequest: URLRequest?
     private var capturedBody: Data?
@@ -468,6 +697,18 @@ private actor CapturedURLRequestStore {
     }
 }
 
+private actor CapturedResponseStore {
+    private var responseData = Data()
+
+    func set(_ data: Data) {
+        responseData = data
+    }
+
+    func data() -> Data {
+        responseData
+    }
+}
+
 @MainActor
 private final class FakeKDriveOAuthAuthenticator: KDriveOAuthAuthenticating {
     private let token: KDriveOAuthToken
@@ -500,6 +741,10 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
     }
 
     func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
