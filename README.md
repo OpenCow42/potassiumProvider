@@ -101,3 +101,9 @@ xcodebuild test \
 - The current conflict handling delegates many decisions to kDrive. Read
   [Conflicts](doc/CONFLICTS.md) before relying on it for important files.
 - SQLite snapshots cache metadata only. File contents are not stored there.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0, matching
+[Infomaniak/ios-kDrive](https://github.com/Infomaniak/ios-kDrive). See
+[LICENSE](LICENSE) for the full text.
