@@ -48,7 +48,7 @@ struct ContentView: View {
                 Spacer()
                 if model.isConnected {
                     Button(role: .destructive) {
-                        model.disconnect()
+                        Task { await model.disconnect() }
                     } label: {
                         Label("Disconnect", systemImage: "rectangle.portrait.and.arrow.right")
                     }

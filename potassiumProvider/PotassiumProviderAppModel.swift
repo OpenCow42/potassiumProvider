@@ -38,7 +38,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.domainRegistrar = domainRegistrar ?? FileProviderDomainRegistrar()
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.fileProviderFactory = fileProviderFactory
-        reloadStoredState()
+        statusMessage = "Not connected"
+        Task { await reloadStoredState() }
     }
 
     var isConnected: Bool {
@@ -58,9 +59,9 @@ final class PotassiumProviderAppModel: ObservableObject {
         return drives.first { $0.id == selectedDriveID }
     }
 
-    func reloadStoredState() {
+    func reloadStoredState() async {
         do {
-            token = try tokenStore.loadToken()
+            token = try await tokenStore.loadToken()
             domains = try domainStore.allConfigurations()
             errorMessage = nil
             statusMessage = token == nil ? "Not connected" : "Connected to kDrive."
@@ -182,9 +183,9 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
-    func disconnect() {
+    func disconnect() async {
         do {
-            try tokenStore.deleteToken()
+            try await tokenStore.deleteToken()
             token = nil
             drives = []
             selectedDriveID = nil
@@ -198,7 +199,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private func saveConnectedToken(_ token: KDriveOAuthToken) async throws {
-        try tokenStore.saveToken(token)
+        try await tokenStore.saveToken(token)
         self.token = token
         errorMessage = nil
     }
@@ -217,7 +218,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     private func usableToken() async throws -> KDriveOAuthToken {
         var loadedToken = token
         if loadedToken == nil {
-            loadedToken = try tokenStore.loadToken()
+            loadedToken = try await tokenStore.loadToken()
         }
 
         guard var token = loadedToken else {
@@ -229,7 +230,7 @@ final class PotassiumProviderAppModel: ObservableObject {
                 throw PotassiumProviderAppModelError.expiredToken
             }
             token = try await KDriveOAuthClient.refresh(refreshToken: refreshToken)
-            try tokenStore.saveToken(token)
+            try await tokenStore.saveToken(token)
             self.token = token
         }
 

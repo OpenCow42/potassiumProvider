@@ -1,5 +1,6 @@
 import FileProvider
 import Foundation
+import InfomaniakConcurrency
 import OSLog
 import PotassiumProviderCore
 
@@ -13,27 +14,16 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
         let dimensions = KDriveThumbnailDimensions(requestedSize: size)
         FileProviderLog.replicatedExtension.debug("fetchThumbnails(count:\(itemIdentifiers.count, privacy: .public) width:\(dimensions.width, privacy: .public) height:\(dimensions.height, privacy: .public)) domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public))")
 
-        let completionGate = CompletionGate()
         let progress = Progress(totalUnitCount: Int64(itemIdentifiers.count))
-        progress.cancellationHandler = {
-            FileProviderLog.replicatedExtension.debug("cancel fetchThumbnails(count:\(itemIdentifiers.count, privacy: .public))")
-            completionGate.complete {
-                completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-            }
-        }
 
-        Task {
+        let task = Task {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
-                for itemIdentifier in itemIdentifiers {
-                    guard progress.isCancelled == false else {
-                        completionGate.complete {
-                            completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-                        }
-                        return
-                    }
+                try Task.checkCancellation()
 
-                    await self.fetchThumbnail(
+                try await itemIdentifiers.asyncForEach { itemIdentifier in
+                    try Task.checkCancellation()
+                    try await self.fetchThumbnail(
                         for: itemIdentifier,
                         dimensions: dimensions,
                         runtime: runtime,
@@ -42,17 +32,20 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
                     progress.completedUnitCount += 1
                 }
 
+                try Task.checkCancellation()
                 FileProviderLog.replicatedExtension.info("fetched thumbnails count(\(itemIdentifiers.count, privacy: .public))")
-                completionGate.complete {
-                    completionHandler(nil)
-                }
+                completionHandler(nil)
+            } catch is CancellationError {
+                completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
             } catch {
                 let mappedError = providerError(error)
                 FileProviderLog.replicatedExtension.error("fetchThumbnails failed: \(mappedError.localizedDescription, privacy: .public)")
-                completionGate.complete {
-                    completionHandler(mappedError)
-                }
+                completionHandler(mappedError)
             }
+        }
+        progress.cancellationHandler = {
+            FileProviderLog.replicatedExtension.debug("cancel fetchThumbnails(count:\(itemIdentifiers.count, privacy: .public))")
+            task.cancel()
         }
 
         return progress
@@ -63,7 +56,8 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
         dimensions: KDriveThumbnailDimensions,
         runtime: FileProviderRuntime,
         perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void
-    ) async {
+    ) async throws {
+        try Task.checkCancellation()
         do {
             let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
             guard case let .item(fileID) = identifier else {
@@ -77,9 +71,15 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
                 width: dimensions.width,
                 height: dimensions.height
             )
+            try Task.checkCancellation()
             FileProviderLog.replicatedExtension.debug("fetched thumbnail for item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) bytes(\(data.count, privacy: .public))")
             perThumbnailCompletionHandler(itemIdentifier, data, nil)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
             let mappedError = providerError(error)
             FileProviderLog.replicatedExtension.error("fetchThumbnail(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
             perThumbnailCompletionHandler(itemIdentifier, nil, mappedError)
@@ -99,22 +99,5 @@ private struct KDriveThumbnailDimensions {
     private static func clampedPixelDimension(_ value: CGFloat) -> Int {
         guard value.isFinite else { return 10 }
         return min(max(Int(value.rounded(.up)), 10), 400)
-    }
-}
-
-private final class CompletionGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var isComplete = false
-
-    func complete(_ completion: () -> Void) {
-        lock.lock()
-        guard isComplete == false else {
-            lock.unlock()
-            return
-        }
-        isComplete = true
-        lock.unlock()
-
-        completion()
     }
 }

@@ -75,7 +75,7 @@ struct PotassiumProviderCoreTests {
     }
 
     @Test func oauthRefreshRequestDoesNotSpecifyScopes() async throws {
-        OAuthRequestCapturingURLProtocol.reset()
+        await OAuthRequestCapturingURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OAuthRequestCapturingURLProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -83,7 +83,7 @@ struct PotassiumProviderCoreTests {
 
         _ = try await KDriveOAuthClient.refresh(refreshToken: "refresh-token", session: session)
 
-        let body = try #require(OAuthRequestCapturingURLProtocol.lastBody())
+        let body = try #require(await OAuthRequestCapturingURLProtocol.lastBody())
         let form = try decodedFormBody(from: body)
         #expect(form["grant_type"] == "refresh_token")
         #expect(form["client_id"] == ProviderConstants.oauthClientID)
@@ -153,7 +153,7 @@ struct PotassiumProviderCoreTests {
     }
 
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
-        KDriveDataRequestCapturingURLProtocol.reset()
+        await KDriveDataRequestCapturingURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [KDriveDataRequestCapturingURLProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -166,7 +166,7 @@ struct PotassiumProviderCoreTests {
         )
 
         let data = try await service.thumbnail(driveID: 100, fileID: 42, width: 128, height: 256)
-        let request = try #require(KDriveDataRequestCapturingURLProtocol.lastRequest())
+        let request = try #require(await KDriveDataRequestCapturingURLProtocol.lastRequest())
         let requestURL = try #require(request.url)
         let components = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
         let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
@@ -216,8 +216,9 @@ struct PotassiumProviderCoreTests {
         #expect(model.manualAccessToken.isEmpty)
         #expect(model.drives == [drive])
         #expect(model.selectedDriveID == drive.id)
-        #expect(tokenStore.loadToken()?.accessToken == "manual-token")
-        #expect(tokenStore.loadToken()?.scope == nil)
+        let savedToken = await tokenStore.loadToken()
+        #expect(savedToken?.accessToken == "manual-token")
+        #expect(savedToken?.scope == nil)
     }
 
     @MainActor
@@ -321,28 +322,19 @@ struct PotassiumProviderCoreTests {
     }
 }
 
-private final class OAuthRequestCapturingURLProtocol: URLProtocol {
-    private static let lock = NSLock()
-    private static var capturedRequest: URLRequest?
-    private static var capturedBody: Data?
+private final class OAuthRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let capture = CapturedURLRequestStore()
 
-    static func reset() {
-        lock.lock()
-        capturedRequest = nil
-        capturedBody = nil
-        lock.unlock()
+    static func reset() async {
+        await capture.reset()
     }
 
-    static func lastRequest() -> URLRequest? {
-        lock.lock()
-        defer { lock.unlock() }
-        return capturedRequest
+    static func lastRequest() async -> URLRequest? {
+        await capture.lastRequest()
     }
 
-    static func lastBody() -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return capturedBody
+    static func lastBody() async -> Data? {
+        await capture.lastBody()
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -354,28 +346,31 @@ private final class OAuthRequestCapturingURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        Self.lock.lock()
-        Self.capturedRequest = request
-        Self.capturedBody = request.httpBody ?? Self.readBodyStream(from: request)
-        Self.lock.unlock()
+        Task { [request, weak self] in
+            await Self.capture.record(
+                request: request,
+                body: request.httpBody ?? Self.readBodyStream(from: request)
+            )
 
-        let data = """
-        {
-          "access_token": "refreshed-token",
-          "token_type": "Bearer",
-          "expires_in": 3600,
-          "refresh_token": "new-refresh-token"
+            let data = """
+            {
+              "access_token": "refreshed-token",
+              "token_type": "Bearer",
+              "expires_in": 3600,
+              "refresh_token": "new-refresh-token"
+            }
+            """.data(using: .utf8)!
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            guard let self else { return }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
         }
-        """.data(using: .utf8)!
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: 200,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
@@ -401,21 +396,16 @@ private final class OAuthRequestCapturingURLProtocol: URLProtocol {
     }
 }
 
-private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
+private final class KDriveDataRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable {
     static let responseData = Data([0x89, 0x50, 0x4E, 0x47])
-    private static let lock = NSLock()
-    private static var capturedRequest: URLRequest?
+    private static let capture = CapturedURLRequestStore()
 
-    static func reset() {
-        lock.lock()
-        capturedRequest = nil
-        lock.unlock()
+    static func reset() async {
+        await capture.reset()
     }
 
-    static func lastRequest() -> URLRequest? {
-        lock.lock()
-        defer { lock.unlock() }
-        return capturedRequest
+    static func lastRequest() async -> URLRequest? {
+        await capture.lastRequest()
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -427,22 +417,46 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        Self.lock.lock()
-        Self.capturedRequest = request
-        Self.lock.unlock()
+        Task { [request, weak self] in
+            await Self.capture.record(request: request)
 
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: 200,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "image/png"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.responseData)
-        client?.urlProtocolDidFinishLoading(self)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "image/png"]
+            )!
+            guard let self else { return }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Self.responseData)
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
 
     override func stopLoading() {}
+}
+
+private actor CapturedURLRequestStore {
+    private var capturedRequest: URLRequest?
+    private var capturedBody: Data?
+
+    func reset() {
+        capturedRequest = nil
+        capturedBody = nil
+    }
+
+    func record(request: URLRequest, body: Data? = nil) {
+        capturedRequest = request
+        capturedBody = body
+    }
+
+    func lastRequest() -> URLRequest? {
+        capturedRequest
+    }
+
+    func lastBody() -> Data? {
+        capturedBody
+    }
 }
 
 @MainActor

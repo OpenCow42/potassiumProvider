@@ -1,5 +1,5 @@
 {
-  "originHash" : "0b6f7b38a78c43b20382c9355d2b56a576acdfc35f830435c3c0ebc9216e5bc2",
+  "originHash" : "613cbb0d4ce50189d97b72e2dc228bda845d46b491781fb0143dbeb79a057a19",
   "pins" : [
     {
       "identity" : "potassiumchannel",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "964c300fb0736699ce945c9edb56ecd62eba27a3",
         "version" : "0.16.0"
+      }
+    },
+    {
+      "identity" : "swift-concurrency",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:OpenCow42/swift-concurrency.git",
+      "state" : {
+        "revision" : "696ea95ad5974bd04f63d353f317cf5ecd9235e8",
+        "version" : "1.0.1"
       }
     }
   ],

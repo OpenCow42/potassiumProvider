@@ -2,17 +2,15 @@ import Foundation
 import Security
 
 public protocol OAuthTokenStoring: Sendable {
-    func loadToken() throws -> KDriveOAuthToken?
-    func saveToken(_ token: KDriveOAuthToken) throws
-    func deleteToken() throws
+    func loadToken() async throws -> KDriveOAuthToken?
+    func saveToken(_ token: KDriveOAuthToken) async throws
+    func deleteToken() async throws
 }
 
 public final class KeychainOAuthTokenStore: OAuthTokenStoring, @unchecked Sendable {
     private let service: String
     private let account: String
     private let accessGroup: String?
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
 
     public init(
         service: String = ProviderConstants.keychainService,
@@ -22,11 +20,9 @@ public final class KeychainOAuthTokenStore: OAuthTokenStoring, @unchecked Sendab
         self.service = service
         self.account = account
         self.accessGroup = accessGroup
-        encoder.dateEncodingStrategy = .iso8601
-        decoder.dateDecodingStrategy = .iso8601
     }
 
-    public func loadToken() throws -> KDriveOAuthToken? {
+    public func loadToken() async throws -> KDriveOAuthToken? {
         var query = baseQuery()
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         query[kSecReturnData as String] = true
@@ -37,11 +33,11 @@ public final class KeychainOAuthTokenStore: OAuthTokenStoring, @unchecked Sendab
         guard status == errSecSuccess, let data = result as? Data else {
             throw KeychainTokenStoreError.unhandledStatus(status)
         }
-        return try decoder.decode(KDriveOAuthToken.self, from: data)
+        return try makeDecoder().decode(KDriveOAuthToken.self, from: data)
     }
 
-    public func saveToken(_ token: KDriveOAuthToken) throws {
-        let data = try encoder.encode(token)
+    public func saveToken(_ token: KDriveOAuthToken) async throws {
+        let data = try makeEncoder().encode(token)
         let query = baseQuery()
         let attributes = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -58,7 +54,7 @@ public final class KeychainOAuthTokenStore: OAuthTokenStoring, @unchecked Sendab
         }
     }
 
-    public func deleteToken() throws {
+    public func deleteToken() async throws {
         let status = SecItemDelete(baseQuery() as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainTokenStoreError.unhandledStatus(status)
@@ -76,6 +72,18 @@ public final class KeychainOAuthTokenStore: OAuthTokenStoring, @unchecked Sendab
         }
         return query
     }
+
+    private func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
 }
 
 public enum KeychainTokenStoreError: Error, Equatable, LocalizedError, Sendable {
@@ -89,27 +97,22 @@ public enum KeychainTokenStoreError: Error, Equatable, LocalizedError, Sendable 
     }
 }
 
-public final class InMemoryOAuthTokenStore: OAuthTokenStoring, @unchecked Sendable {
+public actor InMemoryOAuthTokenStore: OAuthTokenStoring {
     private var token: KDriveOAuthToken?
-    private let lock = NSLock()
 
     public init(token: KDriveOAuthToken? = nil) {
         self.token = token
     }
 
     public func loadToken() -> KDriveOAuthToken? {
-        lock.withLock { token }
+        token
     }
 
     public func saveToken(_ token: KDriveOAuthToken) {
-        lock.withLock {
-            self.token = token
-        }
+        self.token = token
     }
 
     public func deleteToken() {
-        lock.withLock {
-            token = nil
-        }
+        token = nil
     }
 }

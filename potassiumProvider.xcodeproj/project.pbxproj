@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */; };
+		C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C02FF8491700CB8B7E /* PotassiumKDrive */; };
+		C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C22FF8491700CB8B7E /* PotassiumOAuth */; };
+		C0DCD8EF2FFA44AB00520215 /* InfomaniakConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = C0DCD8EE2FFA44AB00520215 /* InfomaniakConcurrency */; };
 		D00000012FF9000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
 		D00000022FF9000000000002 /* PotassiumProviderCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D00000032FF9000000000003 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
@@ -15,12 +19,23 @@
 		D00000062FF9000000000006 /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = D00001032FF9000000000003 /* PotassiumOAuth */; };
 		D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
 		D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */; };
-		C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C02FF8491700CB8B7E /* PotassiumKDrive */; };
-		C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C22FF8491700CB8B7E /* PotassiumOAuth */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		C09842942FF847B000CB8B7E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C09842852FF847AD00CB8B7E;
+			remoteInfo = potassiumProvider;
+		};
+		C098429E2FF847B000CB8B7E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C09842852FF847AD00CB8B7E;
+			remoteInfo = potassiumProvider;
+		};
 		D00000112FF9000000000001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
@@ -48,20 +63,6 @@
 			proxyType = 1;
 			remoteGlobalIDString = D00000612FF9000000000001;
 			remoteInfo = PotassiumProviderCore;
-		};
-		C09842942FF847B000CB8B7E /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = C09842852FF847AD00CB8B7E;
-			remoteInfo = potassiumProvider;
-		};
-		C098429E2FF847B000CB8B7E /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = C09842852FF847AD00CB8B7E;
-			remoteInfo = potassiumProvider;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -91,11 +92,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		D00000312FF9000000000001 /* PotassiumProviderCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = PotassiumProviderCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = potassiumProviderFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C09842862FF847AD00CB8B7E /* potassiumProvider.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = potassiumProvider.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C09842932FF847B000CB8B7E /* potassiumProviderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = potassiumProviderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C098429D2FF847B000CB8B7E /* potassiumProviderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = potassiumProviderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D00000312FF9000000000001 /* PotassiumProviderCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = PotassiumProviderCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = potassiumProviderFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -168,6 +169,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */,
+				C0DCD8EF2FFA44AB00520215 /* InfomaniakConcurrency in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -331,6 +333,7 @@
 			);
 			name = potassiumProviderFileProvider;
 			packageProductDependencies = (
+				C0DCD8EE2FFA44AB00520215 /* InfomaniakConcurrency */,
 			);
 			productName = potassiumProviderFileProvider;
 			productReference = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */;
@@ -377,6 +380,7 @@
 			packageReferences = (
 				C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */,
 				C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */,
+				C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C09842872FF847AD00CB8B7E /* Products */;
@@ -1052,6 +1056,14 @@
 				minimumVersion = 0.1.0;
 			};
 		};
+		C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "git@github.com:OpenCow42/swift-concurrency.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1069,6 +1081,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;
 			productName = PotassiumOAuth;
+		};
+		C0DCD8EE2FFA44AB00520215 /* InfomaniakConcurrency */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */;
+			productName = InfomaniakConcurrency;
 		};
 		D00001012FF9000000000001 /* PotassiumChannelCore */ = {
 			isa = XCSwiftPackageProductDependency;
