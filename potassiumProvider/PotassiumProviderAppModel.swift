@@ -62,7 +62,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     func reloadStoredState() async {
         do {
             token = try await tokenStore.loadToken()
-            domains = try domainStore.allConfigurations()
+            domains = try await domainStore.allConfigurations()
             errorMessage = nil
             statusMessage = token == nil ? "Not connected" : "Connected to kDrive."
         } catch {
@@ -153,16 +153,16 @@ final class PotassiumProviderAppModel: ObservableObject {
                 updatedAt: now
             )
 
-            try domainStore.save(configuration)
+            try await domainStore.save(configuration)
             savedConfiguration = configuration
-            domains = try domainStore.allConfigurations()
+            domains = try await domainStore.allConfigurations()
             try await domainRegistrar.addDomain(for: configuration)
             domainDisplayName = ""
             statusMessage = "Added \(configuration.displayName) to Files."
             errorMessage = nil
         } catch {
             if let savedConfiguration {
-                rollbackFailedDomainAddition(savedConfiguration)
+                await rollbackFailedDomainAddition(savedConfiguration)
             }
             errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
             statusMessage = nil
@@ -172,9 +172,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     func removeDomain(_ configuration: ProviderDomainConfiguration) async {
         do {
             try await domainRegistrar.removeDomain(for: configuration)
-            try snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
-            try domainStore.remove(domainIdentifier: configuration.domainIdentifier)
-            domains = try domainStore.allConfigurations()
+            try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
+            try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+            domains = try await domainStore.allConfigurations()
             statusMessage = "Removed \(configuration.displayName) from Files."
             errorMessage = nil
         } catch {
@@ -204,11 +204,11 @@ final class PotassiumProviderAppModel: ObservableObject {
         errorMessage = nil
     }
 
-    private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) {
-        try? snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
-        try? domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+    private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) async {
+        try? await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
+        try? await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
 
-        if let storedDomains = try? domainStore.allConfigurations() {
+        if let storedDomains = try? await domainStore.allConfigurations() {
             domains = storedDomains
         } else {
             domains.removeAll { $0.domainIdentifier == configuration.domainIdentifier }

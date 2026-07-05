@@ -7,7 +7,7 @@ public protocol OAuthTokenStoring: Sendable {
     func deleteToken() async throws
 }
 
-public final class KeychainOAuthTokenStore: OAuthTokenStoring, @unchecked Sendable {
+public actor KeychainOAuthTokenStore: OAuthTokenStoring {
     private let service: String
     private let account: String
     private let accessGroup: String?

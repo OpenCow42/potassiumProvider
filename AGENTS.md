@@ -65,9 +65,10 @@ app.
 - Prefer clarity over brevity, especially around File Provider and networking
   behavior.
 - Use structured concurrency where practical. Use InfomaniakConcurrency where
-  it fits the problem instead of reaching for semaphores or locks. Keep
-  cancellation and actor/thread expectations explicit when crossing system or
-  network boundaries.
+  it fits the problem instead of reaching for semaphores or locks. Prefer
+  explicit async/await, actors, and isolated state over `@unchecked Sendable`
+  whenever possible. Keep cancellation and actor/thread expectations explicit
+  when crossing system or network boundaries.
 - Keep public APIs and documentation intentional. Document semantic choices when
   API ergonomics hide non-obvious system behavior.
 - Keep changes small, focused, and easy to review. Do not mix unrelated

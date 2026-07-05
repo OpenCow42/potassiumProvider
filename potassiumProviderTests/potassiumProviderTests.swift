@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import PotassiumProviderCore
 
 struct PotassiumProviderCoreTests {
-    @Test func domainConfigurationStorePersistsAndRemovesConfigurations() throws {
+    @Test func domainConfigurationStorePersistsAndRemovesConfigurations() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("potassium-provider-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -20,18 +20,18 @@ struct PotassiumProviderCoreTests {
             updatedAt: Date(timeIntervalSince1970: 1_000)
         )
 
-        try store.save(configuration)
+        try await store.save(configuration)
 
-        #expect(try store.configuration(domainIdentifier: "domain-1") == configuration)
-        #expect(try store.allConfigurations() == [configuration])
+        #expect(try await store.configuration(domainIdentifier: "domain-1") == configuration)
+        #expect(try await store.allConfigurations() == [configuration])
 
-        try store.remove(domainIdentifier: "domain-1")
+        try await store.remove(domainIdentifier: "domain-1")
 
-        #expect(try store.configuration(domainIdentifier: "domain-1") == nil)
-        #expect(try store.allConfigurations().isEmpty)
+        #expect(try await store.configuration(domainIdentifier: "domain-1") == nil)
+        #expect(try await store.allConfigurations().isEmpty)
     }
 
-    @Test func snapshotStorePersistsAndRemovesDomainSnapshots() throws {
+    @Test func snapshotStorePersistsAndRemovesDomainSnapshots() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -39,16 +39,16 @@ struct PotassiumProviderCoreTests {
         let rootSnapshot = KDriveSnapshot(anchor: "root-anchor", items: [makeItem(id: 1, name: "Root.txt")])
         let trashSnapshot = KDriveSnapshot(anchor: "trash-anchor", items: [makeItem(id: 2, name: "Trash.txt")])
 
-        try store.save(rootSnapshot, domainIdentifier: "domain/1", containerIdentifier: "root")
-        try store.save(trashSnapshot, domainIdentifier: "domain/1", containerIdentifier: "trash")
+        try await store.save(rootSnapshot, domainIdentifier: "domain/1", containerIdentifier: "root")
+        try await store.save(trashSnapshot, domainIdentifier: "domain/1", containerIdentifier: "trash")
 
-        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == rootSnapshot)
-        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == trashSnapshot)
+        #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == rootSnapshot)
+        #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == trashSnapshot)
 
-        try store.removeSnapshots(domainIdentifier: "domain/1")
+        try await store.removeSnapshots(domainIdentifier: "domain/1")
 
-        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
-        #expect(try store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
+        #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
+        #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
     }
 
     @Test func oauthAuthorizationRequestContainsPkceStateAndNoScopes() throws {
@@ -247,8 +247,8 @@ struct PotassiumProviderCoreTests {
         #expect(domain.displayName == "Team Files")
         #expect(domain.driveID == 42)
         #expect(domain.driveName == "Work Drive")
-        #expect(try domainStore.allConfigurations().count == 1)
-        try snapshotStore.save(
+        #expect(try await domainStore.allConfigurations().count == 1)
+        try await snapshotStore.save(
             KDriveSnapshot(anchor: "anchor", items: [makeItem(id: 7, name: "Cached.txt")]),
             domainIdentifier: domain.domainIdentifier,
             containerIdentifier: "root"
@@ -257,8 +257,8 @@ struct PotassiumProviderCoreTests {
         await model.removeDomain(domain)
 
         #expect(model.domains.isEmpty)
-        #expect(try domainStore.allConfigurations().isEmpty)
-        #expect(try snapshotStore.snapshot(domainIdentifier: domain.domainIdentifier, containerIdentifier: "root") == nil)
+        #expect(try await domainStore.allConfigurations().isEmpty)
+        #expect(try await snapshotStore.snapshot(domainIdentifier: domain.domainIdentifier, containerIdentifier: "root") == nil)
     }
 
     @MainActor
@@ -282,7 +282,7 @@ struct PotassiumProviderCoreTests {
         await model.addDomain()
 
         #expect(model.domains.isEmpty)
-        #expect(try domainStore.allConfigurations().isEmpty)
+        #expect(try await domainStore.allConfigurations().isEmpty)
         #expect(model.errorMessage?.contains("The application cannot be used right now") == true)
     }
 
@@ -322,7 +322,7 @@ struct PotassiumProviderCoreTests {
     }
 }
 
-private final class OAuthRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable {
+private final class OAuthRequestCapturingURLProtocol: URLProtocol {
     private static let capture = CapturedURLRequestStore()
 
     static func reset() async {
@@ -346,31 +346,27 @@ private final class OAuthRequestCapturingURLProtocol: URLProtocol, @unchecked Se
     }
 
     override func startLoading() {
-        Task { [request, weak self] in
-            await Self.capture.record(
-                request: request,
-                body: request.httpBody ?? Self.readBodyStream(from: request)
-            )
+        let request = request
+        let body = request.httpBody ?? Self.readBodyStream(from: request)
+        Task { await Self.capture.record(request: request, body: body) }
 
-            let data = """
-            {
-              "access_token": "refreshed-token",
-              "token_type": "Bearer",
-              "expires_in": 3600,
-              "refresh_token": "new-refresh-token"
-            }
-            """.data(using: .utf8)!
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
-            )!
-            guard let self else { return }
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+        let data = """
+        {
+          "access_token": "refreshed-token",
+          "token_type": "Bearer",
+          "expires_in": 3600,
+          "refresh_token": "new-refresh-token"
         }
+        """.data(using: .utf8)!
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
@@ -396,7 +392,7 @@ private final class OAuthRequestCapturingURLProtocol: URLProtocol, @unchecked Se
     }
 }
 
-private final class KDriveDataRequestCapturingURLProtocol: URLProtocol, @unchecked Sendable {
+private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
     static let responseData = Data([0x89, 0x50, 0x4E, 0x47])
     private static let capture = CapturedURLRequestStore()
 
@@ -417,20 +413,18 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol, @uncheck
     }
 
     override func startLoading() {
-        Task { [request, weak self] in
-            await Self.capture.record(request: request)
+        let request = request
+        Task { await Self.capture.record(request: request) }
 
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "image/png"]
-            )!
-            guard let self else { return }
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: Self.responseData)
-            client?.urlProtocolDidFinishLoading(self)
-        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "image/png"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.responseData)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
@@ -439,23 +433,38 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol, @uncheck
 private actor CapturedURLRequestStore {
     private var capturedRequest: URLRequest?
     private var capturedBody: Data?
+    private var captureWaiters: [CheckedContinuation<Void, Never>] = []
 
     func reset() {
         capturedRequest = nil
         capturedBody = nil
+        captureWaiters.removeAll()
     }
 
     func record(request: URLRequest, body: Data? = nil) {
         capturedRequest = request
         capturedBody = body
+        let waiters = captureWaiters
+        captureWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 
-    func lastRequest() -> URLRequest? {
-        capturedRequest
+    func lastRequest() async -> URLRequest? {
+        await waitForCapture()
+        return capturedRequest
     }
 
-    func lastBody() -> Data? {
-        capturedBody
+    func lastBody() async -> Data? {
+        await waitForCapture()
+        return capturedBody
+    }
+
+    private func waitForCapture() async {
+        guard capturedRequest == nil else { return }
+
+        await withCheckedContinuation { continuation in
+            captureWaiters.append(continuation)
+        }
     }
 }
 

@@ -24,7 +24,7 @@ struct FileProviderRuntime: Sendable {
 
     static func load(domain: NSFileProviderDomain) async throws -> FileProviderRuntime {
         FileProviderLog.runtime.debug("load runtime for domain(\(domain.identifier.rawValue, privacy: .public))")
-        let configuration = try loadConfiguration(domain: domain)
+        let configuration = try await loadConfiguration(domain: domain)
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         guard var token = try await tokenStore.loadToken() else {
             FileProviderLog.runtime.error("missing OAuth token for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
@@ -51,7 +51,7 @@ struct FileProviderRuntime: Sendable {
         )
     }
 
-    static func loadConfiguration(domain: NSFileProviderDomain) throws -> ProviderDomainConfiguration {
+    static func loadConfiguration(domain: NSFileProviderDomain) async throws -> ProviderDomainConfiguration {
         FileProviderLog.runtime.debug("load configuration for domain(\(domain.identifier.rawValue, privacy: .public)) from app group")
         let configurationStore: DomainConfigurationFileStore
         do {
@@ -61,7 +61,7 @@ struct FileProviderRuntime: Sendable {
             throw error
         }
 
-        guard let configuration = try configurationStore.configuration(domainIdentifier: domain.identifier.rawValue) else {
+        guard let configuration = try await configurationStore.configuration(domainIdentifier: domain.identifier.rawValue) else {
             FileProviderLog.runtime.error("missing configuration for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
             throw NSFileProviderError(.notAuthenticated)
         }

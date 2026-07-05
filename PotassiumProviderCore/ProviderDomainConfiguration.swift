@@ -31,13 +31,13 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
 }
 
 public protocol DomainConfigurationStoring: Sendable {
-    func allConfigurations() throws -> [ProviderDomainConfiguration]
-    func configuration(domainIdentifier: String) throws -> ProviderDomainConfiguration?
-    func save(_ configuration: ProviderDomainConfiguration) throws
-    func remove(domainIdentifier: String) throws
+    func allConfigurations() async throws -> [ProviderDomainConfiguration]
+    func configuration(domainIdentifier: String) async throws -> ProviderDomainConfiguration?
+    func save(_ configuration: ProviderDomainConfiguration) async throws
+    func remove(domainIdentifier: String) async throws
 }
 
-public final class DomainConfigurationFileStore: DomainConfigurationStoring, @unchecked Sendable {
+public actor DomainConfigurationFileStore: DomainConfigurationStoring {
     private let directoryURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -51,7 +51,7 @@ public final class DomainConfigurationFileStore: DomainConfigurationStoring, @un
         self.decoder.dateDecodingStrategy = .iso8601
     }
 
-    public convenience init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
+    public init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
         guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             throw DomainConfigurationStoreError.missingAppGroupContainer(appGroupIdentifier)
         }

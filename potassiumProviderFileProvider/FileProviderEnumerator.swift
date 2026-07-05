@@ -37,18 +37,20 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        do {
-            let configuration = try FileProviderRuntime.loadConfiguration(domain: domain)
-            let snapshotStore = try FileProviderRuntime.makeSnapshotStore()
-            let snapshot = try snapshotStore.snapshot(
-                domainIdentifier: configuration.domainIdentifier,
-                containerIdentifier: snapshotContainerIdentifier
-            )
-            FileProviderLog.enumeration.debug("currentSyncAnchor container(\(self.containerItemIdentifier.rawValue, privacy: .public)) snapshotPresent(\(snapshot != nil, privacy: .public))")
-            completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
-        } catch {
-            FileProviderLog.enumeration.error("currentSyncAnchor failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
-            completionHandler(nil)
+        Task {
+            do {
+                let configuration = try await FileProviderRuntime.loadConfiguration(domain: domain)
+                let snapshotStore = try FileProviderRuntime.makeSnapshotStore()
+                let snapshot = try await snapshotStore.snapshot(
+                    domainIdentifier: configuration.domainIdentifier,
+                    containerIdentifier: snapshotContainerIdentifier
+                )
+                FileProviderLog.enumeration.debug("currentSyncAnchor container(\(self.containerItemIdentifier.rawValue, privacy: .public)) snapshotPresent(\(snapshot != nil, privacy: .public))")
+                completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
+            } catch {
+                FileProviderLog.enumeration.error("currentSyncAnchor failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                completionHandler(nil)
+            }
         }
     }
 
@@ -58,7 +60,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         Task {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.domain)
-                let oldSnapshot = try runtime.snapshotStore.snapshot(
+                let oldSnapshot = try await runtime.snapshotStore.snapshot(
                     domainIdentifier: runtime.configuration.domainIdentifier,
                     containerIdentifier: self.snapshotContainerIdentifier
                 )
@@ -75,7 +77,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     observer.didDeleteItems(withIdentifiers: changes.deletedItemIDs.map { NSFileProviderItemIdentifier(String($0)) })
                 }
 
-                try runtime.snapshotStore.save(
+                try await runtime.snapshotStore.save(
                     newSnapshot,
                     domainIdentifier: runtime.configuration.domainIdentifier,
                     containerIdentifier: self.snapshotContainerIdentifier

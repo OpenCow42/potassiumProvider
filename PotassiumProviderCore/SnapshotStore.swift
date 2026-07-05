@@ -1,12 +1,12 @@
 import Foundation
 
 public protocol KDriveSnapshotStoring: Sendable {
-    func snapshot(domainIdentifier: String, containerIdentifier: String) throws -> KDriveSnapshot?
-    func save(_ snapshot: KDriveSnapshot, domainIdentifier: String, containerIdentifier: String) throws
-    func removeSnapshots(domainIdentifier: String) throws
+    func snapshot(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot?
+    func save(_ snapshot: KDriveSnapshot, domainIdentifier: String, containerIdentifier: String) async throws
+    func removeSnapshots(domainIdentifier: String) async throws
 }
 
-public final class KDriveSnapshotFileStore: KDriveSnapshotStoring, @unchecked Sendable {
+public actor KDriveSnapshotFileStore: KDriveSnapshotStoring {
     private let directoryURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -20,7 +20,7 @@ public final class KDriveSnapshotFileStore: KDriveSnapshotStoring, @unchecked Se
         self.decoder.dateDecodingStrategy = .iso8601
     }
 
-    public convenience init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
+    public init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
         guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             throw KDriveSnapshotStoreError.missingAppGroupContainer(appGroupIdentifier)
         }
