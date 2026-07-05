@@ -164,6 +164,157 @@ struct PotassiumProviderCoreTests {
         #expect(try await firstStore.snapshot(domainIdentifier: "domain-1", containerIdentifier: "folder-1") == newerSnapshot)
     }
 
+    @Test func providerEventStorePersistsUpdatesFiltersAndRemovesEvents() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try KDriveProviderEventSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let oldConflictID = UUID()
+        let newConflictID = UUID()
+        let otherDomainConflictID = UUID()
+        var oldConflict = makeConflictEvent(
+            id: oldConflictID,
+            detectedAt: Date(timeIntervalSince1970: 100),
+            domainIdentifier: "domain-1",
+            itemName: "Old.txt",
+            state: .unresolved
+        )
+        let newConflict = makeConflictEvent(
+            id: newConflictID,
+            detectedAt: Date(timeIntervalSince1970: 300),
+            domainIdentifier: "domain-1",
+            itemName: "New.txt",
+            state: .blockedRetryable
+        )
+        let otherDomainConflict = makeConflictEvent(
+            id: otherDomainConflictID,
+            detectedAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-2",
+            itemName: "Other.txt",
+            state: .failed
+        )
+
+        try await store.saveConflict(oldConflict)
+        try await store.saveConflict(newConflict)
+        try await store.saveConflict(otherDomainConflict)
+
+        oldConflict.resolvedAt = Date(timeIntervalSince1970: 400)
+        oldConflict.conflictItemIdentifier = "99"
+        oldConflict.conflictItemName = "Old conflict.txt"
+        oldConflict.resolutionState = .automaticallyResolved
+        oldConflict.automaticallyResolved = true
+        oldConflict.resolutionKind = .preservedBothAsRenamedConflictCopy
+        oldConflict.resolutionSummary = "Preserved both."
+        try await store.saveConflict(oldConflict)
+
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 150),
+            domainIdentifier: "domain-1",
+            kind: .enumeration,
+            summary: "Older activity."
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 350),
+            domainIdentifier: "domain-1",
+            kind: .changeSync,
+            summary: "Newer activity.",
+            relatedConflictID: newConflictID
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 250),
+            domainIdentifier: "domain-2",
+            kind: .delete,
+            summary: "Other domain activity."
+        ))
+
+        let allConflicts = try await store.recentConflicts(domainIdentifier: nil, limit: 10)
+        #expect(allConflicts.map(\.id) == [newConflictID, otherDomainConflictID, oldConflictID])
+
+        let domainConflicts = try await store.recentConflicts(domainIdentifier: "domain-1", limit: 10)
+        #expect(domainConflicts.map(\.id) == [newConflictID, oldConflictID])
+        #expect(domainConflicts.last?.resolutionState == .automaticallyResolved)
+        #expect(domainConflicts.last?.conflictItemIdentifier == "99")
+
+        let domainActivity = try await store.recentActivity(domainIdentifier: "domain-1", limit: 10)
+        #expect(domainActivity.map(\.summary) == ["Newer activity.", "Older activity."])
+        #expect(domainActivity.first?.relatedConflictID == newConflictID)
+
+        try await store.removeEvents(domainIdentifier: "domain-1")
+
+        #expect(try await store.recentConflicts(domainIdentifier: "domain-1", limit: 10).isEmpty)
+        #expect(try await store.recentActivity(domainIdentifier: "domain-1", limit: 10).isEmpty)
+        #expect(try await store.recentConflicts(domainIdentifier: nil, limit: 10).map(\.id) == [otherDomainConflictID])
+    }
+
+    @Test func providerEventStoreObservesLocalAndExternalDatabaseChanges() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+        let observingStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
+
+        let localChanges = await observingStore.eventChanges(pollInterval: 0.05)
+        async let observedLocalChange = eventChangeArrives(from: localChanges)
+
+        try await observingStore.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 100),
+            domainIdentifier: "domain-1",
+            kind: .enumeration,
+            summary: "Observed local activity."
+        ))
+
+        #expect(await observedLocalChange)
+
+        let externalChanges = await observingStore.eventChanges(pollInterval: 0.05)
+        async let observedExternalChange = eventChangeArrives(from: externalChanges)
+        let writingStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
+
+        try await writingStore.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-1",
+            kind: .changeSync,
+            summary: "Observed external activity."
+        ))
+
+        #expect(await observedExternalChange)
+    }
+
+    @MainActor
+    @Test func conflictLogModelLoadsConflictsAndOptionalActivityFromStore() async throws {
+        let conflict = makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 100),
+            domainIdentifier: "domain-1",
+            itemName: "Report.txt",
+            state: .blockedRetryable
+        )
+        let activity = makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-1",
+            kind: .enumeration,
+            summary: "Enumerated folder."
+        )
+        let store = FakeProviderEventStore(conflicts: [conflict], activity: [activity])
+        let model = ConflictLogViewModel(eventStore: store)
+
+        await model.load()
+
+        #expect(model.conflicts == [conflict])
+        #expect(model.activity.isEmpty)
+        #expect(model.timelineItems.map(\.id) == ["conflict-\(conflict.id.uuidString)"])
+        #expect(await store.activityQueryCount() == 0)
+
+        model.showsActivity = true
+        await model.load()
+
+        #expect(model.activity == [activity])
+        #expect(model.timelineItems.map(\.id) == [
+            "activity-\(activity.id.uuidString)",
+            "conflict-\(conflict.id.uuidString)"
+        ])
+        #expect(await store.activityQueryCount() == 1)
+    }
+
     @Test func snapshotDecodesLegacyFileStoreShape() throws {
         struct LegacySnapshot: Encodable {
             let anchor: String
@@ -544,13 +695,16 @@ struct PotassiumProviderCoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let domainStore = DomainConfigurationFileStore(directoryURL: directory)
-        let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+        let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
         let model = PotassiumProviderAppModel(
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: NoopProviderDomainRegistrar(),
             snapshotStore: snapshotStore,
+            eventStore: eventStore,
             automaticallyReloadStoredState: false,
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
@@ -570,12 +724,27 @@ struct PotassiumProviderCoreTests {
             domainIdentifier: domain.domainIdentifier,
             containerIdentifier: "root"
         )
+        try await eventStore.saveConflict(makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 500),
+            domainIdentifier: domain.domainIdentifier,
+            itemName: "Cached.txt",
+            state: .blockedRetryable
+        ))
+        try await eventStore.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 600),
+            domainIdentifier: domain.domainIdentifier,
+            kind: .changeSync,
+            summary: "Synced cached item."
+        ))
 
         await model.removeDomain(domain)
 
         #expect(model.domains.isEmpty)
         #expect(try await domainStore.allConfigurations().isEmpty)
         #expect(try await snapshotStore.snapshot(domainIdentifier: domain.domainIdentifier, containerIdentifier: "root") == nil)
+        #expect(try await eventStore.recentConflicts(domainIdentifier: domain.domainIdentifier, limit: 10).isEmpty)
+        #expect(try await eventStore.recentActivity(domainIdentifier: domain.domainIdentifier, limit: 10).isEmpty)
     }
 
     @MainActor
@@ -667,6 +836,49 @@ struct PotassiumProviderCoreTests {
         )
     }
 
+    private func makeConflictEvent(
+        id: UUID,
+        detectedAt: Date,
+        domainIdentifier: String,
+        itemName: String,
+        state: KDriveConflictResolutionState
+    ) -> KDriveConflictEvent {
+        KDriveConflictEvent(
+            id: id,
+            detectedAt: detectedAt,
+            domainIdentifier: domainIdentifier,
+            driveID: 10,
+            operation: .modify,
+            originalItemIdentifier: "42",
+            originalItemName: itemName,
+            originalItemPath: "/\(itemName)",
+            resolutionState: state,
+            automaticallyResolved: state == .automaticallyResolved,
+            resolutionKind: state == .blockedRetryable ? .blockedBeforeServerMutation : nil,
+            resolutionSummary: "Conflict for \(itemName)."
+        )
+    }
+
+    private func makeActivityEvent(
+        occurredAt: Date,
+        domainIdentifier: String,
+        kind: KDriveProviderActivityKind,
+        summary: String,
+        relatedConflictID: UUID? = nil
+    ) -> KDriveProviderActivityEvent {
+        KDriveProviderActivityEvent(
+            occurredAt: occurredAt,
+            domainIdentifier: domainIdentifier,
+            driveID: 10,
+            kind: kind,
+            itemIdentifier: "42",
+            itemName: "Report.txt",
+            itemPath: "/Report.txt",
+            summary: summary,
+            relatedConflictID: relatedConflictID
+        )
+    }
+
     private static let advancedListingResponseData = """
     {
       "result": "success",
@@ -726,6 +938,26 @@ struct PotassiumProviderCoreTests {
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("potassium-provider-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func eventChangeArrives(
+        from stream: AsyncStream<Void>,
+        timeoutNanoseconds: UInt64 = 2_000_000_000
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next() != nil
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
     }
 
     private func decodedFormBody(from body: Data) throws -> [String: String] {
@@ -1025,6 +1257,50 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
 
 private enum FakeKDriveFileProviderError: Error {
     case unimplemented
+}
+
+private actor FakeProviderEventStore: KDriveProviderEventStoring {
+    private var conflicts: [KDriveConflictEvent]
+    private var activity: [KDriveProviderActivityEvent]
+    private var activityQueries = 0
+
+    init(conflicts: [KDriveConflictEvent], activity: [KDriveProviderActivityEvent]) {
+        self.conflicts = conflicts
+        self.activity = activity
+    }
+
+    func saveConflict(_ event: KDriveConflictEvent) throws {
+        conflicts.removeAll { $0.id == event.id }
+        conflicts.append(event)
+    }
+
+    func recordActivity(_ event: KDriveProviderActivityEvent) throws {
+        activity.append(event)
+    }
+
+    func recentConflicts(domainIdentifier: String?, limit: Int) throws -> [KDriveConflictEvent] {
+        Array(conflicts
+            .filter { domainIdentifier == nil || $0.domainIdentifier == domainIdentifier }
+            .sorted { $0.detectedAt > $1.detectedAt }
+            .prefix(limit))
+    }
+
+    func recentActivity(domainIdentifier: String?, limit: Int) throws -> [KDriveProviderActivityEvent] {
+        activityQueries += 1
+        return Array(activity
+            .filter { domainIdentifier == nil || $0.domainIdentifier == domainIdentifier }
+            .sorted { $0.occurredAt > $1.occurredAt }
+            .prefix(limit))
+    }
+
+    func removeEvents(domainIdentifier: String) throws {
+        conflicts.removeAll { $0.domainIdentifier == domainIdentifier }
+        activity.removeAll { $0.domainIdentifier == domainIdentifier }
+    }
+
+    func activityQueryCount() -> Int {
+        activityQueries
+    }
 }
 
 @MainActor

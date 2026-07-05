@@ -1090,11 +1090,6 @@
 			package = C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */;
 			productName = InfomaniakConcurrency;
 		};
-		D00001042FF9000000000004 /* SQLite */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */;
-			productName = SQLite;
-		};
 		D00001012FF9000000000001 /* PotassiumChannelCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;
@@ -1109,6 +1104,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;
 			productName = PotassiumOAuth;
+		};
+		D00001042FF9000000000004 /* SQLite */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */;
+			productName = SQLite;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

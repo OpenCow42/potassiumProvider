@@ -11,7 +11,8 @@ The app group identifier is defined by `ProviderConstants.appGroupIdentifier`.
 Current app group contents:
 
 - `DomainConfigurations/*.json`
-- `Snapshots.sqlite3`
+- `Snapshots.sqlite3`, including listing snapshots, conflict events, and recent
+  provider activity
 - `ConflictStaging/*.upload` while a stale-content conflict copy is being sent
 
 ## DomainConfigurations
@@ -30,8 +31,10 @@ configuration JSON after the File Provider domain is removed.
 
 ## Snapshots.sqlite3
 
-`KDriveSnapshotSQLiteStore` stores listing metadata snapshots. It is the default
-snapshot store for both the app and the extension.
+`KDriveSnapshotSQLiteStore` stores listing metadata snapshots. The same SQLite
+file also stores provider conflict and activity events through
+`KDriveProviderEventSQLiteStore`. It is the default snapshot/event database for
+both the app and the extension.
 
 On initialization, the store configures SQLite with:
 
@@ -40,7 +43,7 @@ On initialization, the store configures SQLite with:
 - a 5 second busy timeout, so short-lived concurrent writers can wait instead of
   failing immediately
 
-The database has two tables.
+The database has four tables.
 
 `container_snapshots`:
 
@@ -73,6 +76,42 @@ The database has two tables.
 The primary key for `container_snapshots` is domain plus container. The primary
 key for `snapshot_items` is domain plus container plus item ID.
 
+`conflict_events`:
+
+- `id`
+- `detectedAt`
+- `resolvedAt`
+- `domainIdentifier`
+- `driveID`
+- `operation`
+- `originalItemIdentifier`
+- `originalItemName`
+- `originalItemPath`
+- `conflictItemIdentifier`
+- `conflictItemName`
+- `conflictItemPath`
+- `resolutionState`
+- `automaticallyResolved`
+- `resolutionKind`
+- `resolutionSummary`
+- `stagedUploadRelativePath`
+
+`provider_activity_events`:
+
+- `id`
+- `occurredAt`
+- `domainIdentifier`
+- `driveID`
+- `kind`
+- `itemIdentifier`
+- `itemName`
+- `itemPath`
+- `summary`
+- `relatedConflictID`
+
+Conflict and activity tables are indexed by domain and event date. Activity rows
+are also indexed by related conflict ID.
+
 ## What Is Cached
 
 SQLite caches metadata needed to enumerate and diff containers:
@@ -85,6 +124,8 @@ SQLite caches metadata needed to enumerate and diff containers:
 - timestamps used for File Provider versions
 - advanced-listing cursor state
 - whether the container has been fully enumerated
+- conflict/audit metadata needed by the app's Activities tab
+- recent successful provider activity needed by the app's activity timeline
 
 Fully enumerated normal-folder snapshots can be served directly from SQLite on a
 future initial enumeration.
@@ -98,6 +139,7 @@ SQLite does not cache:
 - OAuth tokens
 - pending local operations
 - kDrive version history
+- private kDrive web URLs
 
 File bytes returned from `fetchContents` are written to File Provider temporary
 storage and handed back to the system.
@@ -107,6 +149,10 @@ a preserve-both conflict copy, the extension writes the local bytes to
 `ConflictStaging` in the app group. The staged file is removed after the renamed
 upload succeeds and is retained if the conflict upload fails, so the bytes are
 not lost merely because the File Provider temporary URL disappears.
+
+Conflict and activity rows may store local filenames, File Provider item
+identifiers, kDrive file paths returned by the API, and relative staged-upload
+paths. They do not store OAuth tokens, file bytes, or generated web links.
 
 ## Snapshot Replacement
 
@@ -128,8 +174,8 @@ If the stored row no longer matches the requested condition, the store throws
 ## Domain Removal Cleanup
 
 When the app removes a domain, it calls
-`removeSnapshots(domainIdentifier:)`. That deletes all `snapshot_items` and
-`container_snapshots` rows for the domain.
+`removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`. That
+deletes all snapshot, conflict, and activity rows for the domain.
 
 ## Old JSON Snapshot Store
 

@@ -14,6 +14,11 @@ The listing cache introduced by `KDriveSnapshotSQLiteStore` is a metadata cache.
 It helps enumerate folders and diff server changes, but it is not a full sync
 database or durable pending-operation journal.
 
+The same SQLite file now also stores a conflict/activity audit log. The app uses
+that log for the Activities tab, including resolution state, whether a
+conflict was automatically resolved, and local File Provider item identifiers
+used to resolve clickable user-visible URLs.
+
 Related docs:
 
 - [File Provider Lifecycle](FILE_PROVIDER_LIFECYCLE.md)
@@ -30,6 +35,15 @@ Related docs:
 | Delegated to kDrive | Send the operation with the current kDrive conflict flag and trust the server result. | New file upload uses `conflict=version`; move uses `conflict=rename`. |
 | Fail-closed | Treat ambiguous listing or cursor state as unsafe and stop before saving a bad snapshot. | Repeated cursors, missing continuation cursors, and unknown advanced actions throw. |
 | Unresolved/future work | A known gap that needs durable local state, stronger server tokens, or explicit policy. | Folder create collisions, operation replay after timeout, and failed conflict-copy recovery. |
+
+Audit states stored in SQLite:
+
+| State | Meaning |
+| --- | --- |
+| `unresolved` | A stale content edit was detected and conflict-copy preservation has started. |
+| `automaticallyResolved` | The provider completed a preserve-both action without user input. |
+| `blockedRetryable` | The provider refused a stale mutation before changing kDrive. |
+| `failed` | The intended conflict-copy preservation failed and staged bytes were retained when available. |
 
 ## Relevant Code Paths
 
@@ -117,6 +131,11 @@ The name preserves the extension, uses the current device name when available,
 and is deterministic when the device name, date, and time zone are injected in
 tests.
 
+Conflict-copy success is recorded as `automaticallyResolved` with
+`preservedBothAsRenamedConflictCopy`. Failed conflict-copy upload is recorded as
+`failed` with `retainedStagedUploadAfterFailure` and a relative path under
+`ConflictStaging`.
+
 ### Metadata Modifications
 
 | Case | Current behavior | Resolution category | Gap or safer direction |
@@ -143,6 +162,26 @@ On the current iOS File Provider target, stale destructive mutations are returne
 as `.cannotSynchronize` with a recovery suggestion to refresh and retry. This is
 the platform-compatible form of the intended "version no longer available"
 behavior.
+
+Stale rename, move, trash, and permanent delete attempts are recorded as
+`blockedRetryable` with `blockedBeforeServerMutation`.
+
+## Activities Tab
+
+The app has an Activities tab backed by `Snapshots.sqlite3`.
+
+- Conflict rows show the detection date, operation, resolution state, automatic
+  resolution marker, summary, and file link when the File Provider item can be
+  resolved.
+- File links are resolved at display time from stored domain and item
+  identifiers through `NSFileProviderManager.getUserVisibleURL(for:)`.
+- The Last Activity toggle adds recent successful provider activity from the
+  database, including enumeration/change sync and major item operations.
+- The tab observes database changes with SQLite.swift's `updateHook` for its
+  own connection and SQLite `PRAGMA data_version` polling for writes committed
+  by the File Provider extension's separate connection.
+- This is an audit/read model only. It does not replay failed operations or
+  automatically retry retained staged uploads.
 
 ### Listing, Snapshot, And Sync State
 

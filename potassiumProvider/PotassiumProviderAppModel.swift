@@ -21,6 +21,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let oauthAuthenticator: any KDriveOAuthAuthenticating
     private let domainRegistrar: any ProviderDomainRegistering
     private let snapshotStore: (any KDriveSnapshotStoring)?
+    private let eventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
 
     init(
@@ -29,6 +30,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
         domainRegistrar: (any ProviderDomainRegistering)? = nil,
         snapshotStore: (any KDriveSnapshotStoring)? = nil,
+        eventStore: (any KDriveProviderEventStoring)? = nil,
         automaticallyReloadStoredState: Bool = true,
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
     ) {
@@ -37,6 +39,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
         self.domainRegistrar = domainRegistrar ?? FileProviderDomainRegistrar()
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
+        self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
         statusMessage = "Not connected"
         if automaticallyReloadStoredState {
@@ -59,6 +62,10 @@ final class PotassiumProviderAppModel: ObservableObject {
     var selectedDrive: KDriveDriveSummary? {
         guard let selectedDriveID else { return nil }
         return drives.first { $0.id == selectedDriveID }
+    }
+
+    var providerEventStore: (any KDriveProviderEventStoring)? {
+        eventStore
     }
 
     func reloadStoredState() async {
@@ -179,6 +186,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         do {
             try await domainRegistrar.removeDomain(for: configuration)
             try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
+            try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
             try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
             domains = try await domainStore.allConfigurations()
             statusMessage = "Removed \(configuration.displayName) from Files."
@@ -277,6 +285,10 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     private static func makeDefaultSnapshotStore() -> (any KDriveSnapshotStoring)? {
         try? KDriveSnapshotSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+    }
+
+    private static func makeDefaultEventStore() -> (any KDriveProviderEventStoring)? {
+        try? KDriveProviderEventSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
     }
 
     private func trimmed(_ value: String) -> String {

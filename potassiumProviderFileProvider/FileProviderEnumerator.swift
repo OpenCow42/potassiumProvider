@@ -27,6 +27,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 let itemPage = try await self.listItems(runtime: runtime, startingAt: page)
                 observer.didEnumerate(itemPage.items.map { FileProviderItem(remoteItem: $0, rootFileID: runtime.configuration.rootFileID) })
                 FileProviderLog.enumeration.info("enumerateItems success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) count(\(itemPage.items.count, privacy: .public)) nextCursorPresent(\(itemPage.nextCursor != nil, privacy: .public)) driveID(\(runtime.configuration.driveID, privacy: .public))")
+                await ProviderEventRecorder.recordActivity(
+                    kind: .enumeration,
+                    runtime: runtime,
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
+                    itemName: nil,
+                    itemPath: nil,
+                    summary: "Enumerated \(itemPage.items.count) item(s) in \(self.snapshotContainerIdentifier)."
+                )
                 observer.finishEnumerating(upTo: FileProviderPageCodec.page(from: itemPage.nextCursor))
             } catch {
                 let mappedError = providerError(error)
@@ -99,6 +107,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 )
                 self.emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
                 FileProviderLog.enumeration.info("enumerateChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(changes.updatedItems.count, privacy: .public)) deleted(\(changes.deletedItemIDs.count, privacy: .public)) total(\(newSnapshot.items.count, privacy: .public))")
+                await ProviderEventRecorder.recordActivity(
+                    kind: .changeSync,
+                    runtime: runtime,
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
+                    itemName: nil,
+                    itemPath: nil,
+                    summary: "Synced \(changes.updatedItems.count) update(s) and \(changes.deletedItemIDs.count) delete(s)."
+                )
                 observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newSnapshot.anchor), moreComing: false)
             } catch {
                 let mappedError = providerError(error)
@@ -337,6 +353,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             )
             emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
             FileProviderLog.enumeration.info("enumerateAdvancedChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
+            await ProviderEventRecorder.recordActivity(
+                kind: .changeSync,
+                runtime: runtime,
+                itemIdentifier: self.containerItemIdentifier.rawValue,
+                itemName: nil,
+                itemPath: nil,
+                summary: "Synced \(result.changes.updatedItems.count) update(s) and \(result.changes.deletedItemIDs.count) delete(s)."
+            )
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newCursor), moreComing: response.hasMore)
         } catch let error as KDriveListingValidationError {
             FileProviderLog.enumeration.error("enumerateAdvancedChanges invalid listing payload container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
@@ -358,6 +382,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
             )
             emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
+            await ProviderEventRecorder.recordActivity(
+                kind: .changeSync,
+                runtime: runtime,
+                itemIdentifier: self.containerItemIdentifier.rawValue,
+                itemName: nil,
+                itemPath: nil,
+                summary: "Rebuilt sync state with \(changes.updatedItems.count) update(s) and \(changes.deletedItemIDs.count) delete(s)."
+            )
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: rebuiltSnapshot.anchor), moreComing: false)
         }
     }

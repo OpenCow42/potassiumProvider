@@ -105,6 +105,8 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
     }
 
     private static func createTables(on database: Connection) throws {
+        try KDriveProviderEventSQLiteStore.createTables(on: database)
+
         try database.run(Schema.containerSnapshots.create(ifNotExists: true) { table in
             table.column(Schema.domainIdentifier)
             table.column(Schema.containerIdentifier)

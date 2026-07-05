@@ -14,12 +14,19 @@ struct FileProviderRuntime: Sendable {
     let token: KDriveOAuthToken
     let remote: any KDriveFileProviding
     let snapshotStore: any KDriveSnapshotStoring
+    let eventStore: (any KDriveProviderEventStoring)?
 
-    private init(configuration: ProviderDomainConfiguration, token: KDriveOAuthToken, snapshotStore: any KDriveSnapshotStoring) {
+    private init(
+        configuration: ProviderDomainConfiguration,
+        token: KDriveOAuthToken,
+        snapshotStore: any KDriveSnapshotStoring,
+        eventStore: (any KDriveProviderEventStoring)?
+    ) {
         self.configuration = configuration
         self.token = token
         self.remote = PotassiumKDriveService(bearerToken: token.accessToken)
         self.snapshotStore = snapshotStore
+        self.eventStore = eventStore
     }
 
     static func load(domain: NSFileProviderDomain) async throws -> FileProviderRuntime {
@@ -47,7 +54,8 @@ struct FileProviderRuntime: Sendable {
         return FileProviderRuntime(
             configuration: configuration,
             token: token,
-            snapshotStore: snapshotStore
+            snapshotStore: snapshotStore,
+            eventStore: makeEventStore()
         )
     }
 
@@ -75,6 +83,15 @@ struct FileProviderRuntime: Sendable {
         } catch {
             FileProviderLog.runtime.error("failed to open snapshot store in app group: \(error.localizedDescription, privacy: .public)")
             throw error
+        }
+    }
+
+    static func makeEventStore() -> (any KDriveProviderEventStoring)? {
+        do {
+            return try KDriveProviderEventSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+        } catch {
+            FileProviderLog.runtime.error("failed to open provider event store in app group: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 }

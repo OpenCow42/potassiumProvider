@@ -5,6 +5,20 @@ struct ContentView: View {
     @ObservedObject var model: PotassiumProviderAppModel
 
     var body: some View {
+        TabView {
+            setupView
+                .tabItem {
+                    Label("Setup", systemImage: "externaldrive.connected.to.line.below")
+                }
+
+            ConflictLogView(eventStore: model.providerEventStore)
+                .tabItem {
+                    Label("Activities", systemImage: "clock.arrow.circlepath")
+                }
+        }
+    }
+
+    private var setupView: some View {
         NavigationStack {
             List {
                 accountSection
