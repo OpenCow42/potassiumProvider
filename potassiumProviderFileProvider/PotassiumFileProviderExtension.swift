@@ -1,5 +1,6 @@
 import FileProvider
 import Foundation
+import OSLog
 import PotassiumProviderCore
 import UniformTypeIdentifiers
 
@@ -13,21 +14,27 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         self.manager = NSFileProviderManager(for: domain)!
         self.temporaryDirectoryURL = (try? manager.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
         super.init()
+        FileProviderLog.replicatedExtension.info("init replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public)) displayName(\(self.domain.displayName, privacy: .private)) temporaryDirectory(\(self.temporaryDirectoryURL.path, privacy: .private))")
     }
 
-    public func invalidate() {}
+    public func invalidate() {
+        FileProviderLog.replicatedExtension.debug("invalidate replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public))")
+    }
 
     public func item(
         for identifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest,
         completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
-        Progress.cancellable {
+        FileProviderLog.replicatedExtension.debug("item(forIdentifier:\(identifier.rawValue, privacy: .public)) domain(\(self.domain.identifier.rawValue, privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
+        return Progress.cancellable {
+            FileProviderLog.replicatedExtension.debug("cancel item(forIdentifier:\(identifier.rawValue, privacy: .public))")
             completionHandler(nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.domain)
                 if identifier == .rootContainer {
+                    FileProviderLog.replicatedExtension.debug("resolved root item for domain(\(runtime.configuration.domainIdentifier, privacy: .public)) driveID(\(runtime.configuration.driveID, privacy: .public))")
                     completionHandler(FileProviderItem(configuration: runtime.configuration), nil)
                     return
                 }
@@ -38,9 +45,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
 
                 let item = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
+                FileProviderLog.replicatedExtension.debug("resolved item identifier(\(identifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) type(\(item.type ?? "unknown", privacy: .public))")
                 completionHandler(FileProviderItem(remoteItem: item, rootFileID: runtime.configuration.rootFileID), nil)
             } catch {
-                completionHandler(nil, providerError(error))
+                let mappedError = providerError(error)
+                FileProviderLog.replicatedExtension.error("item(forIdentifier:\(identifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
+                completionHandler(nil, mappedError)
             }
         }
     }
@@ -51,7 +61,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         request: NSFileProviderRequest,
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
-        Progress.cancellable {
+        FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) requestedVersion(\(logVersionDescription(requestedVersion), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
+        return Progress.cancellable {
+            FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
             completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
@@ -67,9 +79,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     .appendingPathComponent("download-\(UUID().uuidString)")
                     .appendingPathExtension((item.name as NSString).pathExtension)
                 try data.write(to: temporaryURL, options: [.atomic])
+                FileProviderLog.replicatedExtension.info("fetched contents for item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) bytes(\(data.count, privacy: .public))")
                 completionHandler(temporaryURL, FileProviderItem(remoteItem: item, rootFileID: runtime.configuration.rootFileID), nil)
             } catch {
-                completionHandler(nil, nil, providerError(error))
+                let mappedError = providerError(error)
+                FileProviderLog.replicatedExtension.error("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
+                completionHandler(nil, nil, mappedError)
             }
         }
     }
@@ -82,7 +97,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         request: NSFileProviderRequest,
         completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void
     ) -> Progress {
-        Progress.cancellable {
+        let fieldsDescription = String(describing: fields)
+        let kind = itemTemplate.contentType?.conforms(to: .folder) == true ? "folder" : "file"
+        FileProviderLog.replicatedExtension.debug("createItem(kind:\(kind, privacy: .public) parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public)) filename(\(itemTemplate.filename, privacy: .private)) fields(\(fieldsDescription, privacy: .public)) hasContents(\(url != nil, privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
+        return Progress.cancellable {
+            FileProviderLog.replicatedExtension.debug("cancel createItem(parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public))")
             completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
@@ -98,6 +117,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                 } else {
                     let contents = try url.map { try Data(contentsOf: $0) } ?? Data()
+                    FileProviderLog.replicatedExtension.debug("upload new file parentFileID(\(parentID, privacy: .public)) bytes(\(contents.count, privacy: .public))")
                     createdItem = try await runtime.remote.uploadFile(
                         driveID: runtime.configuration.driveID,
                         parentID: parentID,
@@ -107,9 +127,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                 }
 
+                FileProviderLog.replicatedExtension.info("created \(kind, privacy: .public) item(\(createdItem.id, privacy: .public)) parentFileID(\(createdItem.parentID, privacy: .public)) driveID(\(runtime.configuration.driveID, privacy: .public))")
                 completionHandler(FileProviderItem(remoteItem: createdItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
             } catch {
-                completionHandler(nil, [], false, providerError(error))
+                let mappedError = providerError(error)
+                FileProviderLog.replicatedExtension.error("createItem(parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
+                completionHandler(nil, [], false, mappedError)
             }
         }
     }
@@ -123,7 +146,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         request: NSFileProviderRequest,
         completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void
     ) -> Progress {
-        Progress.cancellable {
+        let fieldsDescription = String(describing: changedFields)
+        let optionsDescription = String(describing: options)
+        FileProviderLog.replicatedExtension.debug("modifyItem(\(item.itemIdentifier.rawValue, privacy: .public)) fields(\(fieldsDescription, privacy: .public)) options(\(optionsDescription, privacy: .public)) baseVersion(\(logVersionDescription(version), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
+        return Progress.cancellable {
+            FileProviderLog.replicatedExtension.debug("cancel modifyItem(\(item.itemIdentifier.rawValue, privacy: .public))")
             completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
@@ -134,6 +161,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
 
                 if changedFields.contains(.parentItemIdentifier), item.parentItemIdentifier == .trashContainer {
+                    FileProviderLog.replicatedExtension.info("trash item(\(item.itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
                     try await runtime.remote.trashItem(driveID: runtime.configuration.driveID, fileID: fileID)
                     completionHandler(nil, [], false, nil)
                     return
@@ -142,6 +170,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 let updatedItem: KDriveRemoteItem
                 if let newContents, changedFields.contains(.contents) {
                     let data = try Data(contentsOf: newContents)
+                    FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
                     updatedItem = try await runtime.remote.replaceFile(
                         driveID: runtime.configuration.driveID,
                         fileID: fileID,
@@ -150,6 +179,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                 } else if changedFields.contains(.parentItemIdentifier) {
                     let parentID = try self.fileID(forParentIdentifier: item.parentItemIdentifier, runtime: runtime)
+                    FileProviderLog.replicatedExtension.debug("move item(\(item.itemIdentifier.rawValue, privacy: .public)) to parentFileID(\(parentID, privacy: .public)) rename(\(changedFields.contains(.filename), privacy: .public))")
                     try await runtime.remote.moveItem(
                         driveID: runtime.configuration.driveID,
                         fileID: fileID,
@@ -158,6 +188,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                     updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 } else if changedFields.contains(.filename) {
+                    FileProviderLog.replicatedExtension.debug("rename item(\(item.itemIdentifier.rawValue, privacy: .public)) filename(\(item.filename, privacy: .private))")
                     try await runtime.remote.renameItem(
                         driveID: runtime.configuration.driveID,
                         fileID: fileID,
@@ -168,9 +199,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 }
 
+                FileProviderLog.replicatedExtension.info("modified item(\(item.itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) remainingFields([])")
                 completionHandler(FileProviderItem(remoteItem: updatedItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
             } catch {
-                completionHandler(nil, [], false, providerError(error))
+                let mappedError = providerError(error)
+                FileProviderLog.replicatedExtension.error("modifyItem(\(item.itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
+                completionHandler(nil, [], false, mappedError)
             }
         }
     }
@@ -182,7 +216,10 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         request: NSFileProviderRequest,
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
-        Progress.cancellable {
+        let optionsDescription = String(describing: options)
+        FileProviderLog.replicatedExtension.debug("deleteItem(\(itemIdentifier.rawValue, privacy: .public)) options(\(optionsDescription, privacy: .public)) baseVersion(\(logVersionDescription(version), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
+        return Progress.cancellable {
+            FileProviderLog.replicatedExtension.debug("cancel deleteItem(\(itemIdentifier.rawValue, privacy: .public))")
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }.performTask {
             do {
@@ -193,9 +230,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
 
                 try await runtime.remote.deleteTrashedItem(driveID: runtime.configuration.driveID, fileID: fileID)
+                FileProviderLog.replicatedExtension.info("deleted trashed item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
                 completionHandler(nil)
             } catch {
-                completionHandler(providerError(error))
+                let mappedError = providerError(error)
+                FileProviderLog.replicatedExtension.error("deleteItem(\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
+                completionHandler(mappedError)
             }
         }
     }
@@ -204,7 +244,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        return FileProviderEnumerator(containerItemIdentifier: containerItemIdentifier, domain: domain)
+        FileProviderLog.replicatedExtension.debug("enumerator(for:\(containerItemIdentifier.rawValue, privacy: .public)) domain(\(self.domain.identifier.rawValue, privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
+        return FileProviderEnumerator(containerItemIdentifier: containerItemIdentifier, domain: self.domain)
     }
 
     private func fileID(
@@ -219,6 +260,17 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         }
         return try KDriveItemIdentifier(rawValue: parentIdentifier.rawValue).fileID(rootFileID: runtime.configuration.rootFileID)
             ?? runtime.configuration.rootFileID
+    }
+}
+
+private func logVersionDescription(_ version: NSFileProviderItemVersion?) -> String {
+    guard let version else { return "<nil>" }
+    return "content:\(version.contentVersion.count)b metadata:\(version.metadataVersion.count)b"
+}
+
+private extension NSFileProviderRequest {
+    var logDomainVersion: String {
+        domainVersion?.description ?? "<nil>"
     }
 }
 
