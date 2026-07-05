@@ -9,6 +9,10 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
     private let manager: NSFileProviderManager
     private let temporaryDirectoryURL: URL
 
+    var fileProviderDomain: NSFileProviderDomain {
+        domain
+    }
+
     public required init(domain: NSFileProviderDomain) {
         self.domain = domain
         self.manager = NSFileProviderManager(for: domain)!

@@ -8,6 +8,7 @@ public protocol KDriveFileProviding: Sendable {
     func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
     func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
     func downloadFile(driveID: Int, fileID: Int) async throws -> Data
+    func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data
     func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem
     func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem
@@ -80,6 +81,14 @@ public struct PotassiumKDriveService: KDriveFileProviding {
 
     public func downloadFile(driveID: Int, fileID: Int) async throws -> Data {
         try await service.downloadFile(driveId: driveID, fileId: fileID)
+    }
+
+    public func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
+        try await service.getFileThumbnail(
+            driveId: driveID,
+            fileId: fileID,
+            options: GetKDriveFileThumbnailOptions(height: height, width: width)
+        )
     }
 
     public func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {

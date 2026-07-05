@@ -152,6 +152,36 @@ struct PotassiumProviderCoreTests {
         #expect(changes.deletedItemIDs == [2])
     }
 
+    @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
+        KDriveDataRequestCapturingURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveDataRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        let data = try await service.thumbnail(driveID: 100, fileID: 42, width: 128, height: 256)
+        let request = try #require(KDriveDataRequestCapturingURLProtocol.lastRequest())
+        let requestURL = try #require(request.url)
+        let components = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
+        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
+
+        #expect(data == KDriveDataRequestCapturingURLProtocol.responseData)
+        #expect(request.httpMethod == "GET")
+        #expect(components.path == "/2/drive/100/files/42/thumbnail")
+        #expect(query["width"] == "128")
+        #expect(query["height"] == "256")
+        #expect(request.value(forHTTPHeaderField: "Accept") == "image/*")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
+    }
+
     @MainActor
     @Test func appModelStoresManualTokenAndLoadsDrives() async throws {
         let directory = temporaryDirectory()
@@ -371,6 +401,50 @@ private final class OAuthRequestCapturingURLProtocol: URLProtocol {
     }
 }
 
+private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
+    static let responseData = Data([0x89, 0x50, 0x4E, 0x47])
+    private static let lock = NSLock()
+    private static var capturedRequest: URLRequest?
+
+    static func reset() {
+        lock.lock()
+        capturedRequest = nil
+        lock.unlock()
+    }
+
+    static func lastRequest() -> URLRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        return capturedRequest
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        Self.lock.lock()
+        Self.capturedRequest = request
+        Self.lock.unlock()
+
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "image/png"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.responseData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 @MainActor
 private final class FakeKDriveOAuthAuthenticator: KDriveOAuthAuthenticating {
     private let token: KDriveOAuthToken
@@ -411,6 +485,10 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
     }
 
     func downloadFile(driveID: Int, fileID: Int) async throws -> Data {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
