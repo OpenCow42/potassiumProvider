@@ -38,8 +38,8 @@ data.
   to potassiumChannel service calls and visible kDrive endpoints.
 - [Mutations](doc/MUTATIONS.md): create, upload, replace, rename, move, trash,
   delete, server-authoritative returns, and later reconciliation.
-- [Conflicts](doc/CONFLICTS.md): current conflict behavior, risks, and safer
-  future direction.
+- [Conflicts](doc/CONFLICTS.md): conflict cases, current resolution behavior,
+  risks, and safer future direction.
 - [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md): schemes,
   dependencies, commands, and local-state caveats.
 
