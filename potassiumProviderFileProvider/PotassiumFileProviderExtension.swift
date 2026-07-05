@@ -2,7 +2,10 @@ import FileProvider
 import Foundation
 import OSLog
 import PotassiumProviderCore
+import Darwin
+#if canImport(UIKit)
 import UIKit
+#endif
 import UniformTypeIdentifiers
 
 public final class PotassiumFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
@@ -356,8 +359,24 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
 private enum ConflictDeviceName {
     static var current: String {
+        #if canImport(UIKit)
         let deviceName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return deviceName.isEmpty ? "This Mac" : deviceName
+        if deviceName.isEmpty == false {
+            return deviceName
+        }
+        #endif
+        return hostName ?? "This Mac"
+    }
+
+    private static var hostName: String? {
+        var buffer = [CChar](repeating: 0, count: 256)
+        let result = buffer.withUnsafeMutableBufferPointer { pointer in
+            gethostname(pointer.baseAddress, pointer.count)
+        }
+        guard result == 0 else { return nil }
+
+        let hostName = String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return hostName.isEmpty ? nil : hostName
     }
 }
 
