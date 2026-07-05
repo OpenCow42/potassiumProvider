@@ -9,6 +9,11 @@ import UIKit
 import UniformTypeIdentifiers
 
 public final class PotassiumFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
+    private static let maximumConcurrentContentFetches = 4
+    private static let contentFetchLimiter = AsyncOperationLimiter(
+        maxConcurrentOperations: maximumConcurrentContentFetches
+    )
+
     private let domain: NSFileProviderDomain
     private let manager: NSFileProviderManager
     private let temporaryDirectoryURL: URL
@@ -70,39 +75,71 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) requestedVersion(\(logVersionDescription(requestedVersion), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
-        return Progress.cancellable {
-            FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
-            completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-        }.performTask {
+        let progress = Progress(totalUnitCount: 100)
+        let domain = self.domain
+        let temporaryDirectoryURL = self.temporaryDirectoryURL
+
+        let task = Task {
             do {
-                let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                let runtime = try await FileProviderRuntime.load(domain: domain)
                 let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
                 guard let fileID = identifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
-                let data = try await runtime.remote.downloadFile(driveID: runtime.configuration.driveID, fileID: fileID)
-                let item = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
-                let temporaryURL = self.temporaryDirectoryURL
-                    .appendingPathComponent("download-\(UUID().uuidString)")
-                    .appendingPathExtension((item.name as NSString).pathExtension)
-                try data.write(to: temporaryURL, options: [.atomic])
-                FileProviderLog.replicatedExtension.info("fetched contents for item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) bytes(\(data.count, privacy: .public))")
+                let fetchedContents = try await Self.contentFetchLimiter.withPermit {
+                    try Task.checkCancellation()
+                    let data = try await runtime.remote.downloadFile(
+                        driveID: runtime.configuration.driveID,
+                        fileID: fileID
+                    )
+                    try Task.checkCancellation()
+                    let item = try await runtime.remote.item(
+                        driveID: runtime.configuration.driveID,
+                        fileID: fileID
+                    )
+                    try Task.checkCancellation()
+                    let temporaryURL = temporaryDirectoryURL
+                        .appendingPathComponent("download-\(UUID().uuidString)")
+                        .appendingPathExtension((item.name as NSString).pathExtension)
+                    try data.write(to: temporaryURL, options: [.atomic])
+                    return FetchedFileContents(
+                        temporaryURL: temporaryURL,
+                        item: item,
+                        byteCount: data.count
+                    )
+                }
+
+                progress.completedUnitCount = 100
+                FileProviderLog.replicatedExtension.info("fetched contents for item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) bytes(\(fetchedContents.byteCount, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
                     kind: .fetchContents,
                     runtime: runtime,
                     itemIdentifier: itemIdentifier.rawValue,
-                    itemName: item.name,
-                    itemPath: item.path,
+                    itemName: fetchedContents.item.name,
+                    itemPath: fetchedContents.item.path,
                     summary: "Fetched file contents."
                 )
-                completionHandler(temporaryURL, FileProviderItem(remoteItem: item, rootFileID: runtime.configuration.rootFileID), nil)
+                completionHandler(
+                    fetchedContents.temporaryURL,
+                    FileProviderItem(remoteItem: fetchedContents.item, rootFileID: runtime.configuration.rootFileID),
+                    nil
+                )
+            } catch is CancellationError {
+                FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) cancelled")
+                completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
             } catch {
                 let mappedError = providerError(error)
                 FileProviderLog.replicatedExtension.error("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
                 completionHandler(nil, nil, mappedError)
             }
         }
+
+        progress.cancellationHandler = {
+            FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
+            task.cancel()
+        }
+        return progress
     }
 
     public func createItem(
@@ -505,6 +542,12 @@ private enum ConflictDeviceName {
         let hostName = String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
         return hostName.isEmpty ? nil : hostName
     }
+}
+
+private struct FetchedFileContents: Sendable {
+    let temporaryURL: URL
+    let item: KDriveRemoteItem
+    let byteCount: Int
 }
 
 private func logVersionDescription(_ version: NSFileProviderItemVersion?) -> String {

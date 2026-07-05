@@ -37,6 +37,107 @@ struct PotassiumProviderCoreTests {
         #expect(ProviderDomainConfiguration.finderDisplayName(forDriveName: "   ") == "kDrive")
     }
 
+    @Test func asyncOperationLimiterCapsConcurrentOperations() async throws {
+        let maximumConcurrentOperations = 4
+        let operationCount = 20
+        let limiter = AsyncOperationLimiter(maxConcurrentOperations: maximumConcurrentOperations)
+        let activityProbe = LimiterActivityProbe()
+
+        let completedOperations = try await withThrowingTaskGroup(of: Int.self) { group in
+            for operation in 0..<operationCount {
+                group.addTask {
+                    try await limiter.withPermit {
+                        await activityProbe.startOperation()
+                        do {
+                            try await Task.sleep(nanoseconds: 10_000_000)
+                            await activityProbe.finishOperation()
+                            return operation
+                        } catch {
+                            await activityProbe.finishOperation()
+                            throw error
+                        }
+                    }
+                }
+            }
+
+            var operations = Set<Int>()
+            while let operation = try await group.next() {
+                operations.insert(operation)
+            }
+            return operations
+        }
+
+        #expect(completedOperations == Set(0..<operationCount))
+        #expect(await activityProbe.maximumActiveOperationCount() <= maximumConcurrentOperations)
+        #expect(await activityProbe.finishedOperationCount() == operationCount)
+    }
+
+    @Test func asyncOperationLimiterCancelsWaitingOperationWithoutConsumingPermit() async throws {
+        let limiter = AsyncOperationLimiter(maxConcurrentOperations: 1)
+        let holderStarted = AsyncTestGate()
+        let releaseHolder = AsyncTestGate()
+        let cancelledOperationProbe = LimiterActivityProbe()
+
+        let holder = Task {
+            try await limiter.withPermit {
+                await holderStarted.open()
+                await releaseHolder.wait()
+            }
+        }
+        await holderStarted.wait()
+
+        let waitingOperation = Task {
+            try await limiter.withPermit {
+                await cancelledOperationProbe.startOperation()
+                await cancelledOperationProbe.finishOperation()
+            }
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        waitingOperation.cancel()
+
+        var sawCancellation = false
+        do {
+            try await withTimeout(nanoseconds: 1_000_000_000) {
+                try await waitingOperation.value
+            }
+        } catch is CancellationError {
+            sawCancellation = true
+        }
+        #expect(sawCancellation)
+        #expect(await cancelledOperationProbe.startedOperationCount() == 0)
+
+        await releaseHolder.open()
+        try await holder.value
+
+        let nextValue = try await withTimeout(nanoseconds: 1_000_000_000) {
+            try await limiter.withPermit {
+                42
+            }
+        }
+        #expect(nextValue == 42)
+    }
+
+    @Test func asyncOperationLimiterReleasesPermitAfterThrownError() async throws {
+        let limiter = AsyncOperationLimiter(maxConcurrentOperations: 1)
+
+        var sawExpectedError = false
+        do {
+            let _: Void = try await limiter.withPermit {
+                throw AsyncOperationLimiterTestError.expected
+            }
+        } catch AsyncOperationLimiterTestError.expected {
+            sawExpectedError = true
+        }
+        #expect(sawExpectedError)
+
+        let nextValue = try await withTimeout(nanoseconds: 1_000_000_000) {
+            try await limiter.withPermit {
+                "next"
+            }
+        }
+        #expect(nextValue == "next")
+    }
+
     @Test func snapshotStorePersistsAndRemovesDomainSnapshots() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -966,6 +1067,83 @@ struct PotassiumProviderCoreTests {
         return Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
             item.value.map { (item.name, $0) }
         })
+    }
+}
+
+private enum AsyncOperationLimiterTestError: Error {
+    case expected
+    case timedOut
+}
+
+private func withTimeout<T: Sendable>(
+    nanoseconds: UInt64,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: nanoseconds)
+            throw AsyncOperationLimiterTestError.timedOut
+        }
+
+        guard let result = try await group.next() else {
+            throw AsyncOperationLimiterTestError.timedOut
+        }
+        group.cancelAll()
+        return result
+    }
+}
+
+private actor LimiterActivityProbe {
+    private var activeOperations = 0
+    private var maximumActiveOperations = 0
+    private var startedOperations = 0
+    private var finishedOperations = 0
+
+    func startOperation() {
+        activeOperations += 1
+        startedOperations += 1
+        maximumActiveOperations = max(maximumActiveOperations, activeOperations)
+    }
+
+    func finishOperation() {
+        activeOperations -= 1
+        finishedOperations += 1
+    }
+
+    func maximumActiveOperationCount() -> Int {
+        maximumActiveOperations
+    }
+
+    func startedOperationCount() -> Int {
+        startedOperations
+    }
+
+    func finishedOperationCount() -> Int {
+        finishedOperations
+    }
+}
+
+private actor AsyncTestGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        guard isOpen == false else { return }
+        isOpen = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        guard isOpen == false else { return }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }
 

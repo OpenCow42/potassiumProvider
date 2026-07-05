@@ -39,10 +39,12 @@ Purpose: materialize file bytes for a file the system wants to open or download.
 Behavior:
 
 - Parse the File Provider item identifier into a kDrive file ID.
+- Wait for the shared content-fetch limiter. The extension allows up to 4
+  concurrent full-file materializations per extension process.
 - Call `downloadFile(...)`.
 - Fetch fresh metadata through `item(...)`.
 - Write bytes to `manager.temporaryDirectoryURL()` using a unique temporary
-  filename.
+  filename, then release the limiter permit.
 - Return the temporary URL and updated `FileProviderItem`.
 
 SQLite: not touched. SQLite stores listing metadata only, not file contents.
