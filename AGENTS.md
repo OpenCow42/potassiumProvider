@@ -11,6 +11,7 @@ File Provider experience.
 - Scheme: `potassiumProvider`
 - Targets: `potassiumProvider`, `potassiumProviderTests`,
   `potassiumProviderUITests`
+- Supported validation platforms: iOS Simulator, macOS, and visionOS
 - Dependencies: `SQLite.swift` and `potassiumChannel` package products
   `PotassiumChannelCore`, `PotassiumKDrive`, and `PotassiumOAuth`
 - Tests: Swift Testing for unit tests, XCTest for UI tests
@@ -63,11 +64,22 @@ xcodebuild test \
   -project potassiumProvider.xcodeproj \
   -scheme potassiumProvider \
   -destination 'platform=macOS'
+
+# visionOS
+xcodebuild build \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'generic/platform=visionOS'
+
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro'
 ```
 
-This project should be run and tested on Mac as well as iOS Simulator. Use
-`xcodebuild -showdestinations` to copy the exact Mac destination if local Xcode
-requires a more specific variant.
+This project should be run and tested on iOS Simulator, Mac, and visionOS. Use
+`xcodebuild -showdestinations` to copy exact Mac or visionOS destinations if
+local Xcode requires a more specific variant.
 
 Do not import command habits from sibling Tuist or SwiftPM repos unless this
 project is explicitly migrated. In particular, do not use `tuist generate`,
@@ -141,8 +153,9 @@ app.
   existing XCTest UI test targets.
 - Use XCTest only for UI automation or when extending existing XCTest files.
 - Run the relevant `xcodebuild build` or `xcodebuild test` command before
-  describing implementation work as complete, including the Mac destination when
-  changes affect runtime behavior. If validation cannot be run, say exactly why.
+  describing implementation work as complete, including Mac and visionOS
+  destinations when changes affect runtime behavior. If validation cannot be
+  run, say exactly why.
 - Use Conventional Commits when committing, for example `feat: add file provider
   domain setup` or `test: cover kdrive request mapping`.
 - Do not commit generated build artifacts, DerivedData, local caches, editor

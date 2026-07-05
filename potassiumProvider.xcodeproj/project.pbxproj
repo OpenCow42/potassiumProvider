@@ -920,6 +920,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				ENABLE_APP_SANDBOX = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Config/potassiumProviderFileProviderInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
@@ -956,6 +957,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				ENABLE_APP_SANDBOX = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Config/potassiumProviderFileProviderInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;

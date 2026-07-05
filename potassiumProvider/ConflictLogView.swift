@@ -17,7 +17,7 @@ struct ConflictLogView: View {
                     Toggle(isOn: $model.showsActivity) {
                         Label("Last Activity", systemImage: "clock.arrow.circlepath")
                     }
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 8))
+                    .providerActivityControlGlass()
                 }
 
                 if let errorMessage = model.errorMessage {
@@ -70,6 +70,17 @@ struct ConflictLogView: View {
         .automatic
         #else
         .topBarTrailing
+        #endif
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func providerActivityControlGlass() -> some View {
+        #if os(visionOS)
+        self
+        #else
+        glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 8))
         #endif
     }
 }

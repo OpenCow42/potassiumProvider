@@ -57,6 +57,8 @@ The local `SynchronizingFilesUsingFileProviderExtensions/` folder is Apple's
 sample/reference project. It is useful for comparison, but it is not the source
 of truth for this app and is not integrated into the root Xcode project.
 
+Supported validation platforms are iOS Simulator, macOS, and visionOS.
+
 ## Useful Commands
 
 List schemes and targets:
@@ -83,6 +85,15 @@ xcodebuild build \
   -destination 'platform=macOS'
 ```
 
+Build on visionOS as well:
+
+```sh
+xcodebuild build \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'generic/platform=visionOS'
+```
+
 Run tests:
 
 ```sh
@@ -101,6 +112,15 @@ xcodebuild test \
   -destination 'platform=macOS'
 ```
 
+Run tests on visionOS as well:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro'
+```
+
 If the full scheme stalls during simulator/UI-test cleanup, this has previously
 worked more reliably:
 
@@ -112,8 +132,8 @@ xcodebuild test \
   -parallel-testing-enabled NO
 ```
 
-Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
-Xcode requires a more specific macOS variant.
+Use `xcodebuild -showdestinations` to copy exact Mac or visionOS destinations if
+local Xcode requires a more specific variant.
 
 ## Safety Notes
 
