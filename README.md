@@ -74,6 +74,15 @@ xcodebuild build \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
 ```
 
+Build on Mac as well:
+
+```sh
+xcodebuild build \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS'
+```
+
 Run tests:
 
 ```sh
@@ -81,6 +90,15 @@ xcodebuild test \
   -project potassiumProvider.xcodeproj \
   -scheme potassiumProvider \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
+```
+
+Run tests on Mac as well:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS'
 ```
 
 If the full scheme stalls during simulator/UI-test cleanup, this has previously
@@ -93,6 +111,9 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
   -parallel-testing-enabled NO
 ```
+
+Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
+Xcode requires a more specific macOS variant.
 
 ## Safety Notes
 

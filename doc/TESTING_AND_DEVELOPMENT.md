@@ -55,6 +55,15 @@ xcodebuild build \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
 ```
 
+Build on Mac as well:
+
+```sh
+xcodebuild build \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS'
+```
+
 Run all tests:
 
 ```sh
@@ -62,6 +71,15 @@ xcodebuild test \
   -project potassiumProvider.xcodeproj \
   -scheme potassiumProvider \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
+```
+
+Run all tests on Mac as well:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS'
 ```
 
 Run only unit tests:
@@ -83,6 +101,9 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
   -parallel-testing-enabled NO
 ```
+
+Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
+Xcode requires a more specific macOS variant.
 
 ## Test Style
 

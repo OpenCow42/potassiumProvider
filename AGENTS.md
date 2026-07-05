@@ -42,6 +42,7 @@ xcodebuild -showdestinations -project potassiumProvider.xcodeproj -scheme potass
 Build and test through the Xcode scheme:
 
 ```sh
+# iOS Simulator
 xcodebuild build \
   -project potassiumProvider.xcodeproj \
   -scheme potassiumProvider \
@@ -51,7 +52,22 @@ xcodebuild test \
   -project potassiumProvider.xcodeproj \
   -scheme potassiumProvider \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
+
+# Mac
+xcodebuild build \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS'
+
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS'
 ```
+
+This project should be run and tested on Mac as well as iOS Simulator. Use
+`xcodebuild -showdestinations` to copy the exact Mac destination if local Xcode
+requires a more specific variant.
 
 Do not import command habits from sibling Tuist or SwiftPM repos unless this
 project is explicitly migrated. In particular, do not use `tuist generate`,
@@ -125,8 +141,8 @@ app.
   existing XCTest UI test targets.
 - Use XCTest only for UI automation or when extending existing XCTest files.
 - Run the relevant `xcodebuild build` or `xcodebuild test` command before
-  describing implementation work as complete. If validation cannot be run, say
-  exactly why.
+  describing implementation work as complete, including the Mac destination when
+  changes affect runtime behavior. If validation cannot be run, say exactly why.
 - Use Conventional Commits when committing, for example `feat: add file provider
   domain setup` or `test: cover kdrive request mapping`.
 - Do not commit generated build artifacts, DerivedData, local caches, editor
