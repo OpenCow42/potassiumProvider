@@ -1,10 +1,16 @@
+<p align="center">
+  <img src="potassiumProvider/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="potassiumProvider app icon" width="96">
+</p>
+
 # potassiumProvider
 
 `potassiumProvider` is a Swift/Xcode app that experiments with exposing an
 Infomaniak kDrive account through Apple's File Provider APIs.
 
-This project is a community effort. No support, uptime, compatibility,
-maintenance, or data-safety guarantee is provided. Treat it as experimental
+## ⚠️ No Support Or Guarantee ⚠️
+
+This project is a community effort. **No support, uptime, compatibility,
+maintenance, or data-safety guarantee is provided.** Treat it as experimental
 software and review the implementation carefully before using it with important
 data.
 
