@@ -110,6 +110,14 @@ app.
   persistence boundaries explicit. Avoid hiding sync semantics behind generic
   helpers that make conflict, durability, or retry behavior unclear.
 
+## Documentation Rules
+
+- Keep `README.md` and `doc/` documentation up to date when changing behavior,
+  architecture, public interfaces, persistence, File Provider lifecycle,
+  kDrive API mapping, conflict handling, or validation commands.
+- Prefer updating the subject-specific document in `doc/` as part of the same
+  change instead of leaving documentation follow-up work implicit.
+
 ## Testing And PR Hygiene
 
 - Add or update tests for every meaningful behavior change.
