@@ -97,11 +97,17 @@ Then it calls advanced listing continuation and reduces returned actions:
 - delete actions remove item identifiers
 - update actions produce updated `FileProviderItem` values when `actions_files`
   includes metadata
-- missing update metadata is ignored while cursor progress still continues
+- unknown actions and update actions without metadata fail the change pass
 - invalid cursors trigger a full rebuild and local diff against the old snapshot
 
-The updated snapshot is saved back to SQLite and Apple receives
-`didUpdate(...)`, `didDeleteItems(...)`, and `finishEnumeratingChanges(...)`.
+The updated snapshot is saved back to SQLite with a conditional write that must
+still match the old anchor and server cursor. Only after that guarded save
+succeeds does Apple receive `didUpdate(...)`, `didDeleteItems(...)`, and
+`finishEnumeratingChanges(...)`.
+
+If kDrive returns an invalid advanced change payload, the extension fails closed
+with `.syncAnchorExpired` instead of advancing the cursor. File Provider can then
+restart enumeration from a fresh baseline.
 
 ## Special Container `enumerateChanges`
 
@@ -112,10 +118,44 @@ For root, working set, and trash, the enumerator:
 3. Lists all current items through the legacy listing path.
 4. Builds a new snapshot.
 5. Diffs old versus new with `KDriveSnapshotDiffer`.
-6. Saves the new snapshot and emits updates/deletes.
+6. Saves the new snapshot with a conditional write and emits updates/deletes.
 
 If the old anchor does not match, the baseline is treated as missing and the
 diff reports current items as updates.
+
+Legacy listing loops are also validated. A repeated cursor or `hasMore == true`
+without a continuation cursor fails the sync attempt with `.cannotSynchronize`
+instead of committing a partial listing.
+
+## Cursor And Action Validation
+
+`KDriveListingValidator` owns the fail-closed listing rules:
+
+- `hasMore == true` must include a non-empty continuation cursor.
+- a continuation cursor must not repeat the current cursor or a cursor already
+  seen in the same rebuild/list-all loop.
+- advanced actions must be known delete or update actions.
+- delete actions may omit `actions_files` metadata.
+- update actions must include matching item metadata.
+
+`KDriveAdvancedActionReducer` throws when those rules are violated. This keeps
+the stored server cursor tied to a completely understood snapshot state.
+
+## Guarded Snapshot Writes
+
+`KDriveSnapshotStoring` supports conditional saves through
+`KDriveSnapshotSaveCondition`:
+
+- `.missing` creates a snapshot only if no row currently exists.
+- `.matching(anchor:serverCursor:)` replaces a snapshot only if the stored row
+  still has the expected local anchor and server cursor.
+- `.unconditional` preserves the previous save behavior for callers that
+  intentionally do not need a guard.
+
+Enumeration and change paths use guarded saves before emitting File Provider
+changes. If another enumerator has already advanced the same container,
+`KDriveSnapshotStoreError.staleSnapshot` is mapped to `.cannotSynchronize`; the
+stale writer does not overwrite newer cache state.
 
 ## Snapshot Metadata
 
@@ -134,6 +174,11 @@ diff reports current items as updates.
 - `contentVersion`: `modifiedAt.timeIntervalSince1970`
 - `metadataVersion`: `id`, `updatedAt`, `name`, and `parentID`
 
-This is a lightweight versioning scheme. The extension currently logs the
-`baseVersion` passed into mutations but does not use it to reject stale writes.
-See [Conflicts](CONFLICTS.md) for the implications.
+This is a lightweight versioning scheme. The extension compares the File
+Provider `baseVersion` with freshly fetched kDrive metadata before content,
+metadata, trash, and delete mutations.
+
+Stale content replacement preserves both by uploading the local bytes as a
+renamed conflict copy. Stale rename, move, trash, and permanent delete requests
+are blocked before the server is mutated. See [Conflicts](CONFLICTS.md) for the
+remaining limitations.

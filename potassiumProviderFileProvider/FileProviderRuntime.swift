@@ -116,6 +116,17 @@ func providerError(_ error: Error) -> Error {
         return fileProviderError
     }
 
+    if error is KDriveListingValidationError {
+        FileProviderLog.runtime.error("map listing validation failure to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
+        return NSFileProviderError(.cannotSynchronize)
+    }
+
+    if let snapshotStoreError = error as? KDriveSnapshotStoreError,
+       case .staleSnapshot = snapshotStoreError {
+        FileProviderLog.runtime.error("map stale snapshot write to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
+        return NSFileProviderError(.cannotSynchronize)
+    }
+
     let nsError = error as NSError
     if nsError.domain == NSURLErrorDomain {
         FileProviderLog.runtime.error("map URL error \(nsError.code, privacy: .public) to serverUnreachable: \(nsError.localizedDescription, privacy: .public)")

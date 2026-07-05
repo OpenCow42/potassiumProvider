@@ -127,11 +127,143 @@ public struct KDriveRemoteFileAction: Equatable, Sendable {
     }
 }
 
+public enum KDriveRemoteFileActionKind: Equatable, Sendable {
+    case delete
+    case update
+}
+
+public enum KDriveListingValidationError: Error, Equatable, LocalizedError, Sendable {
+    case missingContinuationCursor
+    case repeatedContinuationCursor(String)
+    case missingSnapshotForContinuation(String)
+    case unknownAdvancedAction(String)
+    case missingActionItem(action: String, fileID: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingContinuationCursor:
+            return "The server reported more listing pages but did not return a continuation cursor."
+        case .repeatedContinuationCursor(let cursor):
+            return "The server repeated listing cursor '\(cursor)'."
+        case .missingSnapshotForContinuation(let cursor):
+            return "No cached listing snapshot exists for continuation cursor '\(cursor)'."
+        case .unknownAdvancedAction(let action):
+            return "The server returned unknown advanced listing action '\(action)'."
+        case .missingActionItem(let action, let fileID):
+            return "Advanced listing action '\(action)' for file '\(fileID)' did not include item metadata."
+        }
+    }
+}
+
+public enum KDriveListingValidator {
+    public static func validatedNextCursor(
+        currentCursor: String?,
+        nextCursor: String?,
+        hasMore: Bool
+    ) throws -> String? {
+        guard let nextCursor, nextCursor.isEmpty == false else {
+            if hasMore {
+                throw KDriveListingValidationError.missingContinuationCursor
+            }
+            return nil
+        }
+
+        if hasMore, currentCursor == nextCursor {
+            throw KDriveListingValidationError.repeatedContinuationCursor(nextCursor)
+        }
+
+        return nextCursor
+    }
+
+    public static func validatedNextCursor(
+        currentCursor: String?,
+        nextCursor: String?,
+        hasMore: Bool,
+        seenCursors: inout Set<String>
+    ) throws -> String? {
+        let nextCursor = try validatedNextCursor(
+            currentCursor: currentCursor,
+            nextCursor: nextCursor,
+            hasMore: hasMore
+        )
+        guard hasMore, let nextCursor else {
+            return nextCursor
+        }
+        guard seenCursors.insert(nextCursor).inserted else {
+            throw KDriveListingValidationError.repeatedContinuationCursor(nextCursor)
+        }
+        return nextCursor
+    }
+
+    public static func validateAdvancedActions(
+        _ actions: [KDriveRemoteFileAction],
+        actionItems: [KDriveRemoteItem]
+    ) throws {
+        let actionItemIDs = Set(actionItems.map(\.id))
+        for action in actions {
+            switch actionKind(for: action.action) {
+            case .delete:
+                continue
+            case .update:
+                guard actionItemIDs.contains(action.fileID) else {
+                    throw KDriveListingValidationError.missingActionItem(
+                        action: action.action,
+                        fileID: action.fileID
+                    )
+                }
+            case nil:
+                throw KDriveListingValidationError.unknownAdvancedAction(action.action)
+            }
+        }
+    }
+
+    public static func actionKind(for action: String) -> KDriveRemoteFileActionKind? {
+        if deleteActions.contains(action) {
+            return .delete
+        }
+        if updateActions.contains(action) {
+            return .update
+        }
+        return nil
+    }
+
+    private static let deleteActions: Set<String> = [
+        "file_delete",
+        "file_trash",
+        "file_move_out"
+    ]
+
+    private static let updateActions: Set<String> = [
+        "file_create",
+        "file_rename",
+        "file_move",
+        "file_restore",
+        "file_update",
+        "file_favorite_create",
+        "file_favorite_remove",
+        "file_share_create",
+        "file_share_update",
+        "file_share_delete",
+        "share_link_create",
+        "share_link_update",
+        "share_link_delete",
+        "collaborative_folder_create",
+        "collaborative_folder_update",
+        "collaborative_folder_delete",
+        "file_color_update",
+        "file_color_delete",
+        "file_categorize",
+        "file_uncategorize"
+    ]
+}
+
 public enum KDriveAdvancedActionReducer {
     public static func changes(
         from actions: [KDriveRemoteFileAction],
         actionItems: [KDriveRemoteItem]
-    ) -> KDriveSnapshotChangeSet {
+    ) throws -> KDriveSnapshotChangeSet {
+        try KDriveListingValidator.validateAdvancedActions(actions, actionItems: actionItems)
+
         let actionItemsByID = Dictionary(uniqueKeysWithValues: actionItems.map { ($0.id, $0) })
         var handledFileIDs = Set<Int>()
         var updatedItems: [KDriveRemoteItem] = []
@@ -142,12 +274,12 @@ public enum KDriveAdvancedActionReducer {
                 continue
             }
 
-            if isDeleteAction(action.action) {
+            if KDriveListingValidator.actionKind(for: action.action) == .delete {
                 deletedItemIDs.insert(action.fileID)
                 continue
             }
 
-            guard isUpdateAction(action.action), let item = actionItemsByID[action.fileID] else {
+            guard let item = actionItemsByID[action.fileID] else {
                 continue
             }
 
@@ -166,8 +298,8 @@ public enum KDriveAdvancedActionReducer {
         to snapshot: KDriveSnapshot,
         anchor: String,
         serverCursor: String?
-    ) -> (snapshot: KDriveSnapshot, changes: KDriveSnapshotChangeSet) {
-        let changes = changes(from: actions, actionItems: actionItems)
+    ) throws -> (snapshot: KDriveSnapshot, changes: KDriveSnapshotChangeSet) {
+        let changes = try changes(from: actions, actionItems: actionItems)
         var itemsByID = Dictionary(uniqueKeysWithValues: snapshot.items.map { ($0.id, $0) })
         for itemID in changes.deletedItemIDs {
             itemsByID[itemID] = nil
@@ -201,42 +333,58 @@ public enum KDriveAdvancedActionReducer {
             changes
         )
     }
+}
 
-    private static func isDeleteAction(_ action: String) -> Bool {
-        switch action {
-        case "file_delete", "file_trash", "file_move_out":
-            return true
-        default:
-            return false
-        }
+public enum KDriveVersionConflictResolver {
+    public static func contentMatches(baseVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
+        baseVersion == remoteItem.contentVersion
     }
 
-    private static func isUpdateAction(_ action: String) -> Bool {
-        switch action {
-        case "file_create",
-             "file_rename",
-             "file_move",
-             "file_restore",
-             "file_update",
-             "file_favorite_create",
-             "file_favorite_remove",
-             "file_share_create",
-             "file_share_update",
-             "file_share_delete",
-             "share_link_create",
-             "share_link_update",
-             "share_link_delete",
-             "collaborative_folder_create",
-             "collaborative_folder_update",
-             "collaborative_folder_delete",
-             "file_color_update",
-             "file_color_delete",
-             "file_categorize",
-             "file_uncategorize":
-            return true
-        default:
-            return false
+    public static func metadataMatches(baseVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
+        baseVersion == remoteItem.metadataVersion
+    }
+
+    public static func itemVersionMatches(contentVersion: Data, metadataVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
+        contentMatches(baseVersion: contentVersion, remoteItem: remoteItem)
+            && metadataMatches(baseVersion: metadataVersion, remoteItem: remoteItem)
+    }
+}
+
+public enum KDriveConflictFilename {
+    public static func filename(
+        for originalName: String,
+        deviceName: String = "This Mac",
+        date: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        let nsName = originalName as NSString
+        let fileExtension = nsName.pathExtension
+        let stem = fileExtension.isEmpty ? originalName : nsName.deletingPathExtension
+        let suffix = "conflict - \(safeDeviceName(deviceName)) - \(timestamp(for: date, timeZone: timeZone))"
+        guard fileExtension.isEmpty == false else {
+            return "\(stem) (\(suffix))"
         }
+        return "\(stem) (\(suffix)).\(fileExtension)"
+    }
+
+    private static func safeDeviceName(_ deviceName: String) -> String {
+        deviceName
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: ".")
+    }
+
+    private static func timestamp(for date: Date, timeZone: TimeZone) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents(in: timeZone, from: date)
+        return String(
+            format: "%04d-%02d-%02d %02d.%02d.%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0,
+            components.hour ?? 0,
+            components.minute ?? 0,
+            components.second ?? 0
+        )
     }
 }
 

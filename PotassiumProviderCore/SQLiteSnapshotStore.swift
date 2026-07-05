@@ -12,6 +12,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
             withIntermediateDirectories: true
         )
         let database = try Connection(databaseURL.path)
+        try Self.configure(database)
         try Self.createTables(on: database)
         self.database = database
     }
@@ -47,8 +48,21 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
         )
     }
 
-    public func save(_ snapshot: KDriveSnapshot, domainIdentifier: String, containerIdentifier: String) throws {
+    public func save(
+        _ snapshot: KDriveSnapshot,
+        domainIdentifier: String,
+        containerIdentifier: String,
+        condition: KDriveSnapshotSaveCondition
+    ) throws {
         try database.transaction {
+            let currentSnapshot = try self.snapshot(domainIdentifier: domainIdentifier, containerIdentifier: containerIdentifier)
+            guard condition.accepts(currentSnapshot) else {
+                throw KDriveSnapshotStoreError.staleSnapshot(
+                    domainIdentifier: domainIdentifier,
+                    containerIdentifier: containerIdentifier
+                )
+            }
+
             try deleteSnapshot(domainIdentifier: domainIdentifier, containerIdentifier: containerIdentifier)
 
             try database.run(Schema.containerSnapshots.insert(
@@ -83,6 +97,11 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
         let filter = Schema.domainIdentifier == domainIdentifier && Schema.containerIdentifier == containerIdentifier
         try database.run(Schema.snapshotItems.filter(filter).delete())
         try database.run(Schema.containerSnapshots.filter(filter).delete())
+    }
+
+    private static func configure(_ database: Connection) throws {
+        try database.execute("PRAGMA journal_mode=WAL")
+        try database.execute("PRAGMA busy_timeout=5000")
     }
 
     private static func createTables(on database: Connection) throws {

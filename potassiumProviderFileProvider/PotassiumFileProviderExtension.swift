@@ -2,6 +2,7 @@ import FileProvider
 import Foundation
 import OSLog
 import PotassiumProviderCore
+import UIKit
 import UniformTypeIdentifiers
 
 public final class PotassiumFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
@@ -127,7 +128,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         parentID: parentID,
                         fileName: itemTemplate.filename,
                         contents: contents,
-                        lastModifiedAt: itemTemplate.contentModificationDate ?? nil
+                        lastModifiedAt: itemTemplate.contentModificationDate ?? nil,
+                        conflictStrategy: .version
                     )
                 }
 
@@ -163,8 +165,16 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 guard let fileID = identifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
+                let latestItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
 
                 if changedFields.contains(.parentItemIdentifier), item.parentItemIdentifier == .trashContainer {
+                    guard KDriveVersionConflictResolver.itemVersionMatches(
+                        contentVersion: version.contentVersion,
+                        metadataVersion: version.metadataVersion,
+                        remoteItem: latestItem
+                    ) else {
+                        throw self.staleVersionError()
+                    }
                     FileProviderLog.replicatedExtension.info("trash item(\(item.itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
                     try await runtime.remote.trashItem(driveID: runtime.configuration.driveID, fileID: fileID)
                     completionHandler(nil, [], false, nil)
@@ -174,6 +184,17 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 let updatedItem: KDriveRemoteItem
                 if let newContents, changedFields.contains(.contents) {
                     let data = try Data(contentsOf: newContents)
+                    guard KDriveVersionConflictResolver.contentMatches(baseVersion: version.contentVersion, remoteItem: latestItem) else {
+                        let conflictItem = try await self.uploadConflictCopy(
+                            contents: data,
+                            localItem: item,
+                            latestItem: latestItem,
+                            runtime: runtime
+                        )
+                        FileProviderLog.replicatedExtension.info("preserved stale content edit as conflict item(\(conflictItem.id, privacy: .public)) original(\(fileID, privacy: .public))")
+                        completionHandler(FileProviderItem(remoteItem: conflictItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
+                        return
+                    }
                     FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
                     updatedItem = try await runtime.remote.replaceFile(
                         driveID: runtime.configuration.driveID,
@@ -182,6 +203,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         lastModifiedAt: item.contentModificationDate ?? nil
                     )
                 } else if changedFields.contains(.parentItemIdentifier) {
+                    guard KDriveVersionConflictResolver.metadataMatches(baseVersion: version.metadataVersion, remoteItem: latestItem) else {
+                        throw self.staleVersionError()
+                    }
                     let parentID = try self.fileID(forParentIdentifier: item.parentItemIdentifier, runtime: runtime)
                     FileProviderLog.replicatedExtension.debug("move item(\(item.itemIdentifier.rawValue, privacy: .public)) to parentFileID(\(parentID, privacy: .public)) rename(\(changedFields.contains(.filename), privacy: .public))")
                     try await runtime.remote.moveItem(
@@ -192,6 +216,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                     updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 } else if changedFields.contains(.filename) {
+                    guard KDriveVersionConflictResolver.metadataMatches(baseVersion: version.metadataVersion, remoteItem: latestItem) else {
+                        throw self.staleVersionError()
+                    }
                     FileProviderLog.replicatedExtension.debug("rename item(\(item.itemIdentifier.rawValue, privacy: .public)) filename(\(item.filename, privacy: .private))")
                     try await runtime.remote.renameItem(
                         driveID: runtime.configuration.driveID,
@@ -233,6 +260,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     throw NSFileProviderError(.noSuchItem)
                 }
 
+                let latestItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
+                guard KDriveVersionConflictResolver.itemVersionMatches(
+                    contentVersion: version.contentVersion,
+                    metadataVersion: version.metadataVersion,
+                    remoteItem: latestItem
+                ) else {
+                    throw self.staleVersionError()
+                }
                 try await runtime.remote.deleteTrashedItem(driveID: runtime.configuration.driveID, fileID: fileID)
                 FileProviderLog.replicatedExtension.info("deleted trashed item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
                 completionHandler(nil)
@@ -264,6 +299,65 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         }
         return try KDriveItemIdentifier(rawValue: parentIdentifier.rawValue).fileID(rootFileID: runtime.configuration.rootFileID)
             ?? runtime.configuration.rootFileID
+    }
+
+    private func uploadConflictCopy(
+        contents: Data,
+        localItem: NSFileProviderItem,
+        latestItem: KDriveRemoteItem,
+        runtime: FileProviderRuntime
+    ) async throws -> KDriveRemoteItem {
+        let stagedURL = try stageConflictContents(contents, itemIdentifier: localItem.itemIdentifier)
+        let conflictFilename = KDriveConflictFilename.filename(
+            for: localItem.filename,
+            deviceName: ConflictDeviceName.current
+        )
+        do {
+            let conflictItem = try await runtime.remote.uploadFile(
+                driveID: runtime.configuration.driveID,
+                parentID: latestItem.parentID,
+                fileName: conflictFilename,
+                contents: contents,
+                lastModifiedAt: localItem.contentModificationDate ?? nil,
+                conflictStrategy: .rename
+            )
+            try? FileManager.default.removeItem(at: stagedURL)
+            return conflictItem
+        } catch {
+            FileProviderLog.replicatedExtension.error("conflict upload failed; staged bytes retained at \(stagedURL.path, privacy: .private): \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+    }
+
+    private func stageConflictContents(_ contents: Data, itemIdentifier: NSFileProviderItemIdentifier) throws -> URL {
+        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: ProviderConstants.appGroupIdentifier) else {
+            throw KDriveSnapshotStoreError.missingAppGroupContainer(ProviderConstants.appGroupIdentifier)
+        }
+        let directoryURL = containerURL.appendingPathComponent("ConflictStaging", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let fileURL = directoryURL
+            .appendingPathComponent("\(itemIdentifier.rawValue)-\(UUID().uuidString)")
+            .appendingPathExtension("upload")
+        try contents.write(to: fileURL, options: [.atomic])
+        return fileURL
+    }
+
+    private func staleVersionError() -> Error {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.cannotSynchronize.rawValue,
+            userInfo: [
+                NSLocalizedDescriptionKey: "The item changed on the server before the local mutation could be applied.",
+                NSLocalizedRecoverySuggestionErrorKey: "Refresh the folder and retry the change."
+            ]
+        )
+    }
+}
+
+private enum ConflictDeviceName {
+    static var current: String {
+        let deviceName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return deviceName.isEmpty ? "This Mac" : deviceName
     }
 }
 

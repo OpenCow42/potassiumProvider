@@ -86,23 +86,18 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     containerIdentifier: self.snapshotContainerIdentifier
                 )
                 let baselineSnapshot = oldSnapshot?.anchor == requestedAnchor ? oldSnapshot : nil
+                let saveCondition = self.saveCondition(replacing: oldSnapshot)
                 FileProviderLog.enumeration.debug("enumerateChanges baseline container(\(self.containerItemIdentifier.rawValue, privacy: .public)) oldSnapshotPresent(\(oldSnapshot != nil, privacy: .public)) anchorMatched(\(baselineSnapshot != nil, privacy: .public))")
                 let newSnapshot = KDriveSnapshot(items: try await self.listAllItems(runtime: runtime))
                 let changes = KDriveSnapshotDiffer.changes(from: baselineSnapshot, to: newSnapshot)
 
-                if changes.updatedItems.isEmpty == false {
-                    observer.didUpdate(changes.updatedItems.map { FileProviderItem(remoteItem: $0, rootFileID: runtime.configuration.rootFileID) })
-                }
-
-                if changes.deletedItemIDs.isEmpty == false {
-                    observer.didDeleteItems(withIdentifiers: changes.deletedItemIDs.map { NSFileProviderItemIdentifier(String($0)) })
-                }
-
                 try await runtime.snapshotStore.save(
                     newSnapshot,
                     domainIdentifier: runtime.configuration.domainIdentifier,
-                    containerIdentifier: self.snapshotContainerIdentifier
+                    containerIdentifier: self.snapshotContainerIdentifier,
+                    condition: saveCondition
                 )
+                self.emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
                 FileProviderLog.enumeration.info("enumerateChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(changes.updatedItems.count, privacy: .public)) deleted(\(changes.deletedItemIDs.count, privacy: .public)) total(\(newSnapshot.items.count, privacy: .public))")
                 observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newSnapshot.anchor), moreComing: false)
             } catch {
@@ -220,21 +215,31 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         cursor: String?,
         replaceSnapshot: Bool
     ) async throws -> KDriveItemPage {
+        let oldSnapshot = try await runtime.snapshotStore.snapshot(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            containerIdentifier: snapshotContainerIdentifier
+        )
+        guard replaceSnapshot || oldSnapshot != nil else {
+            throw KDriveListingValidationError.missingSnapshotForContinuation(cursor ?? "<nil>")
+        }
+        let saveCondition = saveCondition(replacing: oldSnapshot)
         let response = try await runtime.remote.listAdvancedDirectory(
             driveID: runtime.configuration.driveID,
             folderID: folderID,
             cursor: cursor,
             limit: 200
         )
-        let oldSnapshot = replaceSnapshot ? nil : try await runtime.snapshotStore.snapshot(
-            domainIdentifier: runtime.configuration.domainIdentifier,
-            containerIdentifier: snapshotContainerIdentifier
+        try KDriveListingValidator.validateAdvancedActions(response.actions, actionItems: response.actionItems)
+        let nextCursor = try KDriveListingValidator.validatedNextCursor(
+            currentCursor: cursor,
+            nextCursor: response.nextCursor,
+            hasMore: response.hasMore
         )
         let mergedItems = mergeListingItems(
-            existingItems: oldSnapshot?.items ?? [],
+            existingItems: replaceSnapshot ? [] : oldSnapshot?.items ?? [],
             pageItems: response.items
         )
-        let storedCursor = response.actions.isEmpty ? response.nextCursor : cursor
+        let storedCursor = response.actions.isEmpty ? nextCursor : cursor
         let snapshot = KDriveSnapshot(
             anchor: storedCursor ?? UUID().uuidString,
             serverCursor: storedCursor,
@@ -245,12 +250,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         try await runtime.snapshotStore.save(
             snapshot,
             domainIdentifier: runtime.configuration.domainIdentifier,
-            containerIdentifier: snapshotContainerIdentifier
+            containerIdentifier: snapshotContainerIdentifier,
+            condition: saveCondition
         )
 
         return KDriveItemPage(
             items: response.items,
-            nextCursor: response.hasMore ? response.nextCursor : nil,
+            nextCursor: response.hasMore ? nextCursor : nil,
             hasMore: response.hasMore
         )
     }
@@ -262,20 +268,23 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         var pageCount = 0
 
         while true {
+            let currentCursor = FileProviderPageCodec.cursor(from: page)
             let itemPage = try await listLegacyItems(runtime: runtime, startingAt: page)
             pageCount += 1
             items.append(contentsOf: itemPage.items)
 
-            guard let nextPage = FileProviderPageCodec.page(from: itemPage.nextCursor) else {
+            let nextCursor = try KDriveListingValidator.validatedNextCursor(
+                currentCursor: currentCursor,
+                nextCursor: itemPage.nextCursor,
+                hasMore: itemPage.hasMore,
+                seenCursors: &seenCursors
+            )
+
+            guard itemPage.hasMore, let nextPage = FileProviderPageCodec.page(from: nextCursor) else {
                 FileProviderLog.enumeration.debug("listAllItems complete container(\(self.containerItemIdentifier.rawValue, privacy: .public)) pages(\(pageCount, privacy: .public)) total(\(items.count, privacy: .public))")
                 return items
             }
 
-            let cursor = FileProviderPageCodec.cursor(from: nextPage) ?? ""
-            guard seenCursors.insert(cursor).inserted else {
-                FileProviderLog.enumeration.error("listAllItems stopping after repeated cursor container(\(self.containerItemIdentifier.rawValue, privacy: .public)) pages(\(pageCount, privacy: .public)) total(\(items.count, privacy: .public))")
-                return items
-            }
             page = nextPage
         }
     }
@@ -307,8 +316,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 cursor: requestedCursor,
                 limit: 200
             )
-            let newCursor = response.nextCursor ?? requestedCursor
-            let result = KDriveAdvancedActionReducer.applying(
+            let nextCursor = try KDriveListingValidator.validatedNextCursor(
+                currentCursor: requestedCursor,
+                nextCursor: response.nextCursor,
+                hasMore: response.hasMore
+            )
+            let newCursor = nextCursor ?? requestedCursor
+            let result = try KDriveAdvancedActionReducer.applying(
                 actions: response.actions,
                 actionItems: response.actionItems,
                 to: oldSnapshot,
@@ -318,19 +332,30 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             try await runtime.snapshotStore.save(
                 result.snapshot,
                 domainIdentifier: runtime.configuration.domainIdentifier,
-                containerIdentifier: snapshotContainerIdentifier
+                containerIdentifier: snapshotContainerIdentifier,
+                condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
             )
             emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
             FileProviderLog.enumeration.info("enumerateAdvancedChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newCursor), moreComing: response.hasMore)
+        } catch let error as KDriveListingValidationError {
+            FileProviderLog.enumeration.error("enumerateAdvancedChanges invalid listing payload container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            throw NSFileProviderError(.syncAnchorExpired)
         } catch let error where KDriveRemoteErrorClassifier.isInvalidCursor(error) {
             FileProviderLog.enumeration.error("enumerateAdvancedChanges invalid cursor; rebuilding container(\(self.containerItemIdentifier.rawValue, privacy: .public))")
-            let rebuiltSnapshot = try await rebuildAdvancedSnapshot(runtime: runtime, folderID: folderID)
+            let rebuiltSnapshot: KDriveSnapshot
+            do {
+                rebuiltSnapshot = try await rebuildAdvancedSnapshot(runtime: runtime, folderID: folderID)
+            } catch let error as KDriveListingValidationError {
+                FileProviderLog.enumeration.error("rebuildAdvancedSnapshot invalid listing payload container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                throw NSFileProviderError(.syncAnchorExpired)
+            }
             let changes = KDriveSnapshotDiffer.changes(from: oldSnapshot, to: rebuiltSnapshot)
             try await runtime.snapshotStore.save(
                 rebuiltSnapshot,
                 domainIdentifier: runtime.configuration.domainIdentifier,
-                containerIdentifier: snapshotContainerIdentifier
+                containerIdentifier: snapshotContainerIdentifier,
+                condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
             )
             emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: rebuiltSnapshot.anchor), moreComing: false)
@@ -350,10 +375,17 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 cursor: cursor,
                 limit: 200
             )
+            try KDriveListingValidator.validateAdvancedActions(response.actions, actionItems: response.actionItems)
             items = mergeListingItems(existingItems: items, pageItems: response.items)
-            storedCursor = response.actions.isEmpty ? response.nextCursor : cursor
+            let nextCursor = try KDriveListingValidator.validatedNextCursor(
+                currentCursor: cursor,
+                nextCursor: response.nextCursor,
+                hasMore: response.hasMore,
+                seenCursors: &seenCursors
+            )
+            storedCursor = response.actions.isEmpty ? nextCursor : cursor
 
-            guard response.hasMore, let nextCursor = response.nextCursor else {
+            guard response.hasMore, let nextCursor else {
                 return KDriveSnapshot(
                     anchor: storedCursor ?? UUID().uuidString,
                     serverCursor: storedCursor,
@@ -363,15 +395,6 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 )
             }
 
-            guard seenCursors.insert(nextCursor).inserted else {
-                return KDriveSnapshot(
-                    anchor: storedCursor ?? nextCursor,
-                    serverCursor: storedCursor ?? nextCursor,
-                    isFullyEnumerated: true,
-                    usesAdvancedListing: true,
-                    items: items
-                )
-            }
             cursor = nextCursor
         }
     }
@@ -409,5 +432,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         if changes.deletedItemIDs.isEmpty == false {
             observer.didDeleteItems(withIdentifiers: changes.deletedItemIDs.map { NSFileProviderItemIdentifier(String($0)) })
         }
+    }
+
+    private func saveCondition(replacing snapshot: KDriveSnapshot?) -> KDriveSnapshotSaveCondition {
+        guard let snapshot else { return .missing }
+        return .matching(anchor: snapshot.anchor, serverCursor: snapshot.serverCursor)
     }
 }

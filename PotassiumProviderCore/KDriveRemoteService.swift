@@ -10,13 +10,25 @@ public protocol KDriveFileProviding: Sendable {
     func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
     func downloadFile(driveID: Int, fileID: Int) async throws -> Data
     func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data
-    func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem
+    func uploadFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) async throws -> KDriveRemoteItem
     func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem
     func renameItem(driveID: Int, fileID: Int, name: String) async throws
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws
     func trashItem(driveID: Int, fileID: Int) async throws
     func deleteTrashedItem(driveID: Int, fileID: Int) async throws
+}
+
+public enum KDriveUploadConflictStrategy: String, Sendable {
+    case version
+    case rename
 }
 
 public struct PotassiumKDriveService: KDriveFileProviding {
@@ -131,12 +143,19 @@ public struct PotassiumKDriveService: KDriveFileProviding {
         )
     }
 
-    public func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+    public func uploadFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) async throws -> KDriveRemoteItem {
         let response = try await service.uploadFile(
             driveId: driveID,
             data: contents,
             options: UploadKDriveFileOptions(
-                conflict: "version",
+                conflict: conflictStrategy.rawValue,
                 directoryId: parentID,
                 fileName: fileName,
                 lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)

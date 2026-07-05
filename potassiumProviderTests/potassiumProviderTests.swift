@@ -58,6 +58,107 @@ struct PotassiumProviderCoreTests {
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
     }
 
+    @Test func guardedSnapshotSaveHonorsConditions() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let initialSnapshot = KDriveSnapshot(
+            anchor: "initial-anchor",
+            serverCursor: "initial-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [makeItem(id: 1, name: "Initial.txt")]
+        )
+        let updatedSnapshot = KDriveSnapshot(
+            anchor: "updated-anchor",
+            serverCursor: "updated-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [makeItem(id: 2, name: "Updated.txt")]
+        )
+
+        try await store.save(
+            initialSnapshot,
+            domainIdentifier: "domain-1",
+            containerIdentifier: "folder-1",
+            condition: .missing
+        )
+        var missingConditionRejected = false
+        do {
+            try await store.save(
+                updatedSnapshot,
+                domainIdentifier: "domain-1",
+                containerIdentifier: "folder-1",
+                condition: .missing
+            )
+        } catch let error as KDriveSnapshotStoreError {
+            missingConditionRejected = error == .staleSnapshot(domainIdentifier: "domain-1", containerIdentifier: "folder-1")
+        }
+        #expect(missingConditionRejected)
+
+        try await store.save(
+            updatedSnapshot,
+            domainIdentifier: "domain-1",
+            containerIdentifier: "folder-1",
+            condition: .matching(anchor: "initial-anchor", serverCursor: "initial-cursor")
+        )
+
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "folder-1") == updatedSnapshot)
+    }
+
+    @Test func guardedSnapshotSavePreventsCrossInstanceCursorRegression() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+        let firstStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        let secondStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        let oldSnapshot = KDriveSnapshot(
+            anchor: "old-anchor",
+            serverCursor: "old-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [makeItem(id: 1, name: "Old.txt")]
+        )
+        let newerSnapshot = KDriveSnapshot(
+            anchor: "new-anchor",
+            serverCursor: "new-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [makeItem(id: 2, name: "New.txt")]
+        )
+        let regressingSnapshot = KDriveSnapshot(
+            anchor: "regressing-anchor",
+            serverCursor: "regressing-cursor",
+            isFullyEnumerated: true,
+            usesAdvancedListing: true,
+            items: [makeItem(id: 3, name: "Regressing.txt")]
+        )
+
+        try await firstStore.save(oldSnapshot, domainIdentifier: "domain-1", containerIdentifier: "folder-1")
+        try await secondStore.save(
+            newerSnapshot,
+            domainIdentifier: "domain-1",
+            containerIdentifier: "folder-1",
+            condition: .matching(anchor: "old-anchor", serverCursor: "old-cursor")
+        )
+
+        var staleSaveRejected = false
+        do {
+            try await firstStore.save(
+                regressingSnapshot,
+                domainIdentifier: "domain-1",
+                containerIdentifier: "folder-1",
+                condition: .matching(anchor: "old-anchor", serverCursor: "old-cursor")
+            )
+        } catch let error as KDriveSnapshotStoreError {
+            staleSaveRejected = error == .staleSnapshot(domainIdentifier: "domain-1", containerIdentifier: "folder-1")
+        }
+        #expect(staleSaveRejected)
+        #expect(try await firstStore.snapshot(domainIdentifier: "domain-1", containerIdentifier: "folder-1") == newerSnapshot)
+    }
+
     @Test func snapshotDecodesLegacyFileStoreShape() throws {
         struct LegacySnapshot: Encodable {
             let anchor: String
@@ -180,10 +281,10 @@ struct PotassiumProviderCoreTests {
         #expect(changes.deletedItemIDs == [2])
     }
 
-    @Test func advancedActionReducerReportsUpdatesAndDeletes() {
+    @Test func advancedActionReducerReportsUpdatesAndDeletes() throws {
         let updated = makeItem(id: 1, name: "Updated.txt")
         let created = makeItem(id: 3, name: "Created.txt")
-        let changes = KDriveAdvancedActionReducer.changes(
+        let changes = try KDriveAdvancedActionReducer.changes(
             from: [
                 KDriveRemoteFileAction(action: "file_update", fileID: 1, parentID: 10),
                 KDriveRemoteFileAction(action: "file_trash", fileID: 2, parentID: 10),
@@ -196,7 +297,57 @@ struct PotassiumProviderCoreTests {
         #expect(changes.deletedItemIDs == [2])
     }
 
-    @Test func advancedActionReducerUsesNewestActionAndDeletesWithoutActionFile() {
+    @Test func listingValidatorRejectsAmbiguousPagination() throws {
+        #expect(throws: KDriveListingValidationError.missingContinuationCursor) {
+            _ = try KDriveListingValidator.validatedNextCursor(
+                currentCursor: nil,
+                nextCursor: nil,
+                hasMore: true
+            )
+        }
+
+        var seenCursors = Set<String>()
+        #expect(try KDriveListingValidator.validatedNextCursor(
+            currentCursor: nil,
+            nextCursor: "cursor-1",
+            hasMore: true,
+            seenCursors: &seenCursors
+        ) == "cursor-1")
+
+        #expect(throws: KDriveListingValidationError.repeatedContinuationCursor("cursor-1")) {
+            _ = try KDriveListingValidator.validatedNextCursor(
+                currentCursor: "cursor-1",
+                nextCursor: "cursor-1",
+                hasMore: true,
+                seenCursors: &seenCursors
+            )
+        }
+    }
+
+    @Test func advancedActionValidatorFailsClosedForUnsafeActions() throws {
+        #expect(throws: KDriveListingValidationError.unknownAdvancedAction("file_mystery")) {
+            try KDriveListingValidator.validateAdvancedActions(
+                [KDriveRemoteFileAction(action: "file_mystery", fileID: 1, parentID: 10)],
+                actionItems: []
+            )
+        }
+
+        #expect(throws: KDriveListingValidationError.missingActionItem(action: "file_update", fileID: 1)) {
+            try KDriveListingValidator.validateAdvancedActions(
+                [KDriveRemoteFileAction(action: "file_update", fileID: 1, parentID: 10)],
+                actionItems: []
+            )
+        }
+
+        let changes = try KDriveAdvancedActionReducer.changes(
+            from: [KDriveRemoteFileAction(action: "file_delete", fileID: 2, parentID: 10)],
+            actionItems: []
+        )
+        #expect(changes.updatedItems.isEmpty)
+        #expect(changes.deletedItemIDs == [2])
+    }
+
+    @Test func advancedActionReducerUsesNewestActionAndDeletesWithoutActionFile() throws {
         let oldSnapshot = KDriveSnapshot(
             anchor: "old-cursor",
             serverCursor: "old-cursor",
@@ -209,7 +360,7 @@ struct PotassiumProviderCoreTests {
         )
         let newItem = makeItem(id: 1, name: "Newest.txt")
 
-        let result = KDriveAdvancedActionReducer.applying(
+        let result = try KDriveAdvancedActionReducer.applying(
             actions: [
                 KDriveRemoteFileAction(action: "file_delete", fileID: 1, parentID: 10),
                 KDriveRemoteFileAction(action: "file_delete", fileID: 2, parentID: 10),
@@ -225,6 +376,34 @@ struct PotassiumProviderCoreTests {
         #expect(result.changes.deletedItemIDs == [1, 2])
         #expect(result.snapshot.items.isEmpty)
         #expect(result.snapshot.serverCursor == "new-cursor")
+    }
+
+    @Test func versionConflictResolverComparesRelevantVersions() {
+        let item = makeItem(id: 1, name: "Versioned.txt")
+
+        #expect(KDriveVersionConflictResolver.contentMatches(baseVersion: item.contentVersion, remoteItem: item))
+        #expect(KDriveVersionConflictResolver.metadataMatches(baseVersion: item.metadataVersion, remoteItem: item))
+        #expect(KDriveVersionConflictResolver.itemVersionMatches(
+            contentVersion: item.contentVersion,
+            metadataVersion: item.metadataVersion,
+            remoteItem: item
+        ))
+        #expect(!KDriveVersionConflictResolver.contentMatches(baseVersion: Data("stale".utf8), remoteItem: item))
+        #expect(!KDriveVersionConflictResolver.metadataMatches(baseVersion: Data("stale".utf8), remoteItem: item))
+    }
+
+    @Test func conflictFilenamePreservesExtensionAndIsDeterministic() {
+        let conflictName = KDriveConflictFilename.filename(
+            for: "Report.pdf",
+            deviceName: "Mac/One:Two",
+            date: Date(timeIntervalSince1970: 0),
+            timeZone: TimeZone(secondsFromGMT: 0)!
+        )
+
+        #expect(conflictName == "Report (conflict - Mac-One.Two - 1970-01-01 00.00.00).pdf")
+        #expect(conflictName.hasSuffix(").pdf"))
+        #expect(KDriveUploadConflictStrategy.version.rawValue == "version")
+        #expect(KDriveUploadConflictStrategy.rename.rawValue == "rename")
     }
 
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
@@ -760,7 +939,14 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
-    func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+    func uploadFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) async throws -> KDriveRemoteItem {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
