@@ -159,25 +159,23 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         }.performTask {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                let coordinator = self.makeMutationCoordinator(runtime: runtime)
                 let parentID = try self.fileID(forParentIdentifier: itemTemplate.parentItemIdentifier, runtime: runtime)
                 let createdItem: KDriveRemoteItem
 
                 if itemTemplate.contentType?.conforms(to: .folder) == true {
-                    createdItem = try await runtime.remote.createDirectory(
-                        driveID: runtime.configuration.driveID,
+                    createdItem = try await coordinator.createDirectory(
                         parentID: parentID,
                         name: itemTemplate.filename
                     )
                 } else {
                     let contents = try url.map { try Data(contentsOf: $0) } ?? Data()
                     FileProviderLog.replicatedExtension.debug("upload new file parentFileID(\(parentID, privacy: .public)) bytes(\(contents.count, privacy: .public))")
-                    createdItem = try await runtime.remote.uploadFile(
-                        driveID: runtime.configuration.driveID,
+                    createdItem = try await coordinator.createFile(
                         parentID: parentID,
                         fileName: itemTemplate.filename,
                         contents: contents,
-                        lastModifiedAt: itemTemplate.contentModificationDate ?? nil,
-                        conflictStrategy: .version
+                        lastModifiedAt: itemTemplate.contentModificationDate ?? nil
                     )
                 }
 
@@ -221,26 +219,28 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 guard let fileID = identifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
                 }
-                let latestItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
+                let coordinator = self.makeMutationCoordinator(runtime: runtime)
+                let baseVersion = KDriveItemBaseVersion(
+                    contentVersion: version.contentVersion,
+                    metadataVersion: version.metadataVersion
+                )
 
                 if changedFields.contains(.parentItemIdentifier), item.parentItemIdentifier == .trashContainer {
-                    guard KDriveVersionConflictResolver.itemVersionMatches(
-                        contentVersion: version.contentVersion,
-                        metadataVersion: version.metadataVersion,
-                        remoteItem: latestItem
-                    ) else {
+                    let latestItem: KDriveRemoteItem
+                    do {
+                        latestItem = try await coordinator.trashItem(fileID: fileID, baseVersion: baseVersion)
+                    } catch let error as KDriveMutationConflictError {
                         await self.recordBlockedConflict(
+                            error,
                             operation: .trash,
                             itemIdentifier: item.itemIdentifier.rawValue,
                             itemName: item.filename,
-                            remoteItem: latestItem,
                             runtime: runtime,
                             summary: "Trash was blocked because the remote item changed first."
                         )
-                        throw self.staleVersionError()
+                        throw error
                     }
                     FileProviderLog.replicatedExtension.info("trash item(\(item.itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
-                    try await runtime.remote.trashItem(driveID: runtime.configuration.driveID, fileID: fileID)
                     await ProviderEventRecorder.recordActivity(
                         kind: .trash,
                         runtime: runtime,
@@ -256,64 +256,63 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 let updatedItem: KDriveRemoteItem
                 if let newContents, changedFields.contains(.contents) {
                     let data = try Data(contentsOf: newContents)
-                    guard KDriveVersionConflictResolver.contentMatches(baseVersion: version.contentVersion, remoteItem: latestItem) else {
-                        let conflictItem = try await self.uploadConflictCopy(
-                            contents: data,
-                            localItem: item,
-                            latestItem: latestItem,
-                            runtime: runtime
-                        )
+                    FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
+                    let result = try await coordinator.replaceContents(
+                        itemIdentifier: item.itemIdentifier.rawValue,
+                        fileID: fileID,
+                        localFilename: item.filename,
+                        baseContentVersion: version.contentVersion,
+                        contents: data,
+                        lastModifiedAt: item.contentModificationDate ?? nil
+                    )
+                    switch result {
+                    case .replaced(let replacedItem):
+                        updatedItem = replacedItem
+                    case .conflictCopy(let conflictItem):
                         FileProviderLog.replicatedExtension.info("preserved stale content edit as conflict item(\(conflictItem.id, privacy: .public)) original(\(fileID, privacy: .public))")
                         completionHandler(FileProviderItem(remoteItem: conflictItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
                         return
                     }
-                    FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
-                    updatedItem = try await runtime.remote.replaceFile(
-                        driveID: runtime.configuration.driveID,
-                        fileID: fileID,
-                        contents: data,
-                        lastModifiedAt: item.contentModificationDate ?? nil
-                    )
                 } else if changedFields.contains(.parentItemIdentifier) {
-                    guard KDriveVersionConflictResolver.metadataMatches(baseVersion: version.metadataVersion, remoteItem: latestItem) else {
+                    do {
+                        let parentID = try self.fileID(forParentIdentifier: item.parentItemIdentifier, runtime: runtime)
+                        FileProviderLog.replicatedExtension.debug("move item(\(item.itemIdentifier.rawValue, privacy: .public)) to parentFileID(\(parentID, privacy: .public)) rename(\(changedFields.contains(.filename), privacy: .public))")
+                        updatedItem = try await coordinator.moveItem(
+                            fileID: fileID,
+                            baseMetadataVersion: version.metadataVersion,
+                            destinationParentID: parentID,
+                            name: changedFields.contains(.filename) ? item.filename : nil
+                        )
+                    } catch let error as KDriveMutationConflictError {
                         await self.recordBlockedConflict(
+                            error,
                             operation: .modify,
                             itemIdentifier: item.itemIdentifier.rawValue,
                             itemName: item.filename,
-                            remoteItem: latestItem,
                             runtime: runtime,
                             summary: "Move was blocked because the remote item changed first."
                         )
-                        throw self.staleVersionError()
+                        throw error
                     }
-                    let parentID = try self.fileID(forParentIdentifier: item.parentItemIdentifier, runtime: runtime)
-                    FileProviderLog.replicatedExtension.debug("move item(\(item.itemIdentifier.rawValue, privacy: .public)) to parentFileID(\(parentID, privacy: .public)) rename(\(changedFields.contains(.filename), privacy: .public))")
-                    try await runtime.remote.moveItem(
-                        driveID: runtime.configuration.driveID,
-                        fileID: fileID,
-                        destinationParentID: parentID,
-                        name: changedFields.contains(.filename) ? item.filename : nil
-                    )
-                    updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 } else if changedFields.contains(.filename) {
-                    guard KDriveVersionConflictResolver.metadataMatches(baseVersion: version.metadataVersion, remoteItem: latestItem) else {
+                    do {
+                        FileProviderLog.replicatedExtension.debug("rename item(\(item.itemIdentifier.rawValue, privacy: .public)) filename(\(item.filename, privacy: .private))")
+                        updatedItem = try await coordinator.renameItem(
+                            fileID: fileID,
+                            baseMetadataVersion: version.metadataVersion,
+                            name: item.filename
+                        )
+                    } catch let error as KDriveMutationConflictError {
                         await self.recordBlockedConflict(
+                            error,
                             operation: .modify,
                             itemIdentifier: item.itemIdentifier.rawValue,
                             itemName: item.filename,
-                            remoteItem: latestItem,
                             runtime: runtime,
                             summary: "Rename was blocked because the remote item changed first."
                         )
-                        throw self.staleVersionError()
+                        throw error
                     }
-                    FileProviderLog.replicatedExtension.debug("rename item(\(item.itemIdentifier.rawValue, privacy: .public)) filename(\(item.filename, privacy: .private))")
-                    try await runtime.remote.renameItem(
-                        driveID: runtime.configuration.driveID,
-                        fileID: fileID,
-                        name: item.filename
-                    )
-                    updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 } else {
                     updatedItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
                 }
@@ -356,23 +355,25 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     throw NSFileProviderError(.noSuchItem)
                 }
 
-                let latestItem = try await runtime.remote.item(driveID: runtime.configuration.driveID, fileID: fileID)
-                guard KDriveVersionConflictResolver.itemVersionMatches(
+                let coordinator = self.makeMutationCoordinator(runtime: runtime)
+                let baseVersion = KDriveItemBaseVersion(
                     contentVersion: version.contentVersion,
-                    metadataVersion: version.metadataVersion,
-                    remoteItem: latestItem
-                ) else {
+                    metadataVersion: version.metadataVersion
+                )
+                let latestItem: KDriveRemoteItem
+                do {
+                    latestItem = try await coordinator.deleteTrashedItem(fileID: fileID, baseVersion: baseVersion)
+                } catch let error as KDriveMutationConflictError {
                     await self.recordBlockedConflict(
+                        error,
                         operation: .delete,
                         itemIdentifier: itemIdentifier.rawValue,
-                        itemName: latestItem.name,
-                        remoteItem: latestItem,
+                        itemName: nil,
                         runtime: runtime,
                         summary: "Delete was blocked because the remote item changed first."
                     )
-                    throw self.staleVersionError()
+                    throw error
                 }
-                try await runtime.remote.deleteTrashedItem(driveID: runtime.configuration.driveID, fileID: fileID)
                 FileProviderLog.replicatedExtension.info("deleted trashed item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
                     kind: .delete,
@@ -413,75 +414,98 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             ?? runtime.configuration.rootFileID
     }
 
-    private func uploadConflictCopy(
-        contents: Data,
-        localItem: NSFileProviderItem,
-        latestItem: KDriveRemoteItem,
-        runtime: FileProviderRuntime
-    ) async throws -> KDriveRemoteItem {
-        let stagedURL = try stageConflictContents(contents, itemIdentifier: localItem.itemIdentifier)
-        let conflictFilename = KDriveConflictFilename.filename(
-            for: localItem.filename,
-            deviceName: ConflictDeviceName.current
+    private func makeMutationCoordinator(runtime: FileProviderRuntime) -> KDriveMutationCoordinator {
+        KDriveMutationCoordinator(
+            configuration: runtime.configuration,
+            remote: runtime.remote,
+            conflictDeviceName: { ConflictDeviceName.current },
+            contentConflictObserver: { event in
+                await Self.recordContentConflictEvent(event, runtime: runtime)
+            }
         )
-        var conflictEvent = KDriveConflictEvent(
-            domainIdentifier: runtime.configuration.domainIdentifier,
-            driveID: runtime.configuration.driveID,
-            operation: .modify,
-            originalItemIdentifier: localItem.itemIdentifier.rawValue,
-            originalItemName: localItem.filename,
-            originalItemPath: latestItem.path,
-            resolutionState: .unresolved,
-            automaticallyResolved: false,
-            resolutionKind: nil,
-            resolutionSummary: "Detected a stale content edit and started preserving a conflict copy."
-        )
-        await ProviderEventRecorder.saveConflict(conflictEvent, runtime: runtime)
+    }
 
-        do {
-            let conflictItem = try await runtime.remote.uploadFile(
+    private static func recordContentConflictEvent(
+        _ event: KDriveStaleContentConflictEvent,
+        runtime: FileProviderRuntime
+    ) async {
+        switch event {
+        case .started(let context):
+            await ProviderEventRecorder.saveConflict(KDriveConflictEvent(
+                id: context.id,
+                detectedAt: context.detectedAt,
+                domainIdentifier: runtime.configuration.domainIdentifier,
                 driveID: runtime.configuration.driveID,
-                parentID: latestItem.parentID,
-                fileName: conflictFilename,
-                contents: contents,
-                lastModifiedAt: localItem.contentModificationDate ?? nil,
-                conflictStrategy: .rename
-            )
-            conflictEvent.resolvedAt = Date()
-            conflictEvent.conflictItemIdentifier = ProviderEventRecorder.itemIdentifier(for: conflictItem)
-            conflictEvent.conflictItemName = conflictItem.name
-            conflictEvent.conflictItemPath = conflictItem.path
-            conflictEvent.resolutionState = .automaticallyResolved
-            conflictEvent.automaticallyResolved = true
-            conflictEvent.resolutionKind = .preservedBothAsRenamedConflictCopy
-            conflictEvent.resolutionSummary = "Uploaded the local edit as a renamed conflict copy and kept the remote item unchanged."
-            await ProviderEventRecorder.saveConflict(conflictEvent, runtime: runtime)
-            try? FileManager.default.removeItem(at: stagedURL)
-            return conflictItem
-        } catch {
-            conflictEvent.resolvedAt = Date()
-            conflictEvent.resolutionState = .failed
-            conflictEvent.automaticallyResolved = false
-            conflictEvent.resolutionKind = .retainedStagedUploadAfterFailure
-            conflictEvent.resolutionSummary = "Could not upload the conflict copy; staged local bytes were retained for inspection."
-            conflictEvent.stagedUploadRelativePath = ProviderEventRecorder.relativeStagedPath(for: stagedURL)
-            await ProviderEventRecorder.saveConflict(conflictEvent, runtime: runtime)
-            FileProviderLog.replicatedExtension.error("conflict upload failed; staged bytes retained at \(stagedURL.path, privacy: .private): \(error.localizedDescription, privacy: .public)")
-            throw error
+                operation: .modify,
+                originalItemIdentifier: context.localItemIdentifier,
+                originalItemName: context.localFilename,
+                originalItemPath: context.latestItem.path,
+                resolutionState: .unresolved,
+                automaticallyResolved: false,
+                resolutionKind: nil,
+                resolutionSummary: "Detected a stale content edit and started preserving a conflict copy."
+            ), runtime: runtime)
+
+        case .resolved(let context, let conflictItem, let resolvedAt):
+            await ProviderEventRecorder.saveConflict(KDriveConflictEvent(
+                id: context.id,
+                detectedAt: context.detectedAt,
+                resolvedAt: resolvedAt,
+                domainIdentifier: runtime.configuration.domainIdentifier,
+                driveID: runtime.configuration.driveID,
+                operation: .modify,
+                originalItemIdentifier: context.localItemIdentifier,
+                originalItemName: context.localFilename,
+                originalItemPath: context.latestItem.path,
+                conflictItemIdentifier: ProviderEventRecorder.itemIdentifier(for: conflictItem),
+                conflictItemName: conflictItem.name,
+                conflictItemPath: conflictItem.path,
+                resolutionState: .automaticallyResolved,
+                automaticallyResolved: true,
+                resolutionKind: .preservedBothAsRenamedConflictCopy,
+                resolutionSummary: "Uploaded the local edit as a renamed conflict copy and kept the remote item unchanged."
+            ), runtime: runtime)
+
+        case .failed(let context, let failedAt):
+            await ProviderEventRecorder.saveConflict(KDriveConflictEvent(
+                id: context.id,
+                detectedAt: context.detectedAt,
+                resolvedAt: failedAt,
+                domainIdentifier: runtime.configuration.domainIdentifier,
+                driveID: runtime.configuration.driveID,
+                operation: .modify,
+                originalItemIdentifier: context.localItemIdentifier,
+                originalItemName: context.localFilename,
+                originalItemPath: context.latestItem.path,
+                resolutionState: .failed,
+                automaticallyResolved: false,
+                resolutionKind: .retainedStagedUploadAfterFailure,
+                resolutionSummary: "Could not upload the conflict copy; staged local bytes were retained for inspection.",
+                stagedUploadRelativePath: ProviderEventRecorder.relativeStagedPath(for: context.stagedURL)
+            ), runtime: runtime)
+            FileProviderLog.replicatedExtension.error("conflict upload failed; staged bytes retained at \(context.stagedURL.path, privacy: .private)")
         }
     }
 
-    private func stageConflictContents(_ contents: Data, itemIdentifier: NSFileProviderItemIdentifier) throws -> URL {
-        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: ProviderConstants.appGroupIdentifier) else {
-            throw KDriveSnapshotStoreError.missingAppGroupContainer(ProviderConstants.appGroupIdentifier)
+    private func recordBlockedConflict(
+        _ error: KDriveMutationConflictError,
+        operation: KDriveProviderActivityKind,
+        itemIdentifier: String,
+        itemName: String?,
+        runtime: FileProviderRuntime,
+        summary: String
+    ) async {
+        switch error {
+        case .staleVersion(let latestItem):
+            await recordBlockedConflict(
+                operation: operation,
+                itemIdentifier: itemIdentifier,
+                itemName: itemName,
+                remoteItem: latestItem,
+                runtime: runtime,
+                summary: summary
+            )
         }
-        let directoryURL = containerURL.appendingPathComponent("ConflictStaging", isDirectory: true)
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        let fileURL = directoryURL
-            .appendingPathComponent("\(itemIdentifier.rawValue)-\(UUID().uuidString)")
-            .appendingPathExtension("upload")
-        try contents.write(to: fileURL, options: [.atomic])
-        return fileURL
     }
 
     private func recordBlockedConflict(
@@ -509,16 +533,6 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         ), runtime: runtime)
     }
 
-    private func staleVersionError() -> Error {
-        NSError(
-            domain: NSFileProviderErrorDomain,
-            code: NSFileProviderError.cannotSynchronize.rawValue,
-            userInfo: [
-                NSLocalizedDescriptionKey: "The item changed on the server before the local mutation could be applied.",
-                NSLocalizedRecoverySuggestionErrorKey: "Refresh the folder and retry the change."
-            ]
-        )
-    }
 }
 
 private enum ConflictDeviceName {

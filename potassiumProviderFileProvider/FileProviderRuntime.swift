@@ -133,6 +133,14 @@ func providerError(_ error: Error) -> Error {
         return fileProviderError
     }
 
+    if let mutationConflictError = error as? KDriveMutationConflictError {
+        switch mutationConflictError {
+        case .staleVersion:
+            FileProviderLog.runtime.error("map stale mutation version to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
+            return staleMutationVersionError()
+        }
+    }
+
     if error is KDriveListingValidationError {
         FileProviderLog.runtime.error("map listing validation failure to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
         return NSFileProviderError(.cannotSynchronize)
@@ -160,6 +168,17 @@ func providerError(_ error: Error) -> Error {
         domain: NSCocoaErrorDomain,
         code: NSXPCConnectionReplyInvalid,
         userInfo: [NSUnderlyingErrorKey: error]
+    )
+}
+
+private func staleMutationVersionError() -> Error {
+    NSError(
+        domain: NSFileProviderErrorDomain,
+        code: NSFileProviderError.cannotSynchronize.rawValue,
+        userInfo: [
+            NSLocalizedDescriptionKey: "The item changed on the server before the local mutation could be applied.",
+            NSLocalizedRecoverySuggestionErrorKey: "Refresh the folder and retry the change."
+        ]
     )
 }
 

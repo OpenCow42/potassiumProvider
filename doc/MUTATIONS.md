@@ -1,8 +1,10 @@
 # Mutations
 
-Mutations are handled by `PotassiumFileProviderExtension` through Apple's
-replicated File Provider callbacks. The extension sends each mutation directly to
-kDrive and returns server metadata to File Provider.
+Mutations enter through `PotassiumFileProviderExtension` via Apple's replicated
+File Provider callbacks. The extension is the File Provider adapter: it loads
+runtime state, converts File Provider inputs, records activity/conflict audit
+events, and delegates conflict-sensitive kDrive decisions to
+`KDriveMutationCoordinator` in `PotassiumProviderCore`.
 
 The current implementation does not maintain a durable pending-operation queue.
 It also does not update SQLite snapshots directly after mutations. Instead,
@@ -31,17 +33,17 @@ in snapshots when enumeration or advanced listing changes see it.
 
 ## Modify Contents
 
-When `modifyItem(...)` includes `.contents`:
+When `modifyItem(...)` includes `.contents`, `KDriveMutationCoordinator`:
 
-- The extension fetches the latest kDrive item metadata.
-- It compares the File Provider content `baseVersion` with the latest remote
+- Fetches the latest kDrive item metadata.
+- Compares the File Provider content `baseVersion` with the latest remote
   content version.
-- If the versions match, it reads the local contents URL and calls
+- If the versions match, calls
   `replaceFile(driveID:fileID:contents:lastModifiedAt:)`.
 - Replace uses kDrive upload with `fileId` and `conflict: "version"`.
 - The server-returned item is returned to File Provider.
-- If the remote content changed, the extension stages the local bytes in the app
-  group and uploads them as a renamed conflict copy with `conflict: "rename"`.
+- If the remote content changed, stages the local bytes in the app group and
+  uploads them as a renamed conflict copy with `conflict: "rename"`.
   The original remote item is left untouched and the conflict item is returned.
 
 The provider does not yet maintain a durable pending-operation table for the
@@ -56,9 +58,10 @@ staged conflict upload. See [Persistence](PERSISTENCE.md).
 - rename and move check `metadataVersion`
 - trash and permanent delete check both content and metadata versions
 
-Stale metadata, trash, and delete mutations are blocked before sending a server
-mutation. On the current target, this is returned as `.cannotSynchronize` with a
-recovery suggestion to refresh and retry.
+Stale metadata, trash, and delete mutations throw
+`KDriveMutationConflictError.staleVersion` before sending a server mutation. The
+File Provider adapter maps that to `.cannotSynchronize` with a recovery
+suggestion to refresh and retry.
 
 ## Rename
 

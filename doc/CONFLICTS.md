@@ -51,6 +51,9 @@ Audit states stored in SQLite:
   - `createItem(...)`
   - `modifyItem(...)`
   - `deleteItem(...)`
+- `PotassiumProviderCore/KDriveMutationCoordinator.swift`
+  - conflict-sensitive create, replace, rename, move, trash, and delete
+    decisions
 - `PotassiumProviderCore/KDriveRemoteService.swift`
   - `uploadFile(...conflictStrategy:)`
   - `replaceFile(...)`
@@ -79,6 +82,8 @@ The implementation follows these practical rules:
    mutation.
 6. Later enumeration or change sync updates the SQLite snapshot from kDrive
    state.
+7. Conflict-sensitive mutation decisions are covered by deterministic unit tests
+   with a recording `KDriveFileProviding` fake and temporary conflict stager.
 
 This is a focused conflict-safety pass, not the full sync-database redesign.
 
