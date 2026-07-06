@@ -15,6 +15,11 @@ The app handles:
 - registering and removing `NSFileProviderDomain` entries
 - showing configured domains and simple status/error state
 
+On macOS, the app runs as an accessory menu bar app: it hides its Dock icon and
+keeps an atom status item visible while the process is running. Clicking the
+status item reveals the setup window, and right-clicking it opens a menu with a
+close option. Closing the setup window does not quit the app.
+
 The app does not enumerate files itself. File listing is handled by the File
 Provider extension after the system asks for an enumerator.
 
