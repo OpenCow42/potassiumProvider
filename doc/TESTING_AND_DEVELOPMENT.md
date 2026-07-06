@@ -138,6 +138,11 @@ local development install is broken and the File Provider domain should be
 removed with the system's remove-all mode. The script intentionally does not
 delete Finder or private File Provider system storage directly.
 
+If `fileproviderd` still points this provider at an old Xcode archive that was
+built without `NSExtensionFileProviderDocumentGroup`, the wrapper unregisters
+that stale archived app from LaunchServices and restarts `fileproviderd` before
+calling the app's hidden uninstall command.
+
 ## Documentation Checks
 
 For docs-only changes, run:

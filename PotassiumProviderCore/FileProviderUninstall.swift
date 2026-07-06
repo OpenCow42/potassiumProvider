@@ -93,6 +93,22 @@ public struct FileProviderUninstallRegisteredDomain: Equatable, Sendable {
         self.identifier = identifier
         self.displayName = displayName
     }
+
+    public init(configuration: ProviderDomainConfiguration) {
+        self.init(identifier: configuration.domainIdentifier, displayName: configuration.displayName)
+    }
+}
+
+public struct FileProviderUninstallDomainListingFailure: Equatable, Sendable {
+    public var message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+
+    public init(error: any Error) {
+        self.message = FileProviderUninstallErrorDiagnostics.description(for: error)
+    }
 }
 
 public enum FileProviderUninstallStateItemKind: String, Equatable, Sendable {
@@ -127,6 +143,7 @@ public struct FileProviderUninstallConflictStagingPlan: Equatable, Sendable {
 public struct FileProviderUninstallPlan: Equatable, Sendable {
     public var options: FileProviderUninstallOptions
     public var registeredDomains: [FileProviderUninstallRegisteredDomain]
+    public var domainListingFailure: FileProviderUninstallDomainListingFailure?
     public var storedConfigurations: [ProviderDomainConfiguration]
     public var cleanupDomainIdentifiers: [String]
     public var stateItems: [FileProviderUninstallStateItem]
@@ -135,12 +152,14 @@ public struct FileProviderUninstallPlan: Equatable, Sendable {
     public init(
         options: FileProviderUninstallOptions,
         registeredDomains: [FileProviderUninstallRegisteredDomain],
+        domainListingFailure: FileProviderUninstallDomainListingFailure? = nil,
         storedConfigurations: [ProviderDomainConfiguration],
         stateItems: [FileProviderUninstallStateItem],
         conflictStaging: FileProviderUninstallConflictStagingPlan?
     ) {
         self.options = options
         self.registeredDomains = registeredDomains.sorted { $0.identifier < $1.identifier }
+        self.domainListingFailure = domainListingFailure
         self.storedConfigurations = storedConfigurations.sorted { $0.domainIdentifier < $1.domainIdentifier }
         self.cleanupDomainIdentifiers = Array(Set(
             registeredDomains.map(\.identifier) + storedConfigurations.map(\.domainIdentifier)
@@ -162,10 +181,24 @@ public struct FileProviderUninstallPlan: Equatable, Sendable {
     }
 }
 
+public enum FileProviderUninstallErrorDiagnostics {
+    public static func description(for error: any Error) -> String {
+        let nsError = error as NSError
+        var details = ["\(error.localizedDescription) (\(nsError.domain) \(nsError.code))"]
+
+        if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            details.append("underlying \(underlyingError.domain) \(underlyingError.code): \(underlyingError.localizedDescription)")
+        }
+
+        return details.joined(separator: "; ")
+    }
+}
+
 public struct FileProviderUninstallResult: Equatable, Sendable {
     public var plan: FileProviderUninstallPlan
     public var removedDomains: [FileProviderUninstallRegisteredDomain]
     public var preservedLocations: [String]
+    public var usedRemoveAllDomainsFallback: Bool
     public var removedLocalStateDomainIdentifiers: [String]
     public var removedConflictStaging: Bool
     public var deletedOAuthToken: Bool
@@ -174,6 +207,7 @@ public struct FileProviderUninstallResult: Equatable, Sendable {
         plan: FileProviderUninstallPlan,
         removedDomains: [FileProviderUninstallRegisteredDomain] = [],
         preservedLocations: [String] = [],
+        usedRemoveAllDomainsFallback: Bool = false,
         removedLocalStateDomainIdentifiers: [String] = [],
         removedConflictStaging: Bool = false,
         deletedOAuthToken: Bool = false
@@ -181,6 +215,7 @@ public struct FileProviderUninstallResult: Equatable, Sendable {
         self.plan = plan
         self.removedDomains = removedDomains
         self.preservedLocations = preservedLocations
+        self.usedRemoveAllDomainsFallback = usedRemoveAllDomainsFallback
         self.removedLocalStateDomainIdentifiers = removedLocalStateDomainIdentifiers
         self.removedConflictStaging = removedConflictStaging
         self.deletedOAuthToken = deletedOAuthToken
@@ -204,6 +239,7 @@ public protocol FileProviderUninstallDomainManaging: Sendable {
         _ domain: FileProviderUninstallRegisteredDomain,
         mode: FileProviderUninstallDomainRemovalMode
     ) async throws -> URL?
+    func removeAllDomains() async throws
 }
 
 public protocol FileProviderUninstallLocalStateManaging: Sendable {
@@ -234,8 +270,18 @@ public struct FileProviderUninstallCoordinator: Sendable {
     }
 
     public func makePlan(options: FileProviderUninstallOptions) async throws -> FileProviderUninstallPlan {
-        let registeredDomains = try await domainManager.registeredDomains()
         let storedConfigurations = try await localState.storedConfigurations()
+        let registeredDomains: [FileProviderUninstallRegisteredDomain]
+        let domainListingFailure: FileProviderUninstallDomainListingFailure?
+
+        do {
+            registeredDomains = try await domainManager.registeredDomains()
+            domainListingFailure = nil
+        } catch {
+            registeredDomains = storedConfigurations.map(FileProviderUninstallRegisteredDomain.init(configuration:))
+            domainListingFailure = FileProviderUninstallDomainListingFailure(error: error)
+        }
+
         let cleanupDomainIdentifiers = Set(registeredDomains.map(\.identifier) + storedConfigurations.map(\.domainIdentifier))
         let stateItems = try await localState.stateItems(forDomainIdentifiers: cleanupDomainIdentifiers)
         let conflictStaging = try await localState.conflictStagingPlan(removeContents: options.removesConflictStaging)
@@ -243,6 +289,7 @@ public struct FileProviderUninstallCoordinator: Sendable {
         return FileProviderUninstallPlan(
             options: options,
             registeredDomains: registeredDomains,
+            domainListingFailure: domainListingFailure,
             storedConfigurations: storedConfigurations,
             stateItems: stateItems,
             conflictStaging: conflictStaging
@@ -265,12 +312,25 @@ public struct FileProviderUninstallCoordinator: Sendable {
 
         var removedDomains: [FileProviderUninstallRegisteredDomain] = []
         var preservedLocations: [String] = []
+        var usedRemoveAllDomainsFallback = false
 
         for domain in plan.registeredDomains {
-            let preservedLocation = try await domainManager.removeDomain(domain, mode: plan.options.domainRemovalMode)
-            removedDomains.append(domain)
-            if let preservedLocation {
-                preservedLocations.append(preservedLocation.path)
+            do {
+                let preservedLocation = try await domainManager.removeDomain(domain, mode: plan.options.domainRemovalMode)
+                removedDomains.append(domain)
+                if let preservedLocation {
+                    preservedLocations.append(preservedLocation.path)
+                }
+            } catch {
+                guard plan.domainListingFailure != nil, plan.options.domainRemovalMode == .removeAll else {
+                    throw error
+                }
+
+                try await domainManager.removeAllDomains()
+                removedDomains = plan.registeredDomains
+                preservedLocations.removeAll()
+                usedRemoveAllDomainsFallback = true
+                break
             }
         }
 
@@ -296,6 +356,7 @@ public struct FileProviderUninstallCoordinator: Sendable {
             plan: plan,
             removedDomains: removedDomains,
             preservedLocations: preservedLocations,
+            usedRemoveAllDomainsFallback: usedRemoveAllDomainsFallback,
             removedLocalStateDomainIdentifiers: removedLocalStateDomainIdentifiers,
             removedConflictStaging: removedConflictStaging,
             deletedOAuthToken: deletedOAuthToken

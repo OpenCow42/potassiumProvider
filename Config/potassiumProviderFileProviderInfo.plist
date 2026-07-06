@@ -24,6 +24,8 @@
 	<dict>
 		<key>NSExtensionFileProviderSupportsEnumeration</key>
 		<true/>
+		<key>NSExtensionFileProviderDocumentGroup</key>
+		<string>group.net.weavee.potassiumProvider</string>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>

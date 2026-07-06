@@ -144,6 +144,92 @@ struct FileProviderUninstallTests {
         #expect(result.deletedOAuthToken == false)
     }
 
+    @Test func coordinatorFallsBackToStoredConfigurationsWhenDomainListingFails() async throws {
+        let domainManager = RecordingUninstallDomainManager(
+            domains: [],
+            listingError: .domainListingFailed
+        )
+        let localState = RecordingUninstallLocalState(
+            storedConfigurations: [configuration("domain-2")],
+            stateItems: [
+                FileProviderUninstallStateItem(
+                    kind: .domainConfiguration,
+                    domainIdentifier: "domain-2",
+                    description: "Domain configuration domain-2.json"
+                ),
+            ]
+        )
+        let tokenStore = RecordingUninstallTokenStore()
+        let coordinator = FileProviderUninstallCoordinator(
+            domainManager: domainManager,
+            localState: localState,
+            tokenStore: tokenStore
+        )
+
+        let result = try await coordinator.run(options: FileProviderUninstallOptions(confirmed: true))
+
+        #expect(result.plan.domainListingFailure != nil)
+        #expect(result.plan.registeredDomains == [registeredDomain("domain-2")])
+        #expect(await domainManager.removedRecords() == [
+            RemovedDomainRecord(domain: registeredDomain("domain-2"), mode: .preserveDirtyUserData)
+        ])
+        #expect(await localState.removedDomainIdentifiers() == ["domain-2"])
+    }
+
+    @Test func coordinatorUsesRemoveAllFallbackWhenFallbackDomainRemovalFails() async throws {
+        let domainManager = RecordingUninstallDomainManager(
+            domains: [],
+            listingError: .domainListingFailed,
+            removalError: .domainRemovalFailed
+        )
+        let localState = RecordingUninstallLocalState(
+            storedConfigurations: [configuration("domain-2")],
+            stateItems: []
+        )
+        let coordinator = FileProviderUninstallCoordinator(
+            domainManager: domainManager,
+            localState: localState
+        )
+
+        let result = try await coordinator.run(options: FileProviderUninstallOptions(
+            confirmed: true,
+            hardPurge: true
+        ))
+
+        #expect(result.usedRemoveAllDomainsFallback)
+        #expect(result.removedDomains == [registeredDomain("domain-2")])
+        #expect(await domainManager.didRemoveAllDomains())
+        #expect(await localState.removedDomainIdentifiers() == ["domain-2"])
+        #expect(result.deletedOAuthToken == false)
+    }
+
+    @Test func coordinatorDoesNotUseRemoveAllFallbackForDevResetRemovalFailure() async throws {
+        let domainManager = RecordingUninstallDomainManager(
+            domains: [],
+            listingError: .domainListingFailed,
+            removalError: .domainRemovalFailed
+        )
+        let localState = RecordingUninstallLocalState(
+            storedConfigurations: [configuration("domain-2")],
+            stateItems: []
+        )
+        let coordinator = FileProviderUninstallCoordinator(
+            domainManager: domainManager,
+            localState: localState
+        )
+
+        var sawRemovalFailure = false
+        do {
+            _ = try await coordinator.run(options: FileProviderUninstallOptions(confirmed: true))
+        } catch FileProviderUninstallTestError.domainRemovalFailed {
+            sawRemovalFailure = true
+        }
+
+        #expect(sawRemovalFailure)
+        #expect(await domainManager.didRemoveAllDomains() == false)
+        #expect(await localState.removedDomainIdentifiers().isEmpty)
+    }
+
     @Test func coordinatorFullLogoutDeletesTokenOnlyAfterDomainAndLocalCleanup() async throws {
         let domainManager = RecordingUninstallDomainManager(domains: [registeredDomain("domain-1")])
         let localState = RecordingUninstallLocalState(storedConfigurations: [], stateItems: [])
@@ -240,8 +326,21 @@ struct FileProviderUninstallTests {
     }
 }
 
-private enum FileProviderUninstallTestError: Error {
+private enum FileProviderUninstallTestError: Error, Equatable, LocalizedError, Sendable {
     case expectedRunInvocation
+    case domainListingFailed
+    case domainRemovalFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .expectedRunInvocation:
+            "Expected file-provider uninstall run invocation."
+        case .domainListingFailed:
+            "Domain listing failed."
+        case .domainRemovalFailed:
+            "Domain removal failed."
+        }
+    }
 }
 
 private struct RemovedDomainRecord: Equatable {
@@ -251,26 +350,49 @@ private struct RemovedDomainRecord: Equatable {
 
 private actor RecordingUninstallDomainManager: FileProviderUninstallDomainManaging {
     private let domains: [FileProviderUninstallRegisteredDomain]
+    private let listingError: FileProviderUninstallTestError?
+    private let removalError: FileProviderUninstallTestError?
     private var removed: [RemovedDomainRecord] = []
+    private var removedAll = false
 
-    init(domains: [FileProviderUninstallRegisteredDomain]) {
+    init(
+        domains: [FileProviderUninstallRegisteredDomain],
+        listingError: FileProviderUninstallTestError? = nil,
+        removalError: FileProviderUninstallTestError? = nil
+    ) {
         self.domains = domains
+        self.listingError = listingError
+        self.removalError = removalError
     }
 
-    func registeredDomains() -> [FileProviderUninstallRegisteredDomain] {
-        domains
+    func registeredDomains() throws -> [FileProviderUninstallRegisteredDomain] {
+        if let listingError {
+            throw listingError
+        }
+        return domains
     }
 
     func removeDomain(
         _ domain: FileProviderUninstallRegisteredDomain,
         mode: FileProviderUninstallDomainRemovalMode
-    ) -> URL? {
+    ) throws -> URL? {
+        if let removalError {
+            throw removalError
+        }
         removed.append(RemovedDomainRecord(domain: domain, mode: mode))
         return nil
     }
 
+    func removeAllDomains() {
+        removedAll = true
+    }
+
     func removedRecords() -> [RemovedDomainRecord] {
         removed
+    }
+
+    func didRemoveAllDomains() -> Bool {
+        removedAll
     }
 }
 

@@ -367,26 +367,73 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
     }
 
     private static func migrateActivityEvents(on database: Connection) throws {
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN scope TEXT NOT NULL DEFAULT 'domain'")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN errorCategory TEXT")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN providerErrorCode INTEGER")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN underlyingErrorDomain TEXT")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN underlyingErrorCode INTEGER")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN recoverySuggestion TEXT")
-        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN diagnosticSummary TEXT")
+        let existingColumns = Set(try database.schema
+            .columnDefinitions(table: ProviderEventSchema.activityEventsName)
+            .map(\.name))
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "scope",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN scope TEXT NOT NULL DEFAULT 'domain'"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "outcome",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "severity",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "errorCategory",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN errorCategory TEXT"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "providerErrorCode",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN providerErrorCode INTEGER"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "underlyingErrorDomain",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN underlyingErrorDomain TEXT"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "underlyingErrorCode",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN underlyingErrorCode INTEGER"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "recoverySuggestion",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN recoverySuggestion TEXT"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "diagnosticSummary",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN diagnosticSummary TEXT"
+        )
     }
 
-    private static func addActivityColumnIfMissing(on database: Connection, sql: String) throws {
-        do {
-            try database.execute(sql)
-        } catch {
-            let description = "\(error.localizedDescription) \(String(describing: error))"
-            guard description.localizedCaseInsensitiveContains("duplicate column name") else {
-                throw error
-            }
-        }
+    private static func addActivityColumnIfMissing(
+        on database: Connection,
+        existingColumns: Set<String>,
+        name: String,
+        sql: String
+    ) throws {
+        guard existingColumns.contains(name) == false else { return }
+        try database.execute(sql)
     }
 
     static func removeEvents(on database: Connection, domainIdentifier: String) throws {
@@ -575,8 +622,9 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
 }
 
 private enum ProviderEventSchema {
+    static let activityEventsName = "provider_activity_events"
     static let conflictEvents = Table("conflict_events")
-    static let activityEvents = Table("provider_activity_events")
+    static let activityEvents = Table(activityEventsName)
     static let observedTableNames: Set<String> = ["conflict_events", "provider_activity_events"]
 
     static let id = Expression<String>("id")

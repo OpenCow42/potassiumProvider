@@ -46,7 +46,7 @@ enum FileProviderUninstallCommandLine {
                 }
             }
         } catch {
-            fputs("file-provider uninstall failed: \(error.localizedDescription)\n", stderr)
+            fputs("file-provider uninstall failed: \(FileProviderUninstallErrorDiagnostics.description(for: error))\n", stderr)
             return 1
         }
     }
@@ -78,6 +78,16 @@ enum FileProviderUninstallCommandLine {
         print("File Provider removal mode: \(plan.options.domainRemovalMode.displayName)")
         print("Dry run: \(plan.options.dryRun ? "yes" : "no")")
         print("")
+
+        if let domainListingFailure = plan.domainListingFailure {
+            print("Warning: could not list registered File Provider domains: \(domainListingFailure.message)")
+            if plan.registeredDomains.isEmpty {
+                print("No saved domain configurations were available as removal candidates.")
+            } else {
+                print("Using saved domain configurations as removal candidates.")
+            }
+            print("")
+        }
 
         if plan.hasWork == false {
             print("No registered File Provider domains or local provider state were found.")
@@ -129,6 +139,9 @@ enum FileProviderUninstallCommandLine {
 
         print("Uninstall complete.")
         print("Removed domains: \(result.removedDomains.count)")
+        if result.usedRemoveAllDomainsFallback {
+            print("Used File Provider remove-all fallback after targeted domain removal failed.")
+        }
         if result.preservedLocations.isEmpty == false {
             print("Preserved File Provider data:")
             for location in result.preservedLocations {
@@ -179,6 +192,18 @@ private struct SystemFileProviderUninstallDomainManager: FileProviderUninstallDo
                     continuation.resume(throwing: error)
                 } else {
                     continuation.resume(returning: preservedLocation)
+                }
+            }
+        }
+    }
+
+    func removeAllDomains() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            NSFileProviderManager.removeAllDomains { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
                 }
             }
         }
