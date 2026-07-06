@@ -181,6 +181,14 @@ When the app removes a domain, it calls
 `removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`. That
 deletes all snapshot, conflict, and activity rows for the domain.
 
+For local development resets, `scripts/uninstall-file-provider.sh` invokes the
+signed app's hidden uninstall command. That command removes registered File
+Provider domains through `NSFileProviderManager`, deletes matching
+`DomainConfigurations` JSON files, and removes per-domain SQLite snapshot,
+conflict, and activity rows. It preserves `ConflictStaging` and the OAuth token
+by default; `--hard-purge` removes `ConflictStaging`, and `--full-logout` or
+`--hard-purge` deletes the saved OAuth token.
+
 ## Old JSON Snapshot Store
 
 `KDriveSnapshotFileStore` still exists in `SnapshotStore.swift`, mainly as a

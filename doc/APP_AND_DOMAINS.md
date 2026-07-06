@@ -72,6 +72,12 @@ The remove flow is:
 Removing a domain only removes provider state from this app. It does not delete
 remote kDrive files.
 
+For development, `scripts/uninstall-file-provider.sh` can perform the same
+domain-detach path outside the UI. It runs the signed macOS app with a hidden
+`--file-provider-uninstall` command so domain removal still goes through
+`NSFileProviderManager` with the app's entitlements. The default dev reset
+preserves dirty local user data and keeps the OAuth token.
+
 ## Manual Tokens
 
 Manual access tokens are accepted for development and testing. They are saved in

@@ -122,6 +122,22 @@ Xcode requires a more specific macOS variant.
 - Build products, DerivedData, local caches, `.DS_Store`, and private fixtures
   should not be committed.
 
+## File Provider Dev Uninstall
+
+Use the dev uninstall wrapper to remove this app's registered File Provider
+domains and provider-local state without touching remote kDrive files:
+
+```sh
+scripts/uninstall-file-provider.sh --dry-run
+scripts/uninstall-file-provider.sh --yes
+```
+
+The default mode preserves dirty user data and keeps the saved OAuth token. Use
+`--full-logout` to also delete the OAuth token, or `--hard-purge` only when a
+local development install is broken and the File Provider domain should be
+removed with the system's remove-all mode. The script intentionally does not
+delete Finder or private File Provider system storage directly.
+
 ## Documentation Checks
 
 For docs-only changes, run:

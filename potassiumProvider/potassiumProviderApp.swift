@@ -1,13 +1,6 @@
-//
-//  potassiumProviderApp.swift
-//  potassiumProvider
-//
-//  Created by OpenCow on 03/07/2026.
-//
-
+import Darwin
 import SwiftUI
 
-@main
 struct potassiumProviderApp: App {
     @StateObject private var model = PotassiumProviderAppModel()
 
@@ -15,5 +8,16 @@ struct potassiumProviderApp: App {
         WindowGroup {
             ContentView(model: model)
         }
+    }
+}
+
+@main
+enum PotassiumProviderMain {
+    static func main() {
+        if FileProviderUninstallCommandLine.shouldHandle(arguments: CommandLine.arguments) {
+            exit(FileProviderUninstallCommandLine.runInCurrentProcess(arguments: CommandLine.arguments))
+        }
+
+        potassiumProviderApp.main()
     }
 }
