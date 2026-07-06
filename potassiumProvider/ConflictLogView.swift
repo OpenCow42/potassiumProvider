@@ -15,10 +15,7 @@ struct ConflictLogView: View {
         NavigationStack {
             List {
                 Section {
-                    Toggle(isOn: $model.showsActivity) {
-                        Label("Last Activity", systemImage: "clock.arrow.circlepath")
-                    }
-                    .providerActivityControlGlass()
+                    activityFilterControl
                 }
 
                 if let errorMessage = model.errorMessage {
@@ -30,11 +27,11 @@ struct ConflictLogView: View {
 
                 if model.timelineItems.isEmpty {
                     Section {
-                        Label("No activities yet", systemImage: "checkmark.seal")
+                        Label(emptyActivityMessage, systemImage: "checkmark.seal")
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Section(model.showsActivity ? "Timeline" : "Conflict and Failure Activity") {
+                    Section(model.showsActivity ? "Full Activity" : "Errors and Conflicts") {
                         ForEach(model.timelineItems) { item in
                             switch item {
                             case .conflict(let event):
@@ -81,12 +78,68 @@ struct ConflictLogView: View {
         }
     }
 
+    private var activityFilterControl: some View {
+        Picker("Activity visibility", selection: activityFilter) {
+            ForEach(ActivityFilterOption.allCases) { option in
+                Label(option.title, systemImage: option.systemImage)
+                    .tag(option)
+            }
+        }
+        .pickerStyle(.segmented)
+        .controlSize(.large)
+        .labelsHidden()
+        .frame(maxWidth: 420)
+        .accessibilityLabel("Activity visibility")
+        .providerActivityControlGlass()
+    }
+
+    private var activityFilter: Binding<ActivityFilterOption> {
+        Binding {
+            model.showsActivity ? .fullActivity : .errorsOnly
+        } set: { option in
+            model.showsActivity = option.showsActivity
+        }
+    }
+
+    private var emptyActivityMessage: String {
+        model.showsActivity ? "No activities yet" : "No errors or conflicts yet"
+    }
+
     private var activityToolbarPlacement: ToolbarItemPlacement {
         #if os(macOS)
         .automatic
         #else
         .topBarTrailing
         #endif
+    }
+}
+
+private enum ActivityFilterOption: CaseIterable, Identifiable {
+    case errorsOnly
+    case fullActivity
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .errorsOnly:
+            return "Only Errors"
+        case .fullActivity:
+            return "Full Activity"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .errorsOnly:
+            return "exclamationmark.triangle"
+        case .fullActivity:
+            return "clock.arrow.circlepath"
+        }
+    }
+
+    var showsActivity: Bool {
+        self == .fullActivity
     }
 }
 
