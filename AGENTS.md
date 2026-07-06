@@ -78,7 +78,8 @@ xcodebuild test \
 ```
 
 Clean a local macOS development File Provider install through the containing
-app's hidden uninstall command:
+app's hidden uninstall command. See `doc/FILE_PROVIDER_CLEANUP.md` for the full
+mode matrix, stale archived app registration repair, and safety boundary:
 
 ```sh
 # Inspect what would be removed. This is the first command to run.
@@ -98,7 +99,10 @@ scripts/uninstall-file-provider.sh --yes --hard-purge
 
 The uninstall script builds the macOS app if needed, or accepts
 `--app /path/to/potassiumProvider.app`. Point `--app` at a normal built app
-bundle, not an `xcodebuild test` product with XCTest injection libraries.
+bundle, not an `xcodebuild test` product with XCTest injection libraries. Plain
+`--yes` must stay the safe preserve-dirty-user-data path; reserve
+`--hard-purge` for broken local development installs that need File Provider
+remove-all behavior.
 
 This project should be run and tested on iOS Simulator, Mac, and visionOS. Use
 `xcodebuild -showdestinations` to copy exact Mac or visionOS destinations if
@@ -158,9 +162,10 @@ app.
   entitlements, bundle identifiers, and provisioning settings deliberately and
   consistently across app and extension targets.
 - For macOS dev cleanup, prefer `scripts/uninstall-file-provider.sh --dry-run`
-  followed by `scripts/uninstall-file-provider.sh --yes`. Do not directly
-  delete `~/Library/CloudStorage` or private File Provider databases unless a
-  future task explicitly designs and documents a different cleanup path.
+  followed by `scripts/uninstall-file-provider.sh --yes`, and keep
+  `doc/FILE_PROVIDER_CLEANUP.md` current when changing cleanup behavior. Do not
+  directly delete `~/Library/CloudStorage` or private File Provider databases
+  unless a future task explicitly designs and documents a different cleanup path.
 - Keep app UI, Potassium API access, File Provider extension logic, and local
   persistence boundaries explicit. Avoid hiding sync semantics behind generic
   helpers that make conflict, durability, or retry behavior unclear.

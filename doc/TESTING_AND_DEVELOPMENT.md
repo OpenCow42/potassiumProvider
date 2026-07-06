@@ -132,16 +132,9 @@ scripts/uninstall-file-provider.sh --dry-run
 scripts/uninstall-file-provider.sh --yes
 ```
 
-The default mode preserves dirty user data and keeps the saved OAuth token. Use
-`--full-logout` to also delete the OAuth token, or `--hard-purge` only when a
-local development install is broken and the File Provider domain should be
-removed with the system's remove-all mode. The script intentionally does not
-delete Finder or private File Provider system storage directly.
-
-If `fileproviderd` still points this provider at an old Xcode archive that was
-built without `NSExtensionFileProviderDocumentGroup`, the wrapper unregisters
-that stale archived app from LaunchServices and restarts `fileproviderd` before
-calling the app's hidden uninstall command.
+The default mode preserves dirty user data and keeps the saved OAuth token. See
+[File Provider Cleanup](FILE_PROVIDER_CLEANUP.md) for the full mode matrix,
+stale archived app registration repair, and safety boundary.
 
 ## Documentation Checks
 

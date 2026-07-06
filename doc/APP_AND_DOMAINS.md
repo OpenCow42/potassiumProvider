@@ -76,7 +76,9 @@ For development, `scripts/uninstall-file-provider.sh` can perform the same
 domain-detach path outside the UI. It runs the signed macOS app with a hidden
 `--file-provider-uninstall` command so domain removal still goes through
 `NSFileProviderManager` with the app's entitlements. The default dev reset
-preserves dirty local user data and keeps the OAuth token.
+preserves dirty local user data and keeps the OAuth token. See
+[File Provider Cleanup](FILE_PROVIDER_CLEANUP.md) for the full cleanup script
+behavior and hard-purge boundary.
 
 ## Manual Tokens
 

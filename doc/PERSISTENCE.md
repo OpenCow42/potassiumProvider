@@ -204,7 +204,8 @@ Provider domains through `NSFileProviderManager`, deletes matching
 `DomainConfigurations` JSON files, and removes per-domain SQLite snapshot,
 conflict, and activity rows. It preserves `ConflictStaging` and the OAuth token
 by default; `--hard-purge` removes `ConflictStaging`, and `--full-logout` or
-`--hard-purge` deletes the saved OAuth token.
+`--hard-purge` deletes the saved OAuth token. See
+[File Provider Cleanup](FILE_PROVIDER_CLEANUP.md) for the full script behavior.
 
 ## Old JSON Snapshot Store
 
