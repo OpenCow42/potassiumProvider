@@ -188,6 +188,13 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     itemPath: createdItem.path,
                     summary: "Created \(kind)."
                 )
+                await self.invalidateCachedSnapshotsAndSignal(
+                    runtime: runtime,
+                    containerIdentifiers: self.containerIdentifiers(
+                        forFileIDs: [parentID],
+                        rootFileID: runtime.configuration.rootFileID
+                    )
+                )
                 completionHandler(FileProviderItem(remoteItem: createdItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
             } catch {
                 let mappedError = providerError(error)
@@ -224,6 +231,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     contentVersion: version.contentVersion,
                     metadataVersion: version.metadataVersion
                 )
+                var affectedContainerIdentifiers: [NSFileProviderItemIdentifier] = []
 
                 if changedFields.contains(.parentItemIdentifier), item.parentItemIdentifier == .trashContainer {
                     let latestItem: KDriveRemoteItem
@@ -241,6 +249,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         throw error
                     }
                     FileProviderLog.replicatedExtension.info("trash item(\(item.itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
+                    affectedContainerIdentifiers.append(contentsOf: self.containerIdentifiers(
+                        forFileIDs: [
+                            KDriveItemMetadataVersion(data: version.metadataVersion)?.parentID,
+                            latestItem.parentID
+                        ],
+                        rootFileID: runtime.configuration.rootFileID
+                    ))
+                    affectedContainerIdentifiers.append(.trashContainer)
                     await ProviderEventRecorder.recordActivity(
                         kind: .trash,
                         runtime: runtime,
@@ -248,6 +264,10 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         itemName: latestItem.name,
                         itemPath: latestItem.path,
                         summary: "Moved item to trash."
+                    )
+                    await self.invalidateCachedSnapshotsAndSignal(
+                        runtime: runtime,
+                        containerIdentifiers: affectedContainerIdentifiers
                     )
                     completionHandler(nil, [], false, nil)
                     return
@@ -270,9 +290,20 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         updatedItem = replacedItem
                     case .conflictCopy(let conflictItem):
                         FileProviderLog.replicatedExtension.info("preserved stale content edit as conflict item(\(conflictItem.id, privacy: .public)) original(\(fileID, privacy: .public))")
+                        await self.invalidateCachedSnapshotsAndSignal(
+                            runtime: runtime,
+                            containerIdentifiers: self.containerIdentifiers(
+                                forFileIDs: [conflictItem.parentID],
+                                rootFileID: runtime.configuration.rootFileID
+                            )
+                        )
                         completionHandler(FileProviderItem(remoteItem: conflictItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
                         return
                     }
+                    affectedContainerIdentifiers.append(contentsOf: self.containerIdentifiers(
+                        forFileIDs: [updatedItem.parentID],
+                        rootFileID: runtime.configuration.rootFileID
+                    ))
                 } else if changedFields.contains(.parentItemIdentifier) {
                     do {
                         let parentID = try self.fileID(forParentIdentifier: item.parentItemIdentifier, runtime: runtime)
@@ -283,6 +314,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                             destinationParentID: parentID,
                             name: changedFields.contains(.filename) ? item.filename : nil
                         )
+                        affectedContainerIdentifiers.append(contentsOf: self.containerIdentifiers(
+                            forFileIDs: [
+                                KDriveItemMetadataVersion(data: version.metadataVersion)?.parentID,
+                                parentID,
+                                updatedItem.parentID
+                            ],
+                            rootFileID: runtime.configuration.rootFileID
+                        ))
                     } catch let error as KDriveMutationConflictError {
                         await self.recordBlockedConflict(
                             error,
@@ -302,6 +341,13 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                             baseMetadataVersion: version.metadataVersion,
                             name: item.filename
                         )
+                        affectedContainerIdentifiers.append(contentsOf: self.containerIdentifiers(
+                            forFileIDs: [
+                                KDriveItemMetadataVersion(data: version.metadataVersion)?.parentID,
+                                updatedItem.parentID
+                            ],
+                            rootFileID: runtime.configuration.rootFileID
+                        ))
                     } catch let error as KDriveMutationConflictError {
                         await self.recordBlockedConflict(
                             error,
@@ -325,6 +371,15 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     itemName: updatedItem.name,
                     itemPath: updatedItem.path,
                     summary: "Modified item."
+                )
+                if updatedItem.isDirectory {
+                    affectedContainerIdentifiers.append(NSFileProviderItemIdentifier(
+                        KDriveItemIdentifier.item(updatedItem.id).rawValue
+                    ))
+                }
+                await self.invalidateCachedSnapshotsAndSignal(
+                    runtime: runtime,
+                    containerIdentifiers: affectedContainerIdentifiers
                 )
                 completionHandler(FileProviderItem(remoteItem: updatedItem, rootFileID: runtime.configuration.rootFileID), [], false, nil)
             } catch {
@@ -383,6 +438,10 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     itemPath: latestItem.path,
                     summary: "Deleted trashed item."
                 )
+                await self.invalidateCachedSnapshotsAndSignal(
+                    runtime: runtime,
+                    containerIdentifiers: [.trashContainer]
+                )
                 completionHandler(nil)
             } catch {
                 let mappedError = providerError(error)
@@ -423,6 +482,74 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 await Self.recordContentConflictEvent(event, runtime: runtime)
             }
         )
+    }
+
+    private func containerIdentifiers(forFileIDs fileIDs: [Int?], rootFileID: Int) -> [NSFileProviderItemIdentifier] {
+        fileIDs.compactMap { fileID in
+            fileID.map { self.containerIdentifier(forFileID: $0, rootFileID: rootFileID) }
+        }
+    }
+
+    private func containerIdentifier(forFileID fileID: Int, rootFileID: Int) -> NSFileProviderItemIdentifier {
+        if fileID == rootFileID {
+            return .rootContainer
+        }
+        return NSFileProviderItemIdentifier(KDriveItemIdentifier.item(fileID).rawValue)
+    }
+
+    private func invalidateCachedSnapshotsAndSignal(
+        runtime: FileProviderRuntime,
+        containerIdentifiers: [NSFileProviderItemIdentifier]
+    ) async {
+        let uniqueIdentifiers = uniqueContainerIdentifiers(containerIdentifiers)
+        guard uniqueIdentifiers.isEmpty == false else { return }
+
+        for containerIdentifier in uniqueIdentifiers {
+            let snapshotContainerIdentifier = Self.snapshotContainerIdentifier(for: containerIdentifier)
+            do {
+                try await runtime.snapshotStore.removeSnapshot(
+                    domainIdentifier: runtime.configuration.domainIdentifier,
+                    containerIdentifier: snapshotContainerIdentifier
+                )
+            } catch {
+                FileProviderLog.replicatedExtension.error("failed to invalidate snapshot container(\(snapshotContainerIdentifier, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            }
+
+            await signalEnumerator(for: containerIdentifier)
+        }
+    }
+
+    private func signalEnumerator(for containerIdentifier: NSFileProviderItemIdentifier) async {
+        await withCheckedContinuation { continuation in
+            manager.signalEnumerator(for: containerIdentifier) { error in
+                if let error {
+                    FileProviderLog.replicatedExtension.error("failed to signal enumerator container(\(containerIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    private func uniqueContainerIdentifiers(_ identifiers: [NSFileProviderItemIdentifier]) -> [NSFileProviderItemIdentifier] {
+        var seenRawValues = Set<String>()
+        var uniqueIdentifiers: [NSFileProviderItemIdentifier] = []
+        for identifier in identifiers where seenRawValues.insert(identifier.rawValue).inserted {
+            uniqueIdentifiers.append(identifier)
+        }
+        return uniqueIdentifiers
+    }
+
+    private static func snapshotContainerIdentifier(for containerIdentifier: NSFileProviderItemIdentifier) -> String {
+        switch containerIdentifier {
+        case .workingSet:
+            return "working-set"
+        case .rootContainer:
+            return "root"
+        case .trashContainer:
+            return "trash"
+        default:
+            return containerIdentifier.rawValue
+        }
     }
 
     private static func recordContentConflictEvent(

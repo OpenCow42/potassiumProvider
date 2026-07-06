@@ -98,8 +98,10 @@ Before mutating an existing item, the extension fetches latest metadata with
 `item(driveID:fileID:)` and compares the relevant base version:
 
 - content replace checks content version
-- rename and move check metadata version
-- trash and permanent delete check content and metadata versions
+- rename and move parse metadata version and compare item ID, name, and parent,
+  while tolerating `updatedAt`-only drift
+- trash and permanent delete keep content checks strict and tolerate
+  `updatedAt`-only metadata drift when item ID, name, and parent still match
 
 These are timestamp-based conflict tokens. A future implementation should prefer
 a kDrive revision, etag, checksum, or version ID if one is available.
@@ -145,22 +147,43 @@ Conflict-copy success is recorded as `automaticallyResolved` with
 
 | Case | Current behavior | Resolution category | Gap or safer direction |
 | --- | --- | --- | --- |
-| Local rename vs unchanged remote metadata | The extension calls `renameItem(...)`, fetches the item again, and returns server metadata. | Delegated to kDrive after base-version match | Return `NSFileProviderError.filenameCollision` when a same-parent name collision is locally detectable. |
-| Local move vs unchanged remote metadata | The extension calls `moveItem(...)`; move passes kDrive `conflict=rename`. | Delegated to kDrive after base-version match | Document and test exact kDrive rename result once the API behavior is confirmed. |
-| Local rename or move vs remote rename, move, or metadata update | The metadata base version differs, so the extension does not mutate the server and returns `.cannotSynchronize` with a refresh/retry suggestion. | Blocked/retryable | Consider a richer recoverable error when the platform supports it. |
+| Local rename vs unchanged remote metadata or `updatedAt`-only drift | The extension calls `renameItem(...)`, fetches the item again, and returns server metadata. | Delegated to kDrive after semantic base-version match | Return `NSFileProviderError.filenameCollision` when a same-parent name collision is locally detectable. |
+| Retried local rename already reflected on the server | The extension treats the desired final name and parent as success and returns latest metadata without another server rename. | Idempotent success | Keep this limited to exact desired final state. |
+| Local move vs unchanged remote metadata or `updatedAt`-only drift | The extension calls `moveItem(...)`; move passes kDrive `conflict=rename`. | Delegated to kDrive after semantic base-version match | Document and test exact kDrive rename result once the API behavior is confirmed. |
+| Retried local move already reflected on the server | The extension treats the desired final parent and optional name as success and returns latest metadata without another server move. | Idempotent success | Keep this limited to exact desired final state. |
+| Local rename or move vs remote rename, move, or meaningful metadata change | The latest name or parent differs from both the base state and requested final state, so the extension does not mutate the server and returns `.cannotSynchronize` with a refresh/retry suggestion. | Blocked/retryable | Consider a richer recoverable error when the platform supports it. |
 | Rename or move into an existing sibling name | Move delegates to kDrive with `conflict=rename`; rename has no provider-side sibling preflight. | Delegated to kDrive | Add local sibling lookup and collision mapping before mutating. |
 | Rename swap, such as `a -> b` while `b -> a` | No provider-side bounce-rename strategy exists. | Unresolved/future work | Apple sample-style temporary bounce names can preserve both operations during swaps. |
 | Move into a deleted or stale parent | Destination parent resolution may fail or kDrive may reject the move. | Delegated to kDrive/error mapping | Treat parent-deleted paths as recovery cases, especially when file bytes are involved. |
 | Moving a parent while child changes are pending | There is no explicit child-sync barrier. | Unresolved/future work | Consider a File Provider barrier similar to the Apple sample's `waitForChanges(below:)` pattern. |
 
+#### Move Coverage Checklist
+
+These are the user-visible move shapes this provider should keep explicit in
+tests or future support work:
+
+| Move shape | Current support | Follow-up support to remember |
+| --- | --- | --- |
+| Move one item from parent `X` to parent `Y` while latest remote metadata still has the base name and parent, except `updatedAt` drift | Supported by semantic metadata matching. | Keep regression coverage for `updatedAt`-only drift. |
+| Move several freshly created or uploaded folders into a new folder | Supported for folder `updatedAt` drift; successful mutations invalidate affected parent snapshots and signal File Provider containers. | Add a durable pending-operation journal if child uploads and parent moves need ordering across extension restarts. |
+| File Provider retries a move that the server already applied | Supported as idempotent success when latest remote name and parent exactly match the requested final state. | Keep the success condition exact so unrelated remote moves do not pass. |
+| Move and rename in one operation | Supported when latest remote metadata is still at the base state or exactly at the requested final state. | Add local sibling collision checks before the server mutation. |
+| Move requested but source is already in the same parent with the same name | Not special-cased as a provider-side no-op. | Return success without a server move when latest metadata already equals both base and requested final state. |
+| Remote renamed or moved the source somewhere else first | Blocked before server mutation. | Surface richer user-facing conflict details when File Provider supports them. |
+| Destination parent was deleted, trashed, or is otherwise unavailable | Parent resolution or the kDrive move call fails through normal error mapping. | Add parent-deleted recovery policy, especially for folders with pending child changes. |
+| Move into an occupied sibling name, including case-only collisions | Delegated to kDrive for move with `conflict=rename`; rename has no provider-side sibling preflight. | Define local filename collision behavior for exact, case-folded, file/folder, and folder/folder collisions. |
+| Move a folder while children below it still have pending uploads or modifications | `updatedAt` drift from child activity is tolerated, but there is no explicit subtree barrier. | Add a pending-operation barrier before moving parent folders when children are still syncing. |
+| Cross-domain or cross-drive drag | Out of scope for the same-drive move API; File Provider should model this as create/delete or the server should reject it. | Define copy/delete reconciliation before supporting it as a semantic move. |
+| Source item was deleted or trashed remotely before the local move | Latest metadata fetch or the server move call fails through normal error mapping. | Decide whether any already-gone cases can be treated as idempotent success for delete-like operations only. |
+
 ### Trash And Permanent Delete
 
 | Case | Current behavior | Resolution category | Gap or safer direction |
 | --- | --- | --- | --- |
-| Trash vs unchanged remote item | The extension calls `trashItem(...)` after content and metadata versions match. | Delegated to kDrive after base-version match | Keep destructive operations guarded by both content and metadata checks. |
-| Trash vs remote edit, rename, or move | The base version differs, so the extension does not mutate the server and returns `.cannotSynchronize`. | Blocked/retryable | A future UI can explain which remote change blocked the trash. |
-| Permanent delete of trashed item vs unchanged remote item | The extension calls `deleteTrashedItem(...)` after content and metadata versions match. | Delegated to kDrive after base-version match | Keep permanent delete restricted to trash items. |
-| Permanent delete vs remote edit, restore, rename, or move | The base version differs or the latest metadata fetch no longer matches, so the operation is blocked or mapped through `providerError(...)`. | Blocked/retryable or delegated error mapping | Map server rejection to File Provider's rejected-deletion shape where available. |
+| Trash vs unchanged remote item or `updatedAt`-only metadata drift | The extension calls `trashItem(...)` after content matches and item ID, name, and parent still match. | Delegated to kDrive after semantic base-version match | Keep destructive operations guarded by both content and metadata checks. |
+| Trash vs remote edit, rename, or move | The content changed, or latest name/parent differs from the base state, so the extension does not mutate the server and returns `.cannotSynchronize`. | Blocked/retryable | A future UI can explain which remote change blocked the trash. |
+| Permanent delete of trashed item vs unchanged remote item or `updatedAt`-only metadata drift | The extension calls `deleteTrashedItem(...)` after content matches and item ID, name, and parent still match. | Delegated to kDrive after semantic base-version match | Keep permanent delete restricted to trash items. |
+| Permanent delete vs remote edit, restore, rename, or move | The content changed, latest name/parent differs from the base state, or the latest metadata fetch no longer matches, so the operation is blocked or mapped through `providerError(...)`. | Blocked/retryable or delegated error mapping | Map server rejection to File Provider's rejected-deletion shape where available. |
 | Delete-delete or item already gone remotely | kDrive's response is mapped through `providerError(...)`; there is no local special-case success policy. | Delegated to kDrive/error mapping | Decide whether already-gone deletes should be treated as success for idempotency. |
 
 On the current iOS File Provider target, stale destructive mutations are returned

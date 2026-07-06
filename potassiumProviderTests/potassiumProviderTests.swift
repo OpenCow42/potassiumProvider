@@ -158,6 +158,11 @@ struct PotassiumProviderCoreTests {
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == rootSnapshot)
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == trashSnapshot)
 
+        try await store.removeSnapshot(domainIdentifier: "domain/1", containerIdentifier: "root")
+
+        #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
+        #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == trashSnapshot)
+
         try await store.removeSnapshots(domainIdentifier: "domain/1")
 
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
@@ -649,6 +654,52 @@ struct PotassiumProviderCoreTests {
         #expect(!KDriveVersionConflictResolver.metadataMatches(baseVersion: Data("stale".utf8), remoteItem: item))
     }
 
+    @Test func metadataVersionParsesHyphenatedNames() throws {
+        let updatedAt = Date(timeIntervalSince1970: 300)
+        let metadataVersion = KDriveItemMetadataVersion(
+            itemID: 42,
+            updatedAt: updatedAt,
+            name: "01 - A-B - C.txt",
+            parentID: 77
+        )
+
+        let parsedVersion = try #require(KDriveItemMetadataVersion(data: metadataVersion.data))
+
+        #expect(parsedVersion == metadataVersion)
+        #expect(KDriveItemMetadataVersion(data: Data("stale".utf8)) == nil)
+    }
+
+    @Test func versionConflictResolverAllowsMetadataTimestampOnlyDrift() {
+        let baseItem = makeItem(id: 1, name: "Versioned.txt")
+        let driftedItem = makeItem(
+            id: 1,
+            name: "Versioned.txt",
+            modifiedAt: baseItem.modifiedAt,
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let renamedItem = makeItem(
+            id: 1,
+            name: "Remote.txt",
+            modifiedAt: baseItem.modifiedAt,
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+
+        #expect(KDriveVersionConflictResolver.metadataMatchesBaseStateIgnoringTimestamp(
+            baseVersion: baseItem.metadataVersion,
+            remoteItem: driftedItem
+        ))
+        #expect(KDriveVersionConflictResolver.itemVersionMatchesAllowingMetadataTimestampDrift(
+            contentVersion: baseItem.contentVersion,
+            metadataVersion: baseItem.metadataVersion,
+            remoteItem: driftedItem
+        ))
+        #expect(!KDriveVersionConflictResolver.itemVersionMatchesAllowingMetadataTimestampDrift(
+            contentVersion: baseItem.contentVersion,
+            metadataVersion: baseItem.metadataVersion,
+            remoteItem: renamedItem
+        ))
+    }
+
     @Test func conflictFilenamePreservesExtensionAndIsDeterministic() {
         let conflictName = KDriveConflictFilename.filename(
             for: "Report.pdf",
@@ -918,6 +969,9 @@ struct PotassiumProviderCoreTests {
     private func makeItem(
         id: Int,
         name: String,
+        parentID: Int = ProviderConstants.defaultRootFileID,
+        modifiedAt: Date = Date(timeIntervalSince1970: 200),
+        updatedAt: Date = Date(timeIntervalSince1970: 300),
         type: String? = "file",
         mimeType: String? = "text/plain"
     ) -> KDriveRemoteItem {
@@ -927,13 +981,13 @@ struct PotassiumProviderCoreTests {
             type: type,
             status: "ok",
             driveID: 10,
-            parentID: ProviderConstants.defaultRootFileID,
+            parentID: parentID,
             path: "/\(name)",
             size: type == "dir" ? nil : 12,
             mimeType: mimeType,
             createdAt: Date(timeIntervalSince1970: 100),
-            modifiedAt: Date(timeIntervalSince1970: 200),
-            updatedAt: Date(timeIntervalSince1970: 300)
+            modifiedAt: modifiedAt,
+            updatedAt: updatedAt
         )
     }
 

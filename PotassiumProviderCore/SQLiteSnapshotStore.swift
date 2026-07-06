@@ -93,6 +93,12 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
         }
     }
 
+    public func removeSnapshot(domainIdentifier: String, containerIdentifier: String) throws {
+        try database.transaction {
+            try deleteSnapshot(domainIdentifier: domainIdentifier, containerIdentifier: containerIdentifier)
+        }
+    }
+
     private func deleteSnapshot(domainIdentifier: String, containerIdentifier: String) throws {
         let filter = Schema.domainIdentifier == domainIdentifier && Schema.containerIdentifier == containerIdentifier
         try database.run(Schema.snapshotItems.filter(filter).delete())

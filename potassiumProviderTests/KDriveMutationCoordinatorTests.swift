@@ -226,6 +226,57 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
+    @Test func updatedAtOnlyRenameDriftStillRenames() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
+        let driftedItem = makeItem(
+            id: Self.fileID,
+            name: "Old.txt",
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let renamedItem = makeItem(
+            id: Self.fileID,
+            name: "New.txt",
+            updatedAt: Date(timeIntervalSince1970: 360)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [driftedItem, renamedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.renameItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            name: "New.txt"
+        )
+
+        #expect(result == renamedItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .renameItem(driveID: Self.driveID, fileID: Self.fileID, name: "New.txt"),
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
+    @Test func alreadyRenamedItemReturnsLatestWithoutDuplicateRename() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
+        let alreadyRenamedItem = makeItem(
+            id: Self.fileID,
+            name: "New.txt",
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [alreadyRenamedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.renameItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            name: "New.txt"
+        )
+
+        #expect(result == alreadyRenamedItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
     @Test func staleRenameThrowsStaleVersionAndDoesNotRename() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
         let latestItem = makeItem(
@@ -281,6 +332,174 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
+    @Test func updatedAtOnlyMoveDriftStillMoves() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
+        let driftedItem = makeItem(
+            id: Self.fileID,
+            name: "Old.txt",
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let movedItem = makeItem(
+            id: Self.fileID,
+            name: "Old.txt",
+            parentID: 901,
+            updatedAt: Date(timeIntervalSince1970: 360)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [driftedItem, movedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.moveItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            destinationParentID: 901,
+            name: nil
+        )
+
+        #expect(result == movedItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .moveItem(
+                driveID: Self.driveID,
+                fileID: Self.fileID,
+                destinationParentID: 901,
+                name: nil
+            ),
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
+    @Test func alreadyMovedItemReturnsLatestWithoutDuplicateMove() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
+        let alreadyMovedItem = makeItem(
+            id: Self.fileID,
+            name: "Old.txt",
+            parentID: 901,
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [alreadyMovedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.moveItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            destinationParentID: 901,
+            name: nil
+        )
+
+        #expect(result == alreadyMovedItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
+    @Test func alreadyMovedAndRenamedItemReturnsLatestWithoutDuplicateMove() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
+        let alreadyMovedItem = makeItem(
+            id: Self.fileID,
+            name: "Moved.txt",
+            parentID: 901,
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [alreadyMovedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.moveItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            destinationParentID: 901,
+            name: "Moved.txt"
+        )
+
+        #expect(result == alreadyMovedItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
+    @Test func movedToDestinationWithUnexpectedNameStillBlocksCombinedMoveRename() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
+        let latestItem = makeItem(
+            id: Self.fileID,
+            name: "Remote.txt",
+            parentID: 901,
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let staleItem = try await expectStaleVersion {
+            _ = try await coordinator.moveItem(
+                fileID: Self.fileID,
+                baseMetadataVersion: baseItem.metadataVersion,
+                destinationParentID: 901,
+                name: "Moved.txt"
+            )
+        }
+
+        #expect(staleItem == latestItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
+    @Test func albumBatchMoveAllowsFolderTimestampDriftFromChildUploads() async throws {
+        let oldParentID = 5
+        let musicFolderID = 55
+        let baseA = makeItem(id: 17, name: "A", parentID: oldParentID, updatedAt: Date(timeIntervalSince1970: 100), type: "dir", mimeType: nil)
+        let baseB = makeItem(id: 24, name: "B", parentID: oldParentID, updatedAt: Date(timeIntervalSince1970: 100), type: "dir", mimeType: nil)
+        let baseC = makeItem(id: 39, name: "C", parentID: oldParentID, updatedAt: Date(timeIntervalSince1970: 100), type: "dir", mimeType: nil)
+        let movedA = makeItem(id: 17, name: "A", parentID: musicFolderID, updatedAt: Date(timeIntervalSince1970: 300), type: "dir", mimeType: nil)
+        let movedB = makeItem(id: 24, name: "B", parentID: musicFolderID, updatedAt: Date(timeIntervalSince1970: 300), type: "dir", mimeType: nil)
+        let movedC = makeItem(id: 39, name: "C", parentID: musicFolderID, updatedAt: Date(timeIntervalSince1970: 300), type: "dir", mimeType: nil)
+        let remote = RecordingKDriveFileProvider(itemResults: [
+            17: [
+                makeItem(id: 17, name: "A", parentID: oldParentID, updatedAt: Date(timeIntervalSince1970: 200), type: "dir", mimeType: nil),
+                movedA
+            ],
+            24: [
+                makeItem(id: 24, name: "B", parentID: oldParentID, updatedAt: Date(timeIntervalSince1970: 200), type: "dir", mimeType: nil),
+                movedB
+            ],
+            39: [
+                makeItem(id: 39, name: "C", parentID: oldParentID, updatedAt: Date(timeIntervalSince1970: 200), type: "dir", mimeType: nil),
+                movedC
+            ]
+        ])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let resultA = try await coordinator.moveItem(
+            fileID: 17,
+            baseMetadataVersion: baseA.metadataVersion,
+            destinationParentID: musicFolderID,
+            name: nil
+        )
+        let resultB = try await coordinator.moveItem(
+            fileID: 24,
+            baseMetadataVersion: baseB.metadataVersion,
+            destinationParentID: musicFolderID,
+            name: nil
+        )
+        let resultC = try await coordinator.moveItem(
+            fileID: 39,
+            baseMetadataVersion: baseC.metadataVersion,
+            destinationParentID: musicFolderID,
+            name: nil
+        )
+
+        #expect([resultA, resultB, resultC] == [movedA, movedB, movedC])
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: 17),
+            .moveItem(driveID: Self.driveID, fileID: 17, destinationParentID: musicFolderID, name: nil),
+            .item(driveID: Self.driveID, fileID: 17),
+            .item(driveID: Self.driveID, fileID: 24),
+            .moveItem(driveID: Self.driveID, fileID: 24, destinationParentID: musicFolderID, name: nil),
+            .item(driveID: Self.driveID, fileID: 24),
+            .item(driveID: Self.driveID, fileID: 39),
+            .moveItem(driveID: Self.driveID, fileID: 39, destinationParentID: musicFolderID, name: nil),
+            .item(driveID: Self.driveID, fileID: 39)
+        ])
+    }
+
     @Test func staleMoveThrowsStaleVersionAndDoesNotMove() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
         let latestItem = makeItem(
@@ -324,6 +543,25 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
+    @Test func updatedAtOnlyTrashDriftStillTrashes() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Report.txt")
+        let driftedItem = makeItem(
+            id: Self.fileID,
+            name: "Report.txt",
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [driftedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.trashItem(fileID: Self.fileID, baseVersion: baseVersion(for: baseItem))
+
+        #expect(result == driftedItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .trashItem(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
     @Test func staleTrashThrowsStaleVersionAndDoesNotTrash() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Report.txt")
         let latestItem = makeItem(
@@ -356,6 +594,25 @@ struct KDriveMutationCoordinatorTests {
         )
 
         #expect(result == latestItem)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .deleteTrashedItem(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
+
+    @Test func updatedAtOnlyPermanentDeleteDriftStillDeletes() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Report.txt")
+        let driftedItem = makeItem(
+            id: Self.fileID,
+            name: "Report.txt",
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [driftedItem]])
+        let coordinator = makeCoordinator(remote: remote)
+
+        let result = try await coordinator.deleteTrashedItem(fileID: Self.fileID, baseVersion: baseVersion(for: baseItem))
+
+        #expect(result == driftedItem)
         #expect(await remote.calls() == [
             .item(driveID: Self.driveID, fileID: Self.fileID),
             .deleteTrashedItem(driveID: Self.driveID, fileID: Self.fileID)

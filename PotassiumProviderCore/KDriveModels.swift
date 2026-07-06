@@ -77,7 +77,82 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var metadataVersion: Data {
-        Data("\(id)-\(updatedAt.timeIntervalSince1970)-\(name)-\(parentID)".utf8)
+        KDriveItemMetadataVersion(
+            itemID: id,
+            updatedAt: updatedAt,
+            name: name,
+            parentID: parentID
+        ).data
+    }
+}
+
+public struct KDriveItemMetadataVersion: Equatable, Sendable {
+    public let itemID: Int
+    public let updatedAt: Date
+    public let name: String
+    public let parentID: Int
+
+    public init(itemID: Int, updatedAt: Date, name: String, parentID: Int) {
+        self.itemID = itemID
+        self.updatedAt = updatedAt
+        self.name = name
+        self.parentID = parentID
+    }
+
+    public init?(data: Data) {
+        guard let rawValue = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        self.init(rawValue: rawValue)
+    }
+
+    public init?(rawValue: String) {
+        guard let parentSeparator = rawValue.lastIndex(of: "-"),
+              let itemSeparator = rawValue.firstIndex(of: "-") else {
+            return nil
+        }
+
+        let parentSubstring = rawValue[rawValue.index(after: parentSeparator)...]
+        let prefix = rawValue[..<parentSeparator]
+        let timestampStart = rawValue.index(after: itemSeparator)
+        guard let timestampSeparator = prefix[timestampStart...].firstIndex(of: "-") else {
+            return nil
+        }
+
+        let itemSubstring = rawValue[..<itemSeparator]
+        let timestampSubstring = rawValue[timestampStart..<timestampSeparator]
+        let nameStart = rawValue.index(after: timestampSeparator)
+        let name = String(rawValue[nameStart..<parentSeparator])
+
+        guard let itemID = Int(itemSubstring),
+              let timestamp = TimeInterval(timestampSubstring),
+              let parentID = Int(parentSubstring),
+              itemID > 0,
+              parentID > 0,
+              name.isEmpty == false else {
+            return nil
+        }
+
+        self.itemID = itemID
+        self.updatedAt = Date(timeIntervalSince1970: timestamp)
+        self.name = name
+        self.parentID = parentID
+    }
+
+    public var data: Data {
+        Data(rawValue.utf8)
+    }
+
+    public var rawValue: String {
+        "\(itemID)-\(updatedAt.timeIntervalSince1970)-\(name)-\(parentID)"
+    }
+
+    public func matchesIdentityNameAndParent(of item: KDriveRemoteItem) -> Bool {
+        itemID == item.id && name == item.name && parentID == item.parentID
+    }
+
+    public func matches(itemID expectedItemID: Int, name expectedName: String, parentID expectedParentID: Int) -> Bool {
+        itemID == expectedItemID && name == expectedName && parentID == expectedParentID
     }
 }
 
@@ -336,6 +411,11 @@ public enum KDriveAdvancedActionReducer {
 }
 
 public enum KDriveVersionConflictResolver {
+    public enum MetadataMutationState: Equatable, Sendable {
+        case base
+        case desired
+    }
+
     public static func contentMatches(baseVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
         baseVersion == remoteItem.contentVersion
     }
@@ -344,9 +424,53 @@ public enum KDriveVersionConflictResolver {
         baseVersion == remoteItem.metadataVersion
     }
 
+    public static func metadataMatchesBaseStateIgnoringTimestamp(baseVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
+        guard let baseMetadata = KDriveItemMetadataVersion(data: baseVersion) else {
+            return metadataMatches(baseVersion: baseVersion, remoteItem: remoteItem)
+        }
+
+        return baseMetadata.matchesIdentityNameAndParent(of: remoteItem)
+    }
+
+    public static func metadataMutationState(
+        baseVersion: Data,
+        remoteItem: KDriveRemoteItem,
+        desiredName: String,
+        desiredParentID: Int
+    ) -> MetadataMutationState? {
+        guard let baseMetadata = KDriveItemMetadataVersion(data: baseVersion) else {
+            return metadataMatches(baseVersion: baseVersion, remoteItem: remoteItem) ? .base : nil
+        }
+
+        if baseMetadata.matchesIdentityNameAndParent(of: remoteItem) {
+            return .base
+        }
+
+        let latestMetadata = KDriveItemMetadataVersion(
+            itemID: remoteItem.id,
+            updatedAt: remoteItem.updatedAt,
+            name: remoteItem.name,
+            parentID: remoteItem.parentID
+        )
+        if latestMetadata.matches(itemID: baseMetadata.itemID, name: desiredName, parentID: desiredParentID) {
+            return .desired
+        }
+
+        return nil
+    }
+
     public static func itemVersionMatches(contentVersion: Data, metadataVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
         contentMatches(baseVersion: contentVersion, remoteItem: remoteItem)
             && metadataMatches(baseVersion: metadataVersion, remoteItem: remoteItem)
+    }
+
+    public static func itemVersionMatchesAllowingMetadataTimestampDrift(
+        contentVersion: Data,
+        metadataVersion: Data,
+        remoteItem: KDriveRemoteItem
+    ) -> Bool {
+        contentMatches(baseVersion: contentVersion, remoteItem: remoteItem)
+            && metadataMatchesBaseStateIgnoringTimestamp(baseVersion: metadataVersion, remoteItem: remoteItem)
     }
 }
 

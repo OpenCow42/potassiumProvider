@@ -182,8 +182,18 @@ public struct KDriveMutationCoordinator: Sendable {
         name: String
     ) async throws -> KDriveRemoteItem {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
-        guard KDriveVersionConflictResolver.metadataMatches(baseVersion: baseMetadataVersion, remoteItem: latestItem) else {
+        let desiredParentID = KDriveItemMetadataVersion(data: baseMetadataVersion)?.parentID ?? latestItem.parentID
+        guard let mutationState = KDriveVersionConflictResolver.metadataMutationState(
+            baseVersion: baseMetadataVersion,
+            remoteItem: latestItem,
+            desiredName: name,
+            desiredParentID: desiredParentID
+        ) else {
             throw KDriveMutationConflictError.staleVersion(latestItem: latestItem)
+        }
+
+        if mutationState == .desired {
+            return latestItem
         }
 
         try await remote.renameItem(driveID: configuration.driveID, fileID: fileID, name: name)
@@ -197,8 +207,18 @@ public struct KDriveMutationCoordinator: Sendable {
         name: String?
     ) async throws -> KDriveRemoteItem {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
-        guard KDriveVersionConflictResolver.metadataMatches(baseVersion: baseMetadataVersion, remoteItem: latestItem) else {
+        let desiredName = name ?? KDriveItemMetadataVersion(data: baseMetadataVersion)?.name ?? latestItem.name
+        guard let mutationState = KDriveVersionConflictResolver.metadataMutationState(
+            baseVersion: baseMetadataVersion,
+            remoteItem: latestItem,
+            desiredName: desiredName,
+            desiredParentID: destinationParentID
+        ) else {
             throw KDriveMutationConflictError.staleVersion(latestItem: latestItem)
+        }
+
+        if mutationState == .desired {
+            return latestItem
         }
 
         try await remote.moveItem(
@@ -212,7 +232,7 @@ public struct KDriveMutationCoordinator: Sendable {
 
     public func trashItem(fileID: Int, baseVersion: KDriveItemBaseVersion) async throws -> KDriveRemoteItem {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
-        guard KDriveVersionConflictResolver.itemVersionMatches(
+        guard KDriveVersionConflictResolver.itemVersionMatchesAllowingMetadataTimestampDrift(
             contentVersion: baseVersion.contentVersion,
             metadataVersion: baseVersion.metadataVersion,
             remoteItem: latestItem
@@ -226,7 +246,7 @@ public struct KDriveMutationCoordinator: Sendable {
 
     public func deleteTrashedItem(fileID: Int, baseVersion: KDriveItemBaseVersion) async throws -> KDriveRemoteItem {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
-        guard KDriveVersionConflictResolver.itemVersionMatches(
+        guard KDriveVersionConflictResolver.itemVersionMatchesAllowingMetadataTimestampDrift(
             contentVersion: baseVersion.contentVersion,
             metadataVersion: baseVersion.metadataVersion,
             remoteItem: latestItem

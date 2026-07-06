@@ -286,8 +286,11 @@ Before modifying, trashing, or deleting an item:
 1. Decode the File Provider `baseVersion`.
 2. Compare it with the stored server version for the item.
 3. Fetch latest metadata if the cache is missing or stale.
-4. If the server changed since the local base version, resolve the conflict
-   before sending the mutation.
+4. For rename and move, allow `updatedAt`-only metadata drift and idempotent
+   retries where the latest server item already matches the requested final
+   name and parent.
+5. If the server changed meaningfully since the local base version, resolve the
+   conflict before sending the mutation.
 
 The best version source is a server revision, etag, checksum, or version ID from
 kDrive. Timestamps are a fallback, not a strong conflict token.

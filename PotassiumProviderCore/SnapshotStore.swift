@@ -8,6 +8,7 @@ public protocol KDriveSnapshotStoring: Sendable {
         containerIdentifier: String,
         condition: KDriveSnapshotSaveCondition
     ) async throws
+    func removeSnapshot(domainIdentifier: String, containerIdentifier: String) async throws
     func removeSnapshots(domainIdentifier: String) async throws
 }
 
@@ -96,6 +97,12 @@ public actor KDriveSnapshotFileStore: KDriveSnapshotStoring {
         for url in urls where url.lastPathComponent.hasPrefix(prefix) && url.pathExtension == "json" {
             try FileManager.default.removeItem(at: url)
         }
+    }
+
+    public func removeSnapshot(domainIdentifier: String, containerIdentifier: String) throws {
+        let url = fileURL(domainIdentifier: domainIdentifier, containerIdentifier: containerIdentifier)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     private func ensureDirectoryExists() throws {

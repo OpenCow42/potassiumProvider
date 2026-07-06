@@ -76,6 +76,10 @@ The database has four tables.
 The primary key for `container_snapshots` is domain plus container. The primary
 key for `snapshot_items` is domain plus container plus item ID.
 
+After successful local mutations, the extension removes affected container
+snapshots and signals their File Provider enumerators so stale cached base
+versions are rebuilt from kDrive instead of reused for later mutations.
+
 `conflict_events`:
 
 - `id`
