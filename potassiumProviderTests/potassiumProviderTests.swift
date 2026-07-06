@@ -1064,11 +1064,15 @@ struct PotassiumProviderCoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
         let model = PotassiumProviderAppModel(
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: FailingProviderDomainRegistrar(),
+            snapshotStore: snapshotStore,
+            eventStore: eventStore,
             automaticallyReloadStoredState: false,
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
@@ -1081,6 +1085,13 @@ struct PotassiumProviderCoreTests {
         #expect(model.domains.isEmpty)
         #expect(try await domainStore.allConfigurations().isEmpty)
         #expect(model.errorMessage?.contains("The application cannot be used right now") == true)
+
+        let failure = try #require(await eventStore.activities().first)
+        #expect(failure.domainIdentifier == ProviderConstants.appActivityDomainIdentifier)
+        #expect(failure.scope == .app)
+        #expect(failure.kind == .domainManagement)
+        #expect(failure.outcome == .failure)
+        #expect(failure.summary == "Could not add the provider domain.")
     }
 
     @MainActor
