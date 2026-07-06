@@ -1,6 +1,15 @@
 {
-  "originHash" : "613cbb0d4ce50189d97b72e2dc228bda845d46b491781fb0143dbeb79a057a19",
+  "originHash" : "c640ec39f619633e23ec1c973ae9149ccad546b6d6f880e4d4858a99d707395e",
   "pins" : [
+    {
+      "identity" : "nuke",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:kean/Nuke.git",
+      "state" : {
+        "revision" : "63a8fcbd6621340a2410bc3e9575ac97058615f4",
+        "version" : "13.0.6"
+      }
+    },
     {
       "identity" : "potassiumchannel",
       "kind" : "remoteSourceControl",

@@ -384,6 +384,7 @@
 				C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */,
 				C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */,
 				C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */,
+				C0C64C212FFC63BE00FEE74D /* XCRemoteSwiftPackageReference "Nuke" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C09842872FF847AD00CB8B7E /* Products */;
@@ -1081,6 +1082,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 0.1.1;
+			};
+		};
+		C0C64C212FFC63BE00FEE74D /* XCRemoteSwiftPackageReference "Nuke" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "git@github.com:kean/Nuke.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 13.0.6;
 			};
 		};
 		C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */ = {
