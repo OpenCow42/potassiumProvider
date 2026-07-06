@@ -230,6 +230,7 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
     private let domainConfigurationsURL: URL
     private let snapshotsDatabaseURL: URL
     private let conflictStagingURL: URL
+    private let thumbnailCacheURL: URL
 
     init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
         guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
@@ -240,6 +241,7 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
         self.domainConfigurationsURL = containerURL.appendingPathComponent("DomainConfigurations", isDirectory: true)
         self.snapshotsDatabaseURL = containerURL.appendingPathComponent("Snapshots.sqlite3")
         self.conflictStagingURL = containerURL.appendingPathComponent("ConflictStaging", isDirectory: true)
+        self.thumbnailCacheURL = containerURL.appendingPathComponent(KDriveThumbnailPipeline.cacheDirectoryName, isDirectory: true)
     }
 
     func storedConfigurations() throws -> [ProviderDomainConfiguration] {
@@ -284,6 +286,19 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
             }
         }
 
+        for domainIdentifier in sortedDomainIdentifiers {
+            if try KDriveThumbnailPipeline.containsCachedThumbnails(
+                cacheDirectoryURL: thumbnailCacheURL,
+                domainIdentifier: domainIdentifier
+            ) {
+                items.append(FileProviderUninstallStateItem(
+                    kind: .thumbnailCache,
+                    domainIdentifier: domainIdentifier,
+                    description: "ThumbnailCache files for domain \(domainIdentifier)"
+                ))
+            }
+        }
+
         return items
     }
 
@@ -314,6 +329,11 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
         if FileManager.default.fileExists(atPath: configurationURL.path) {
             try FileManager.default.removeItem(at: configurationURL)
         }
+
+        try KDriveThumbnailPipeline.removeCachedThumbnails(
+            cacheDirectoryURL: thumbnailCacheURL,
+            domainIdentifier: domainIdentifier
+        )
 
         guard FileManager.default.fileExists(atPath: snapshotsDatabaseURL.path) else {
             return

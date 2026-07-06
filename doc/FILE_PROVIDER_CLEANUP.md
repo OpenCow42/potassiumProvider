@@ -64,8 +64,9 @@ that contains XCTest injection libraries.
 
 ## App Command Behavior
 
-`--dry-run` prints the plan and does not remove domains, SQLite rows, domain
-configuration JSON, ConflictStaging contents, or OAuth tokens.
+`--dry-run` prints the plan and does not remove domains, SQLite rows, thumbnail
+cache files, domain configuration JSON, ConflictStaging contents, or OAuth
+tokens.
 
 Without `--yes`, a non-dry run prints the plan and exits without mutating local
 state.
@@ -76,6 +77,7 @@ state.
   `NSFileProviderManager` using the preserve-dirty-user-data mode;
 - removes matching `DomainConfigurations` JSON files;
 - removes matching SQLite snapshot, conflict, and activity rows;
+- removes matching ThumbnailCache files;
 - keeps ConflictStaging contents;
 - keeps the saved OAuth token.
 

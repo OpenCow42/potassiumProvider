@@ -48,6 +48,18 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
         )
     }
 
+    public func item(domainIdentifier: String, fileID: Int) throws -> KDriveRemoteItem? {
+        let itemQuery = Schema.snapshotItems
+            .filter(Schema.domainIdentifier == domainIdentifier && Schema.itemID == fileID)
+            .limit(1)
+
+        guard let row = try database.pluck(itemQuery) else {
+            return nil
+        }
+
+        return Self.remoteItem(from: row)
+    }
+
     public func save(
         _ snapshot: KDriveSnapshot,
         domainIdentifier: String,

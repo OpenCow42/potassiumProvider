@@ -33,7 +33,7 @@ data.
   enumeration, sync anchors, kDrive listing APIs, SQLite caching, and item
   versions fit together.
 - [Persistence](doc/PERSISTENCE.md): app group files, domain JSON, SQLite
-  snapshot tables, and what is not cached.
+  snapshot tables, thumbnail cache, and what is not cached.
 - [kDrive API Mapping](doc/KDRIVE_API_MAPPING.md): provider operations mapped
   to potassiumChannel service calls and visible kDrive endpoints.
 - [Mutations](doc/MUTATIONS.md): create, upload, replace, rename, move, trash,
@@ -143,7 +143,8 @@ local Xcode requires a more specific variant.
   links, or user data.
 - The current conflict handling delegates many decisions to kDrive. Read
   [Conflicts](doc/CONFLICTS.md) before relying on it for important files.
-- SQLite snapshots cache metadata only. File contents are not stored there.
+- SQLite snapshots cache metadata only. File contents are not stored there;
+  remote thumbnail bytes use a capped app-group cache.
 
 ## License
 

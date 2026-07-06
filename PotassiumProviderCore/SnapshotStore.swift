@@ -2,6 +2,7 @@ import Foundation
 
 public protocol KDriveSnapshotStoring: Sendable {
     func snapshot(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot?
+    func item(domainIdentifier: String, fileID: Int) async throws -> KDriveRemoteItem?
     func save(
         _ snapshot: KDriveSnapshot,
         domainIdentifier: String,
@@ -65,6 +66,26 @@ public actor KDriveSnapshotFileStore: KDriveSnapshotStoring {
         let url = fileURL(domainIdentifier: domainIdentifier, containerIdentifier: containerIdentifier)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try decoder.decode(KDriveSnapshot.self, from: Data(contentsOf: url))
+    }
+
+    public func item(domainIdentifier: String, fileID: Int) throws -> KDriveRemoteItem? {
+        guard FileManager.default.fileExists(atPath: directoryURL.path) else { return nil }
+
+        let prefix = "\(Self.safeFileName(for: domainIdentifier))--"
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        for url in urls where url.lastPathComponent.hasPrefix(prefix) && url.pathExtension == "json" {
+            let snapshot = try decoder.decode(KDriveSnapshot.self, from: Data(contentsOf: url))
+            if let item = snapshot.items.first(where: { $0.id == fileID }) {
+                return item
+            }
+        }
+
+        return nil
     }
 
     public func save(

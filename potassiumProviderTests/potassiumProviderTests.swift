@@ -948,6 +948,162 @@ struct PotassiumProviderCoreTests {
         #expect(KDriveUploadConflictStrategy.rename.rawValue == "rename")
     }
 
+    @Test func thumbnailPipelineCachesRepeatedFileThumbnail() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let remote = ThumbnailRecordingKDriveFileProvider(thumbnails: [42: Data([0x01, 0x02, 0x03])])
+        let pipeline = try KDriveThumbnailPipeline(cacheDirectoryURL: directory.appendingPathComponent("ThumbnailCache"))
+
+        let firstData = try await pipeline.thumbnail(
+            domainIdentifier: "domain-1",
+            remote: remote,
+            driveID: 10,
+            fileID: 42,
+            width: 128,
+            height: 128
+        )
+        let secondData = try await pipeline.thumbnail(
+            domainIdentifier: "domain-1",
+            remote: remote,
+            driveID: 10,
+            fileID: 42,
+            width: 128,
+            height: 128
+        )
+
+        #expect(firstData == Data([0x01, 0x02, 0x03]))
+        #expect(secondData == firstData)
+        #expect(await remote.thumbnailRequestCount() == 1)
+    }
+
+    @Test func thumbnailPipelineCapsConcurrentRemoteFetches() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let remote = ThumbnailRecordingKDriveFileProvider(thumbnailDelayNanoseconds: 50_000_000)
+        let pipeline = try KDriveThumbnailPipeline(cacheDirectoryURL: directory.appendingPathComponent("ThumbnailCache"))
+        let fileIDs = Array(1...20)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for fileID in fileIDs {
+                group.addTask {
+                    _ = try await pipeline.thumbnail(
+                        domainIdentifier: "domain-1",
+                        remote: remote,
+                        driveID: 10,
+                        fileID: fileID,
+                        width: 128,
+                        height: 128
+                    )
+                }
+            }
+
+            try await group.waitForAll()
+        }
+
+        #expect(await remote.thumbnailRequestCount() == fileIDs.count)
+        #expect(await remote.maximumConcurrentThumbnailRequestCount() <= KDriveThumbnailPipeline.maximumConcurrentRemoteFetches)
+    }
+
+    @Test func thumbnailCacheIdentifierVariesByDomainDriveFileAndDimensions() {
+        let base = KDriveThumbnailPipeline.cacheIdentifier(
+            domainIdentifier: "domain/one",
+            driveID: 10,
+            fileID: 42,
+            width: 128,
+            height: 256
+        )
+
+        #expect(base != KDriveThumbnailPipeline.cacheIdentifier(domainIdentifier: "domain/two", driveID: 10, fileID: 42, width: 128, height: 256))
+        #expect(base != KDriveThumbnailPipeline.cacheIdentifier(domainIdentifier: "domain/one", driveID: 11, fileID: 42, width: 128, height: 256))
+        #expect(base != KDriveThumbnailPipeline.cacheIdentifier(domainIdentifier: "domain/one", driveID: 10, fileID: 43, width: 128, height: 256))
+        #expect(base != KDriveThumbnailPipeline.cacheIdentifier(domainIdentifier: "domain/one", driveID: 10, fileID: 42, width: 129, height: 256))
+        #expect(base != KDriveThumbnailPipeline.cacheIdentifier(domainIdentifier: "domain/one", driveID: 10, fileID: 42, width: 128, height: 257))
+        #expect(base.contains("domain_one"))
+        #expect(base.contains("drive_10"))
+        #expect(base.contains("file_42"))
+        #expect(base.contains("w_128"))
+        #expect(base.contains("h_256"))
+        #expect(base.contains("/") == false)
+        #expect(base.contains("token") == false)
+        #expect(base.contains("private") == false)
+    }
+
+    @Test func thumbnailEligibilitySkipsRemoteFolderBeforeThumbnailRequest() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let snapshotStore = KDriveSnapshotFileStore(directoryURL: directory.appendingPathComponent("Snapshots", isDirectory: true))
+        let remote = ThumbnailRecordingKDriveFileProvider(items: [42: makeItem(id: 42, name: "Folder", type: "dir", mimeType: nil)])
+        let pipeline = try KDriveThumbnailPipeline(cacheDirectoryURL: directory.appendingPathComponent("ThumbnailCache"))
+
+        if let fileID = try await KDriveThumbnailEligibilityResolver.thumbnailFileID(
+            rawItemIdentifier: "42",
+            domainIdentifier: "domain-1",
+            driveID: 10,
+            snapshotStore: snapshotStore,
+            remote: remote
+        ) {
+            _ = try await pipeline.thumbnail(
+                domainIdentifier: "domain-1",
+                remote: remote,
+                driveID: 10,
+                fileID: fileID,
+                width: 128,
+                height: 128
+            )
+        }
+
+        #expect(await remote.itemRequestCount() == 1)
+        #expect(await remote.thumbnailRequestCount() == 0)
+    }
+
+    @Test func thumbnailEligibilityUsesCachedFolderMetadataWithoutRemoteCalls() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let snapshotStore = KDriveSnapshotFileStore(directoryURL: directory.appendingPathComponent("Snapshots", isDirectory: true))
+        try await snapshotStore.save(
+            KDriveSnapshot(items: [makeItem(id: 42, name: "Folder", type: "dir", mimeType: nil)]),
+            domainIdentifier: "domain-1",
+            containerIdentifier: "root"
+        )
+        let remote = ThumbnailRecordingKDriveFileProvider()
+
+        let fileID = try await KDriveThumbnailEligibilityResolver.thumbnailFileID(
+            rawItemIdentifier: "42",
+            domainIdentifier: "domain-1",
+            driveID: 10,
+            snapshotStore: snapshotStore,
+            remote: remote
+        )
+
+        #expect(fileID == nil)
+        #expect(await remote.itemRequestCount() == 0)
+        #expect(await remote.thumbnailRequestCount() == 0)
+    }
+
+    @Test func thumbnailEligibilityFetchesMissingMetadataOnceForFolder() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let snapshotStore = KDriveSnapshotFileStore(directoryURL: directory.appendingPathComponent("Snapshots", isDirectory: true))
+        let remote = ThumbnailRecordingKDriveFileProvider(items: [42: makeItem(id: 42, name: "Folder", type: "dir", mimeType: nil)])
+
+        let fileID = try await KDriveThumbnailEligibilityResolver.thumbnailFileID(
+            rawItemIdentifier: "42",
+            domainIdentifier: "domain-1",
+            driveID: 10,
+            snapshotStore: snapshotStore,
+            remote: remote
+        )
+
+        #expect(fileID == nil)
+        #expect(await remote.itemRequestCount() == 1)
+        #expect(await remote.thumbnailRequestCount() == 0)
+    }
+
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
         await KDriveDataRequestCapturingURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
@@ -1794,6 +1950,114 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
 
 private enum FakeKDriveFileProviderError: Error {
     case unimplemented
+}
+
+private actor ThumbnailRecordingKDriveFileProvider: KDriveFileProviding {
+    private let items: [Int: KDriveRemoteItem]
+    private let thumbnails: [Int: Data]
+    private let thumbnailDelayNanoseconds: UInt64
+    private var itemRequests = 0
+    private var thumbnailRequests = 0
+    private var activeThumbnailRequests = 0
+    private var maximumActiveThumbnailRequests = 0
+
+    init(
+        items: [Int: KDriveRemoteItem] = [:],
+        thumbnails: [Int: Data] = [:],
+        thumbnailDelayNanoseconds: UInt64 = 0
+    ) {
+        self.items = items
+        self.thumbnails = thumbnails
+        self.thumbnailDelayNanoseconds = thumbnailDelayNanoseconds
+    }
+
+    func listDrives() async throws -> [KDriveDriveSummary] {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
+        itemRequests += 1
+        guard let item = items[fileID] else {
+            throw FakeKDriveFileProviderError.unimplemented
+        }
+        return item
+    }
+
+    func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func downloadFile(driveID: Int, fileID: Int) async throws -> Data {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
+        thumbnailRequests += 1
+        activeThumbnailRequests += 1
+        maximumActiveThumbnailRequests = max(maximumActiveThumbnailRequests, activeThumbnailRequests)
+        defer { activeThumbnailRequests -= 1 }
+
+        if thumbnailDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: thumbnailDelayNanoseconds)
+        }
+
+        return thumbnails[fileID] ?? Data([UInt8(fileID % 255)])
+    }
+
+    func uploadFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func renameItem(driveID: Int, fileID: Int, name: String) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func trashItem(driveID: Int, fileID: Int) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func deleteTrashedItem(driveID: Int, fileID: Int) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func itemRequestCount() -> Int {
+        itemRequests
+    }
+
+    func thumbnailRequestCount() -> Int {
+        thumbnailRequests
+    }
+
+    func maximumConcurrentThumbnailRequestCount() -> Int {
+        maximumActiveThumbnailRequests
+    }
 }
 
 private struct SensitiveFailureError: LocalizedError {

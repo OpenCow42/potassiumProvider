@@ -18,6 +18,7 @@
 		D00000052FF9000000000005 /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = D00001022FF9000000000002 /* PotassiumKDrive */; };
 		D00000062FF9000000000006 /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = D00001032FF9000000000003 /* PotassiumOAuth */; };
 		D00000072FF9000000000007 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = D00001042FF9000000000004 /* SQLite */; };
+		D00000082FF9000000000008 /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = D00001052FF9000000000005 /* Nuke */; };
 		D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
 		D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -163,6 +164,7 @@
 				D00000042FF9000000000004 /* PotassiumChannelCore in Frameworks */,
 				D00000052FF9000000000005 /* PotassiumKDrive in Frameworks */,
 				D00000062FF9000000000006 /* PotassiumOAuth in Frameworks */,
+				D00000082FF9000000000008 /* Nuke in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -313,6 +315,7 @@
 				D00001012FF9000000000001 /* PotassiumChannelCore */,
 				D00001022FF9000000000002 /* PotassiumKDrive */,
 				D00001032FF9000000000003 /* PotassiumOAuth */,
+				D00001052FF9000000000005 /* Nuke */,
 			);
 			productName = PotassiumProviderCore;
 			productReference = D00000312FF9000000000001 /* PotassiumProviderCore.framework */;
@@ -1142,6 +1145,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C09842BC2FF8489C00CB8B7E /* XCRemoteSwiftPackageReference "SQLite.swift" */;
 			productName = SQLite;
+		};
+		D00001052FF9000000000005 /* Nuke */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0C64C212FFC63BE00FEE74D /* XCRemoteSwiftPackageReference "Nuke" */;
+			productName = Nuke;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
