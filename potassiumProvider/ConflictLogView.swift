@@ -5,6 +5,7 @@ import SwiftUI
 
 struct ConflictLogView: View {
     @StateObject private var model: ConflictLogViewModel
+    @State private var isClearConfirmationPresented = false
 
     init(eventStore: (any KDriveProviderEventStoring)?) {
         _model = StateObject(wrappedValue: ConflictLogViewModel(eventStore: eventStore))
@@ -47,7 +48,14 @@ struct ConflictLogView: View {
             }
             .navigationTitle("Activities")
             .toolbar {
-                ToolbarItem(placement: refreshToolbarPlacement) {
+                ToolbarItemGroup(placement: activityToolbarPlacement) {
+                    Button(role: .destructive) {
+                        isClearConfirmationPresented = true
+                    } label: {
+                        Label(model.isClearing ? "Clearing" : "Clear", systemImage: "trash")
+                    }
+                    .disabled(model.canClearActivity == false)
+
                     Button {
                         Task { await model.load() }
                     } label: {
@@ -62,10 +70,18 @@ struct ConflictLogView: View {
             .onChange(of: model.showsActivity) { _, _ in
                 Task { await model.load() }
             }
+            .confirmationDialog("Clear Activities?", isPresented: $isClearConfirmationPresented) {
+                Button("Clear Events and Resolved Conflicts", role: .destructive) {
+                    Task { await model.clearActivity() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Activity events and resolved conflict rows will be removed. Unresolved, blocked, and failed conflicts stay visible.")
+            }
         }
     }
 
-    private var refreshToolbarPlacement: ToolbarItemPlacement {
+    private var activityToolbarPlacement: ToolbarItemPlacement {
         #if os(macOS)
         .automatic
         #else
@@ -90,6 +106,7 @@ final class ConflictLogViewModel: ObservableObject {
     @Published private(set) var conflicts: [KDriveConflictEvent] = []
     @Published private(set) var activity: [KDriveProviderActivityEvent] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var isClearing = false
     @Published var showsActivity = false
     @Published var errorMessage: String?
 
@@ -121,6 +138,10 @@ final class ConflictLogViewModel: ObservableObject {
         return (conflictItems + activityItems).sorted { $0.date > $1.date }
     }
 
+    var canClearActivity: Bool {
+        eventStore != nil && isLoading == false && isClearing == false
+    }
+
     func load() async {
         guard let eventStore else {
             conflicts = []
@@ -142,6 +163,25 @@ final class ConflictLogViewModel: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = "Could not load activity events: \(error.localizedDescription)"
+        }
+    }
+
+    func clearActivity() async {
+        guard let eventStore else {
+            conflicts = []
+            activity = []
+            errorMessage = "Activity database is unavailable."
+            return
+        }
+
+        isClearing = true
+        defer { isClearing = false }
+
+        do {
+            try await eventStore.removeActivityAndResolvedConflicts(domainIdentifier: nil)
+            await load()
+        } catch {
+            errorMessage = "Could not clear activity events: \(error.localizedDescription)"
         }
     }
 }

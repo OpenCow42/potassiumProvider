@@ -209,6 +209,7 @@ public protocol KDriveProviderEventStoring: Sendable {
     func recentConflicts(domainIdentifier: String?, limit: Int) async throws -> [KDriveConflictEvent]
     func recentActivity(domainIdentifier: String?, limit: Int) async throws -> [KDriveProviderActivityEvent]
     func recentActivity(domainIdentifier: String?, outcome: KDriveProviderActivityOutcome?, limit: Int) async throws -> [KDriveProviderActivityEvent]
+    func removeActivityAndResolvedConflicts(domainIdentifier: String?) async throws
     func removeEvents(domainIdentifier: String) async throws
 }
 
@@ -290,6 +291,10 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
 
     public func removeEvents(domainIdentifier: String) throws {
         try Self.removeEvents(on: database, domainIdentifier: domainIdentifier)
+    }
+
+    public func removeActivityAndResolvedConflicts(domainIdentifier: String? = nil) throws {
+        try Self.removeActivityAndResolvedConflicts(on: database, domainIdentifier: domainIdentifier)
     }
 
     public func eventChanges(pollInterval: TimeInterval = 1) async -> AsyncStream<Void> {
@@ -394,6 +399,24 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
                 .filter(ProviderEventSchema.domainIdentifier == domainIdentifier)
                 .delete()
             )
+        }
+    }
+
+    static func removeActivityAndResolvedConflicts(on database: Connection, domainIdentifier: String?) throws {
+        try database.transaction {
+            var activityQuery = ProviderEventSchema.activityEvents
+            if let domainIdentifier {
+                activityQuery = activityQuery.filter(ProviderEventSchema.domainIdentifier == domainIdentifier)
+            }
+            try database.run(activityQuery.delete())
+
+            var resolvedConflictQuery = ProviderEventSchema.conflictEvents
+            if let domainIdentifier {
+                resolvedConflictQuery = resolvedConflictQuery.filter(ProviderEventSchema.domainIdentifier == domainIdentifier)
+            }
+            resolvedConflictQuery = resolvedConflictQuery
+                .filter(ProviderEventSchema.resolutionState == KDriveConflictResolutionState.automaticallyResolved.rawValue)
+            try database.run(resolvedConflictQuery.delete())
         }
     }
 

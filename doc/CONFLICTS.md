@@ -206,6 +206,8 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
 - The default view shows conflicts and recent non-conflict failure activity.
 - The Last Activity toggle adds recent successful provider activity from the
   database, including enumeration/change sync and major item operations.
+- The Clear button removes activity event rows and automatically resolved
+  conflict rows while preserving unresolved, blocked, and failed conflict rows.
 - Failure rows store sanitized diagnostics such as category, severity, mapped
   provider error code, underlying error domain/code, recovery suggestion, and a
   short diagnostic summary. They do not store tokens or raw response bodies.
