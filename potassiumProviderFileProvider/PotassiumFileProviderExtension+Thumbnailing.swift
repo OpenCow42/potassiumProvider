@@ -17,8 +17,10 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
         let progress = Progress(totalUnitCount: Int64(itemIdentifiers.count))
 
         let task = Task {
+            var runtime: FileProviderRuntime?
             do {
-                let runtime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
+                let loadedRuntime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
+                runtime = loadedRuntime
                 try Task.checkCancellation()
 
                 try await itemIdentifiers.asyncForEach { itemIdentifier in
@@ -26,7 +28,7 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
                     try await self.fetchThumbnail(
                         for: itemIdentifier,
                         dimensions: dimensions,
-                        runtime: runtime,
+                        runtime: loadedRuntime,
                         perThumbnailCompletionHandler: perThumbnailCompletionHandler
                     )
                     progress.completedUnitCount += 1
@@ -38,7 +40,15 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
             } catch is CancellationError {
                 completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
             } catch {
-                let mappedError = providerError(error)
+                let mappedError = await self.recordProviderFailure(
+                    error,
+                    runtime: runtime,
+                    fallbackKind: .thumbnail,
+                    itemIdentifier: nil,
+                    itemName: nil,
+                    itemPath: nil,
+                    summary: "fetch thumbnails."
+                )
                 FileProviderLog.replicatedExtension.error("fetchThumbnails failed: \(mappedError.localizedDescription, privacy: .public)")
                 completionHandler(mappedError)
             }
@@ -80,7 +90,19 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
             if Task.isCancelled {
                 throw CancellationError()
             }
-            let mappedError = providerError(error)
+            let mapping = providerErrorMapping(error)
+            let mappedError = mapping.mappedError
+            if shouldRecordGenericFailure(for: error) {
+                await ProviderEventRecorder.recordFailure(
+                    kind: .thumbnail,
+                    runtime: runtime,
+                    itemIdentifier: itemIdentifier.rawValue,
+                    itemName: nil,
+                    itemPath: nil,
+                    summary: "Could not fetch a thumbnail.",
+                    diagnostic: mapping.diagnostic
+                )
+            }
             FileProviderLog.replicatedExtension.error("fetchThumbnail(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
             perThumbnailCompletionHandler(itemIdentifier, nil, mappedError)
         }

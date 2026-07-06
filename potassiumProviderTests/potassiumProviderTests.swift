@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import UniformTypeIdentifiers
+@preconcurrency import SQLite
 @testable import potassiumProvider
 import PotassiumProviderCore
 
@@ -345,11 +346,115 @@ struct PotassiumProviderCoreTests {
         #expect(domainActivity.map(\.summary) == ["Newer activity.", "Older activity."])
         #expect(domainActivity.first?.relatedConflictID == newConflictID)
 
+        let failureDiagnostic = KDriveProviderActivityErrorDiagnostic(
+            errorCategory: .network,
+            providerErrorCode: -1009,
+            underlyingErrorDomain: NSURLErrorDomain,
+            underlyingErrorCode: NSURLErrorNotConnectedToInternet,
+            recoverySuggestion: "Connect to the network and retry.",
+            diagnosticSummary: "A network request failed before the operation could complete."
+        )
+        try await store.recordActivity(KDriveProviderActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 450),
+            domainIdentifier: "domain-1",
+            driveID: 10,
+            kind: .metadataLookup,
+            outcome: .failure,
+            severity: .error,
+            itemIdentifier: "42",
+            itemName: "Report.txt",
+            itemPath: "/Report.txt",
+            summary: "Could not resolve item metadata.",
+            diagnostic: failureDiagnostic
+        ))
+        try await store.recordActivity(KDriveProviderActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 500),
+            domainIdentifier: ProviderConstants.appActivityDomainIdentifier,
+            driveID: 0,
+            kind: .driveDiscovery,
+            scope: .app,
+            outcome: .failure,
+            severity: .error,
+            itemIdentifier: nil,
+            itemName: nil,
+            itemPath: nil,
+            summary: "Could not load kDrives.",
+            diagnostic: KDriveProviderActivityErrorDiagnostic(errorCategory: .api)
+        ))
+
+        let domainFailures = try await store.recentActivity(domainIdentifier: "domain-1", outcome: .failure, limit: 10)
+        #expect(domainFailures.map(\.summary) == ["Could not resolve item metadata."])
+        #expect(domainFailures.first?.scope == .domain)
+        #expect(domainFailures.first?.severity == .error)
+        #expect(domainFailures.first?.errorCategory == .network)
+        #expect(domainFailures.first?.providerErrorCode == -1009)
+
+        let domainSuccesses = try await store.recentActivity(domainIdentifier: "domain-1", outcome: .success, limit: 10)
+        #expect(domainSuccesses.map(\.summary) == ["Newer activity.", "Older activity."])
+
         try await store.removeEvents(domainIdentifier: "domain-1")
 
         #expect(try await store.recentConflicts(domainIdentifier: "domain-1", limit: 10).isEmpty)
         #expect(try await store.recentActivity(domainIdentifier: "domain-1", limit: 10).isEmpty)
         #expect(try await store.recentConflicts(domainIdentifier: nil, limit: 10).map(\.id) == [otherDomainConflictID])
+        #expect(try await store.recentActivity(domainIdentifier: ProviderConstants.appActivityDomainIdentifier, limit: 10).map(\.summary) == ["Could not load kDrives."])
+    }
+
+    @Test func providerEventStoreMigratesLegacyActivityRowsWithSuccessDefaults() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let database = try Connection(databaseURL.path)
+        try database.execute("""
+        CREATE TABLE provider_activity_events(
+            id TEXT PRIMARY KEY NOT NULL,
+            occurredAt REAL NOT NULL,
+            domainIdentifier TEXT NOT NULL,
+            driveID INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            itemIdentifier TEXT,
+            itemName TEXT,
+            itemPath TEXT,
+            summary TEXT NOT NULL,
+            relatedConflictID TEXT
+        )
+        """)
+        try database.execute("""
+        INSERT INTO provider_activity_events(
+            id,
+            occurredAt,
+            domainIdentifier,
+            driveID,
+            kind,
+            itemIdentifier,
+            itemName,
+            itemPath,
+            summary,
+            relatedConflictID
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000001',
+            100,
+            'domain-1',
+            10,
+            'enumeration',
+            '42',
+            'Report.txt',
+            '/Report.txt',
+            'Legacy activity.',
+            NULL
+        )
+        """)
+
+        let store = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
+        let event = try #require(try await store.recentActivity(domainIdentifier: "domain-1", limit: 10).first)
+
+        #expect(event.summary == "Legacy activity.")
+        #expect(event.scope == .domain)
+        #expect(event.outcome == .success)
+        #expect(event.severity == .info)
+        #expect(event.errorCategory == nil)
     }
 
     @Test func providerEventStoreObservesLocalAndExternalDatabaseChanges() async throws {
@@ -394,31 +499,43 @@ struct PotassiumProviderCoreTests {
             itemName: "Report.txt",
             state: .blockedRetryable
         )
-        let activity = makeActivityEvent(
+        let failureActivity = makeActivityEvent(
             occurredAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-1",
+            kind: .metadataLookup,
+            summary: "Could not resolve item metadata.",
+            outcome: .failure,
+            diagnostic: KDriveProviderActivityErrorDiagnostic(errorCategory: .fileProvider)
+        )
+        let successActivity = makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 300),
             domainIdentifier: "domain-1",
             kind: .enumeration,
             summary: "Enumerated folder."
         )
-        let store = FakeProviderEventStore(conflicts: [conflict], activity: [activity])
+        let store = FakeProviderEventStore(conflicts: [conflict], activity: [successActivity, failureActivity])
         let model = ConflictLogViewModel(eventStore: store)
 
         await model.load()
 
         #expect(model.conflicts == [conflict])
-        #expect(model.activity.isEmpty)
-        #expect(model.timelineItems.map(\.id) == ["conflict-\(conflict.id.uuidString)"])
-        #expect(await store.activityQueryCount() == 0)
+        #expect(model.activity == [failureActivity])
+        #expect(model.timelineItems.map(\.id) == [
+            "activity-\(failureActivity.id.uuidString)",
+            "conflict-\(conflict.id.uuidString)"
+        ])
+        #expect(await store.activityQueryCount() == 1)
 
         model.showsActivity = true
         await model.load()
 
-        #expect(model.activity == [activity])
+        #expect(model.activity == [successActivity, failureActivity])
         #expect(model.timelineItems.map(\.id) == [
-            "activity-\(activity.id.uuidString)",
+            "activity-\(successActivity.id.uuidString)",
+            "activity-\(failureActivity.id.uuidString)",
             "conflict-\(conflict.id.uuidString)"
         ])
-        #expect(await store.activityQueryCount() == 1)
+        #expect(await store.activityQueryCount() == 2)
     }
 
     @Test func snapshotDecodesLegacyFileStoreShape() throws {
@@ -966,6 +1083,49 @@ struct PotassiumProviderCoreTests {
         #expect(model.errorMessage?.contains("The application cannot be used right now") == true)
     }
 
+    @MainActor
+    @Test func appModelRecordsSanitizedFailureActivity() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let tokenStore = InMemoryOAuthTokenStore()
+        await tokenStore.saveToken(KDriveOAuthToken(
+            accessToken: "secret-token",
+            tokenType: "Bearer",
+            refreshToken: nil,
+            scope: nil,
+            idToken: nil,
+            expiresAt: nil
+        ))
+        let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
+        let model = PotassiumProviderAppModel(
+            domainStore: DomainConfigurationFileStore(directoryURL: directory),
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            eventStore: eventStore,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in
+                FakeKDriveFileProvider(
+                    drives: [],
+                    listDrivesError: SensitiveFailureError(message: "request failed with bearer secret-token")
+                )
+            }
+        )
+
+        await model.loadDrives()
+
+        let failure = try #require(await eventStore.activities().first)
+        #expect(failure.scope == .app)
+        #expect(failure.outcome == .failure)
+        #expect(failure.severity == .error)
+        #expect(failure.kind == .driveDiscovery)
+        #expect(failure.errorCategory == .api)
+        #expect(failure.summary == "Could not load kDrives.")
+        #expect(failure.summary.contains("secret-token") == false)
+        #expect(failure.diagnosticSummary?.contains("secret-token") == false)
+    }
+
     private func makeItem(
         id: Int,
         name: String,
@@ -1019,18 +1179,26 @@ struct PotassiumProviderCoreTests {
         domainIdentifier: String,
         kind: KDriveProviderActivityKind,
         summary: String,
-        relatedConflictID: UUID? = nil
+        relatedConflictID: UUID? = nil,
+        scope: KDriveProviderActivityScope = .domain,
+        outcome: KDriveProviderActivityOutcome = .success,
+        severity: KDriveProviderActivitySeverity = .info,
+        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil
     ) -> KDriveProviderActivityEvent {
         KDriveProviderActivityEvent(
             occurredAt: occurredAt,
             domainIdentifier: domainIdentifier,
             driveID: 10,
             kind: kind,
+            scope: scope,
+            outcome: outcome,
+            severity: severity,
             itemIdentifier: "42",
             itemName: "Report.txt",
             itemPath: "/Report.txt",
             summary: summary,
-            relatedConflictID: relatedConflictID
+            relatedConflictID: relatedConflictID,
+            diagnostic: diagnostic
         )
     }
 
@@ -1422,9 +1590,18 @@ private final class FakeKDriveOAuthAuthenticator: KDriveOAuthAuthenticating {
 
 private struct FakeKDriveFileProvider: KDriveFileProviding {
     let drives: [KDriveDriveSummary]
+    let listDrivesError: Error?
+
+    init(drives: [KDriveDriveSummary], listDrivesError: Error? = nil) {
+        self.drives = drives
+        self.listDrivesError = listDrivesError
+    }
 
     func listDrives() async throws -> [KDriveDriveSummary] {
-        drives
+        if let listDrivesError {
+            throw listDrivesError
+        }
+        return drives
     }
 
     func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
@@ -1491,6 +1668,14 @@ private enum FakeKDriveFileProviderError: Error {
     case unimplemented
 }
 
+private struct SensitiveFailureError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        message
+    }
+}
+
 private actor FakeProviderEventStore: KDriveProviderEventStoring {
     private var conflicts: [KDriveConflictEvent]
     private var activity: [KDriveProviderActivityEvent]
@@ -1518,9 +1703,18 @@ private actor FakeProviderEventStore: KDriveProviderEventStoring {
     }
 
     func recentActivity(domainIdentifier: String?, limit: Int) throws -> [KDriveProviderActivityEvent] {
+        try recentActivity(domainIdentifier: domainIdentifier, outcome: nil, limit: limit)
+    }
+
+    func recentActivity(
+        domainIdentifier: String?,
+        outcome: KDriveProviderActivityOutcome?,
+        limit: Int
+    ) throws -> [KDriveProviderActivityEvent] {
         activityQueries += 1
         return Array(activity
             .filter { domainIdentifier == nil || $0.domainIdentifier == domainIdentifier }
+            .filter { outcome == nil || $0.outcome == outcome }
             .sorted { $0.occurredAt > $1.occurredAt }
             .prefix(limit))
     }
@@ -1532,6 +1726,10 @@ private actor FakeProviderEventStore: KDriveProviderEventStoring {
 
     func activityQueryCount() -> Int {
         activityQueries
+    }
+
+    func activities() -> [KDriveProviderActivityEvent] {
+        activity
     }
 }
 

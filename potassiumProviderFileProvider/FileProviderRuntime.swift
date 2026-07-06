@@ -126,49 +126,194 @@ enum FileProviderPageCodec {
     }
 }
 
-func providerError(_ error: Error) -> Error {
+struct ProviderErrorMapping {
+    let mappedError: Error
+    let diagnostic: KDriveProviderActivityErrorDiagnostic
+}
+
+func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
     if let fileProviderError = error as? NSFileProviderError {
         let nsError = fileProviderError as NSError
         FileProviderLog.runtime.debug("preserve FileProvider error code(\(nsError.code, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
-        return fileProviderError
+        return ProviderErrorMapping(
+            mappedError: fileProviderError,
+            diagnostic: providerDiagnostic(
+                category: providerActivityErrorCategory(originalError: nsError),
+                originalError: error,
+                mappedError: fileProviderError
+            )
+        )
     }
 
     if let mutationConflictError = error as? KDriveMutationConflictError {
         switch mutationConflictError {
         case .staleVersion:
             FileProviderLog.runtime.error("map stale mutation version to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
-            return staleMutationVersionError()
+            let mappedError = staleMutationVersionError()
+            return ProviderErrorMapping(
+                mappedError: mappedError,
+                diagnostic: providerDiagnostic(
+                    category: .mutationConflict,
+                    originalError: error,
+                    mappedError: mappedError
+                )
+            )
         }
     }
 
     if error is KDriveListingValidationError {
         FileProviderLog.runtime.error("map listing validation failure to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
-        return NSFileProviderError(.cannotSynchronize)
+        let mappedError = NSFileProviderError(.cannotSynchronize)
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: .listing,
+                originalError: error,
+                mappedError: mappedError
+            )
+        )
     }
 
     if let snapshotStoreError = error as? KDriveSnapshotStoreError,
        case .staleSnapshot = snapshotStoreError {
         FileProviderLog.runtime.error("map stale snapshot write to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
-        return NSFileProviderError(.cannotSynchronize)
+        let mappedError = NSFileProviderError(.cannotSynchronize)
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: .snapshot,
+                originalError: error,
+                mappedError: mappedError
+            )
+        )
     }
 
     let nsError = error as NSError
     if nsError.domain == NSURLErrorDomain {
         FileProviderLog.runtime.error("map URL error \(nsError.code, privacy: .public) to serverUnreachable: \(nsError.localizedDescription, privacy: .public)")
-        return NSFileProviderError(.serverUnreachable)
+        let mappedError = NSFileProviderError(.serverUnreachable)
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: .network,
+                originalError: error,
+                mappedError: mappedError
+            )
+        )
     }
 
     if nsError.domain == NSCocoaErrorDomain || nsError.domain == NSFileProviderErrorDomain {
         FileProviderLog.runtime.error("preserve Cocoa/FileProvider error \(nsError.domain, privacy: .public) code(\(nsError.code, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
-        return error
+        return ProviderErrorMapping(
+            mappedError: error,
+            diagnostic: providerDiagnostic(
+                category: providerActivityErrorCategory(originalError: nsError),
+                originalError: error,
+                mappedError: error
+            )
+        )
     }
 
     FileProviderLog.runtime.error("wrap unexpected error as XPC reply invalid: \(error.localizedDescription, privacy: .public)")
-    return NSError(
+    let mappedError = NSError(
         domain: NSCocoaErrorDomain,
         code: NSXPCConnectionReplyInvalid,
         userInfo: [NSUnderlyingErrorKey: error]
     )
+    return ProviderErrorMapping(
+        mappedError: mappedError,
+        diagnostic: providerDiagnostic(
+            category: providerActivityErrorCategory(originalError: nsError),
+            originalError: error,
+            mappedError: mappedError
+        )
+    )
+}
+
+func providerError(_ error: Error) -> Error {
+    providerErrorMapping(error).mappedError
+}
+
+func shouldRecordGenericFailure(for error: Error) -> Bool {
+    if error is CancellationError { return false }
+    if error is KDriveMutationConflictError { return false }
+
+    let nsError = error as NSError
+    return nsError.domain != NSCocoaErrorDomain || nsError.code != NSUserCancelledError
+}
+
+func providerActivityKindForRuntimeLoadFailure(_ error: Error) -> KDriveProviderActivityKind {
+    let nsError = error as NSError
+    if nsError.domain == NSFileProviderErrorDomain,
+       nsError.code == NSFileProviderError.notAuthenticated.rawValue {
+        return .authentication
+    }
+    if error is KDriveOAuthError || error is KeychainTokenStoreError {
+        return .authentication
+    }
+    return .runtimeLoading
+}
+
+private func providerDiagnostic(
+    category: KDriveProviderActivityErrorCategory,
+    originalError: Error,
+    mappedError: Error
+) -> KDriveProviderActivityErrorDiagnostic {
+    let originalNSError = originalError as NSError
+    let mappedNSError = mappedError as NSError
+    let providerCode = mappedNSError.domain == NSFileProviderErrorDomain ? mappedNSError.code : nil
+    let recoverySuggestion = mappedNSError.localizedRecoverySuggestion
+        ?? (originalError as? LocalizedError)?.recoverySuggestion
+
+    return KDriveProviderActivityErrorDiagnostic(
+        errorCategory: category,
+        providerErrorCode: providerCode,
+        underlyingErrorDomain: originalNSError.domain,
+        underlyingErrorCode: originalNSError.code,
+        recoverySuggestion: recoverySuggestion,
+        diagnosticSummary: providerDiagnosticSummary(category: category)
+    )
+}
+
+private func providerActivityErrorCategory(originalError nsError: NSError) -> KDriveProviderActivityErrorCategory {
+    if nsError.domain == NSURLErrorDomain {
+        return .network
+    }
+    if nsError.domain == NSFileProviderErrorDomain {
+        if nsError.code == NSFileProviderError.notAuthenticated.rawValue {
+            return .authentication
+        }
+        return .fileProvider
+    }
+    if nsError.domain == NSCocoaErrorDomain {
+        return .storage
+    }
+    return .unknown
+}
+
+private func providerDiagnosticSummary(category: KDriveProviderActivityErrorCategory) -> String {
+    switch category {
+    case .authentication:
+        return "Authentication is unavailable or needs to be refreshed."
+    case .network:
+        return "A network request failed before the operation could complete."
+    case .api:
+        return "The remote API rejected the operation."
+    case .fileProvider:
+        return "File Provider returned a recoverable provider error."
+    case .listing:
+        return "The remote listing response could not be safely applied."
+    case .snapshot:
+        return "Local sync snapshot state could not be updated safely."
+    case .storage:
+        return "Local storage returned an error."
+    case .validation:
+        return "Input or remote state failed validation."
+    case .mutationConflict:
+        return "The remote item changed before the local mutation could be applied."
+    case .unknown:
+        return "An unexpected provider error occurred."
+    }
 }
 
 private func staleMutationVersionError() -> Error {

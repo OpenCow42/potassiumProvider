@@ -22,14 +22,16 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let cursor = FileProviderPageCodec.cursor(from: page)
         FileProviderLog.enumeration.debug("enumerateItems start container(\(self.containerItemIdentifier.rawValue, privacy: .public)) kind(\(self.snapshotContainerIdentifier, privacy: .public)) cursorPresent(\(cursor != nil, privacy: .public))")
         Task {
+            var runtime: FileProviderRuntime?
             do {
-                let runtime = try await FileProviderRuntime.load(domain: self.domain)
-                let itemPage = try await self.listItems(runtime: runtime, startingAt: page)
-                observer.didEnumerate(itemPage.items.map { FileProviderItem(remoteItem: $0, rootFileID: runtime.configuration.rootFileID) })
-                FileProviderLog.enumeration.info("enumerateItems success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) count(\(itemPage.items.count, privacy: .public)) nextCursorPresent(\(itemPage.nextCursor != nil, privacy: .public)) driveID(\(runtime.configuration.driveID, privacy: .public))")
+                let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
+                runtime = loadedRuntime
+                let itemPage = try await self.listItems(runtime: loadedRuntime, startingAt: page)
+                observer.didEnumerate(itemPage.items.map { FileProviderItem(remoteItem: $0, rootFileID: loadedRuntime.configuration.rootFileID) })
+                FileProviderLog.enumeration.info("enumerateItems success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) count(\(itemPage.items.count, privacy: .public)) nextCursorPresent(\(itemPage.nextCursor != nil, privacy: .public)) driveID(\(loadedRuntime.configuration.driveID, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
                     kind: .enumeration,
-                    runtime: runtime,
+                    runtime: loadedRuntime,
                     itemIdentifier: self.containerItemIdentifier.rawValue,
                     itemName: nil,
                     itemPath: nil,
@@ -37,7 +39,12 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 )
                 observer.finishEnumerating(upTo: FileProviderPageCodec.page(from: itemPage.nextCursor))
             } catch {
-                let mappedError = providerError(error)
+                let mappedError = await self.recordFailure(
+                    error,
+                    runtime: runtime,
+                    kind: .enumeration,
+                    summary: "enumerate folder items."
+                )
                 FileProviderLog.enumeration.error("enumerateItems failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(mappedError.localizedDescription, privacy: .public)")
                 observer.finishEnumeratingWithError(mappedError)
             }
@@ -46,8 +53,12 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
         Task {
+            var domainIdentifier = domain.identifier.rawValue
+            var driveID = 0
             do {
                 let configuration = try await FileProviderRuntime.loadConfiguration(domain: domain)
+                domainIdentifier = configuration.domainIdentifier
+                driveID = configuration.driveID
                 let snapshotStore = try FileProviderRuntime.makeSnapshotStore()
                 let snapshot = try await snapshotStore.snapshot(
                     domainIdentifier: configuration.domainIdentifier,
@@ -68,7 +79,21 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
                 }
             } catch {
-                FileProviderLog.enumeration.error("currentSyncAnchor failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                let mapping = providerErrorMapping(error)
+                if shouldRecordGenericFailure(for: error) {
+                    await ProviderEventRecorder.recordFailure(
+                        kind: .syncAnchor,
+                        eventStore: FileProviderRuntime.makeEventStore(),
+                        domainIdentifier: domainIdentifier,
+                        driveID: driveID,
+                        itemIdentifier: self.containerItemIdentifier.rawValue,
+                        itemName: nil,
+                        itemPath: nil,
+                        summary: "Could not read the current sync anchor.",
+                        diagnostic: mapping.diagnostic
+                    )
+                }
+                FileProviderLog.enumeration.error("currentSyncAnchor failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(mapping.mappedError.localizedDescription, privacy: .public)")
                 completionHandler(nil)
             }
         }
@@ -78,38 +103,40 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let requestedAnchor = FileProviderPageCodec.anchorString(from: anchor)
         FileProviderLog.enumeration.debug("enumerateChanges start container(\(self.containerItemIdentifier.rawValue, privacy: .public)) requestedAnchorPresent(\(requestedAnchor != nil, privacy: .public))")
         Task {
+            var runtime: FileProviderRuntime?
             do {
-                let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
+                runtime = loadedRuntime
                 if self.usesAdvancedListing {
                     try await self.enumerateAdvancedChanges(
                         for: observer,
-                        runtime: runtime,
+                        runtime: loadedRuntime,
                         requestedCursor: requestedAnchor
                     )
                     return
                 }
 
-                let oldSnapshot = try await runtime.snapshotStore.snapshot(
-                    domainIdentifier: runtime.configuration.domainIdentifier,
+                let oldSnapshot = try await loadedRuntime.snapshotStore.snapshot(
+                    domainIdentifier: loadedRuntime.configuration.domainIdentifier,
                     containerIdentifier: self.snapshotContainerIdentifier
                 )
                 let baselineSnapshot = oldSnapshot?.anchor == requestedAnchor ? oldSnapshot : nil
                 let saveCondition = self.saveCondition(replacing: oldSnapshot)
                 FileProviderLog.enumeration.debug("enumerateChanges baseline container(\(self.containerItemIdentifier.rawValue, privacy: .public)) oldSnapshotPresent(\(oldSnapshot != nil, privacy: .public)) anchorMatched(\(baselineSnapshot != nil, privacy: .public))")
-                let newSnapshot = KDriveSnapshot(items: try await self.listAllItems(runtime: runtime))
+                let newSnapshot = KDriveSnapshot(items: try await self.listAllItems(runtime: loadedRuntime))
                 let changes = KDriveSnapshotDiffer.changes(from: baselineSnapshot, to: newSnapshot)
 
-                try await runtime.snapshotStore.save(
+                try await loadedRuntime.snapshotStore.save(
                     newSnapshot,
-                    domainIdentifier: runtime.configuration.domainIdentifier,
+                    domainIdentifier: loadedRuntime.configuration.domainIdentifier,
                     containerIdentifier: self.snapshotContainerIdentifier,
                     condition: saveCondition
                 )
-                self.emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
+                self.emit(changes, to: observer, rootFileID: loadedRuntime.configuration.rootFileID)
                 FileProviderLog.enumeration.info("enumerateChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(changes.updatedItems.count, privacy: .public)) deleted(\(changes.deletedItemIDs.count, privacy: .public)) total(\(newSnapshot.items.count, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
                     kind: .changeSync,
-                    runtime: runtime,
+                    runtime: loadedRuntime,
                     itemIdentifier: self.containerItemIdentifier.rawValue,
                     itemName: nil,
                     itemPath: nil,
@@ -117,7 +144,12 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 )
                 observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newSnapshot.anchor), moreComing: false)
             } catch {
-                let mappedError = providerError(error)
+                let mappedError = await self.recordFailure(
+                    error,
+                    runtime: runtime,
+                    kind: .changeSync,
+                    summary: "enumerate folder changes."
+                )
                 FileProviderLog.enumeration.error("enumerateChanges failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(mappedError.localizedDescription, privacy: .public)")
                 observer.finishEnumeratingWithError(mappedError)
             }
@@ -150,6 +182,43 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         default:
             return containerItemIdentifier.rawValue
         }
+    }
+
+    private func recordFailure(
+        _ error: Error,
+        runtime: FileProviderRuntime?,
+        kind: KDriveProviderActivityKind,
+        summary: String
+    ) async -> Error {
+        let mapping = providerErrorMapping(error)
+        guard shouldRecordGenericFailure(for: error) else {
+            return mapping.mappedError
+        }
+
+        if let runtime {
+            await ProviderEventRecorder.recordFailure(
+                kind: kind,
+                runtime: runtime,
+                itemIdentifier: containerItemIdentifier.rawValue,
+                itemName: nil,
+                itemPath: nil,
+                summary: "Could not \(summary)",
+                diagnostic: mapping.diagnostic
+            )
+        } else {
+            await ProviderEventRecorder.recordFailure(
+                kind: providerActivityKindForRuntimeLoadFailure(error),
+                eventStore: FileProviderRuntime.makeEventStore(),
+                domainIdentifier: domain.identifier.rawValue,
+                itemIdentifier: containerItemIdentifier.rawValue,
+                itemName: nil,
+                itemPath: nil,
+                summary: "Could not load File Provider runtime to \(summary)",
+                diagnostic: mapping.diagnostic
+            )
+        }
+
+        return mapping.mappedError
     }
 
     private func listItems(runtime: FileProviderRuntime, startingAt page: NSFileProviderPage) async throws -> KDriveItemPage {

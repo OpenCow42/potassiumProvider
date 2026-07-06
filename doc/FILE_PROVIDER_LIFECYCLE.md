@@ -15,7 +15,8 @@ Most callbacks begin by loading `FileProviderRuntime`:
 5. Open `KDriveSnapshotSQLiteStore`.
 
 If configuration or credentials are missing, the callback fails with a mapped
-File Provider error.
+File Provider error. Runtime-loading and authentication failures are also
+recorded as sanitized failure activity when the activity database can be opened.
 
 ## `item(for:)`
 
@@ -111,3 +112,21 @@ state. See [Listing And Versioning](LISTING_AND_VERSIONING.md).
 `providerError(...)` preserves existing `NSFileProviderError` values, maps URL
 errors to `.serverUnreachable`, preserves Cocoa/File Provider errors, and wraps
 unexpected errors as an XPC reply invalid error.
+
+The extension uses the same mapping decision to create a sanitized activity
+diagnostic. File Provider callback behavior stays unchanged: recording failures
+is best-effort, database write errors are sent only to `OSLog`, and the original
+mapped callback error is still returned to the system.
+
+Generic failure activity is recorded at File Provider callback boundaries:
+
+- metadata lookups
+- content fetches
+- creates, modifies, trashes, and deletes
+- item enumeration, change enumeration, and sync-anchor lookup
+- thumbnail requests
+- runtime loading, snapshot invalidation, and enumerator signaling
+
+Cancellations are not recorded as failures. Conflict-specific failures that
+already have `conflict_events` rows, such as stale mutation blocks and failed
+conflict-copy uploads, are not duplicated as generic failure activity.

@@ -203,8 +203,14 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   resolved.
 - File links are resolved at display time from stored domain and item
   identifiers through `NSFileProviderManager.getUserVisibleURL(for:)`.
+- The default view shows conflicts and recent non-conflict failure activity.
 - The Last Activity toggle adds recent successful provider activity from the
   database, including enumeration/change sync and major item operations.
+- Failure rows store sanitized diagnostics such as category, severity, mapped
+  provider error code, underlying error domain/code, recovery suggestion, and a
+  short diagnostic summary. They do not store tokens or raw response bodies.
+- App setup and domain-management failures are app-scoped rows. They are shown
+  as app activity and do not attempt File Provider item-link resolution.
 - The tab observes database changes with SQLite.swift's `updateHook` for its
   own connection and SQLite `PRAGMA data_version` polling for writes committed
   by the File Provider extension's separate connection.

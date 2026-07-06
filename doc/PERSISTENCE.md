@@ -12,7 +12,7 @@ Current app group contents:
 
 - `DomainConfigurations/*.json`
 - `Snapshots.sqlite3`, including listing snapshots, conflict events, and recent
-  provider activity
+  provider/app activity
 - `ConflictStaging/*.upload` while a stale-content conflict copy is being sent
 
 ## DomainConfigurations
@@ -107,14 +107,27 @@ versions are rebuilt from kDrive instead of reused for later mutations.
 - `domainIdentifier`
 - `driveID`
 - `kind`
+- `scope`
+- `outcome`
+- `severity`
 - `itemIdentifier`
 - `itemName`
 - `itemPath`
 - `summary`
 - `relatedConflictID`
+- `errorCategory`
+- `providerErrorCode`
+- `underlyingErrorDomain`
+- `underlyingErrorCode`
+- `recoverySuggestion`
+- `diagnosticSummary`
 
 Conflict and activity tables are indexed by domain and event date. Activity rows
-are also indexed by related conflict ID.
+are also indexed by related conflict ID and outcome.
+
+Activity rows support both domain-scoped provider events and app-scoped setup
+events. App-scoped rows use `ProviderConstants.appActivityDomainIdentifier` and
+`driveID = 0`, so domain cleanup does not remove app-level failures.
 
 ## What Is Cached
 
@@ -130,6 +143,7 @@ SQLite caches metadata needed to enumerate and diff containers:
 - whether the container has been fully enumerated
 - conflict/audit metadata needed by the app's Activities tab
 - recent successful provider activity needed by the app's activity timeline
+- recent sanitized provider/app failures needed by the app's activity timeline
 
 Fully enumerated normal-folder snapshots can be served directly from SQLite on a
 future initial enumeration.
@@ -155,8 +169,11 @@ upload succeeds and is retained if the conflict upload fails, so the bytes are
 not lost merely because the File Provider temporary URL disappears.
 
 Conflict and activity rows may store local filenames, File Provider item
-identifiers, kDrive file paths returned by the API, and relative staged-upload
-paths. They do not store OAuth tokens, file bytes, or generated web links.
+identifiers, kDrive file paths returned by the API, relative staged-upload
+paths, sanitized error categories, numeric error codes, recovery suggestions,
+and short diagnostic summaries. They do not store OAuth tokens, raw API response
+bodies, file bytes, private URLs, bearer-bearing request data, or generated web
+links.
 
 ## Snapshot Replacement
 

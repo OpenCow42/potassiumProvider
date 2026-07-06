@@ -6,6 +6,7 @@ public enum ProviderConstants {
     public static let keychainService = "net.weavee.potassiumProvider.kDrive"
     public static let keychainAccount = "oauthToken"
     public static let logSubsystem = "net.weavee.potassiumProvider"
+    public static let appActivityDomainIdentifier = "__potassiumProvider_app__"
     public static let oauthCallbackScheme = "com.infomaniak.drive"
     public static let oauthRedirectURI = URL(string: "com.infomaniak.drive://oauth2redirect")!
     public static let oauthClientID = "9473D73C-C20F-4971-9E10-D957C563FA68"

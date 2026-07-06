@@ -17,12 +17,73 @@ public enum KDriveConflictResolutionKind: String, Codable, Equatable, Sendable {
 public enum KDriveProviderActivityKind: String, Codable, Equatable, Sendable {
     case enumeration
     case changeSync
+    case syncAnchor
     case fetchContents
+    case metadataLookup
     case create
     case modify
     case trash
     case delete
     case conflict
+    case thumbnail
+    case runtimeLoading
+    case authentication
+    case driveDiscovery
+    case domainManagement
+}
+
+public enum KDriveProviderActivityScope: String, Codable, Equatable, Sendable {
+    case domain
+    case app
+}
+
+public enum KDriveProviderActivityOutcome: String, Codable, Equatable, Sendable {
+    case success
+    case failure
+}
+
+public enum KDriveProviderActivitySeverity: String, Codable, Equatable, Sendable {
+    case info
+    case warning
+    case error
+}
+
+public enum KDriveProviderActivityErrorCategory: String, Codable, Equatable, Sendable {
+    case authentication
+    case network
+    case api
+    case fileProvider
+    case listing
+    case snapshot
+    case storage
+    case validation
+    case mutationConflict
+    case unknown
+}
+
+public struct KDriveProviderActivityErrorDiagnostic: Codable, Equatable, Sendable {
+    public var errorCategory: KDriveProviderActivityErrorCategory
+    public var providerErrorCode: Int?
+    public var underlyingErrorDomain: String?
+    public var underlyingErrorCode: Int?
+    public var recoverySuggestion: String?
+    public var diagnosticSummary: String?
+
+    public init(
+        errorCategory: KDriveProviderActivityErrorCategory,
+        providerErrorCode: Int? = nil,
+        underlyingErrorDomain: String? = nil,
+        underlyingErrorCode: Int? = nil,
+        recoverySuggestion: String? = nil,
+        diagnosticSummary: String? = nil
+    ) {
+        self.errorCategory = errorCategory
+        self.providerErrorCode = providerErrorCode
+        self.underlyingErrorDomain = underlyingErrorDomain
+        self.underlyingErrorCode = underlyingErrorCode
+        self.recoverySuggestion = recoverySuggestion
+        self.diagnosticSummary = diagnosticSummary
+    }
 }
 
 public struct KDriveConflictEvent: Identifiable, Codable, Equatable, Sendable {
@@ -89,11 +150,20 @@ public struct KDriveProviderActivityEvent: Identifiable, Codable, Equatable, Sen
     public var domainIdentifier: String
     public var driveID: Int
     public var kind: KDriveProviderActivityKind
+    public var scope: KDriveProviderActivityScope
+    public var outcome: KDriveProviderActivityOutcome
+    public var severity: KDriveProviderActivitySeverity
     public var itemIdentifier: String?
     public var itemName: String?
     public var itemPath: String?
     public var summary: String
     public var relatedConflictID: UUID?
+    public var errorCategory: KDriveProviderActivityErrorCategory?
+    public var providerErrorCode: Int?
+    public var underlyingErrorDomain: String?
+    public var underlyingErrorCode: Int?
+    public var recoverySuggestion: String?
+    public var diagnosticSummary: String?
 
     public init(
         id: UUID = UUID(),
@@ -101,22 +171,35 @@ public struct KDriveProviderActivityEvent: Identifiable, Codable, Equatable, Sen
         domainIdentifier: String,
         driveID: Int,
         kind: KDriveProviderActivityKind,
+        scope: KDriveProviderActivityScope = .domain,
+        outcome: KDriveProviderActivityOutcome = .success,
+        severity: KDriveProviderActivitySeverity = .info,
         itemIdentifier: String?,
         itemName: String?,
         itemPath: String?,
         summary: String,
-        relatedConflictID: UUID? = nil
+        relatedConflictID: UUID? = nil,
+        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil
     ) {
         self.id = id
         self.occurredAt = occurredAt
         self.domainIdentifier = domainIdentifier
         self.driveID = driveID
         self.kind = kind
+        self.scope = scope
+        self.outcome = outcome
+        self.severity = severity
         self.itemIdentifier = itemIdentifier
         self.itemName = itemName
         self.itemPath = itemPath
         self.summary = summary
         self.relatedConflictID = relatedConflictID
+        self.errorCategory = diagnostic?.errorCategory
+        self.providerErrorCode = diagnostic?.providerErrorCode
+        self.underlyingErrorDomain = diagnostic?.underlyingErrorDomain
+        self.underlyingErrorCode = diagnostic?.underlyingErrorCode
+        self.recoverySuggestion = diagnostic?.recoverySuggestion
+        self.diagnosticSummary = diagnostic?.diagnosticSummary
     }
 }
 
@@ -125,6 +208,7 @@ public protocol KDriveProviderEventStoring: Sendable {
     func recordActivity(_ event: KDriveProviderActivityEvent) async throws
     func recentConflicts(domainIdentifier: String?, limit: Int) async throws -> [KDriveConflictEvent]
     func recentActivity(domainIdentifier: String?, limit: Int) async throws -> [KDriveProviderActivityEvent]
+    func recentActivity(domainIdentifier: String?, outcome: KDriveProviderActivityOutcome?, limit: Int) async throws -> [KDriveProviderActivityEvent]
     func removeEvents(domainIdentifier: String) async throws
 }
 
@@ -183,20 +267,25 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
     }
 
     public func recentActivity(domainIdentifier: String?, limit: Int = 100) throws -> [KDriveProviderActivityEvent] {
+        try recentActivity(domainIdentifier: domainIdentifier, outcome: nil, limit: limit)
+    }
+
+    public func recentActivity(
+        domainIdentifier: String?,
+        outcome: KDriveProviderActivityOutcome?,
+        limit: Int = 100
+    ) throws -> [KDriveProviderActivityEvent] {
         let rowLimit = max(0, limit)
-        let query: Table
+        var query = ProviderEventSchema.activityEvents
         if let domainIdentifier {
-            query = ProviderEventSchema.activityEvents
-                .filter(ProviderEventSchema.domainIdentifier == domainIdentifier)
-                .order(ProviderEventSchema.occurredAt.desc)
-                .limit(rowLimit)
-        } else {
-            query = ProviderEventSchema.activityEvents
-                .order(ProviderEventSchema.occurredAt.desc)
-                .limit(rowLimit)
+            query = query.filter(ProviderEventSchema.domainIdentifier == domainIdentifier)
+        }
+        if let outcome {
+            query = query.filter(ProviderEventSchema.outcome == outcome.rawValue)
         }
 
-        return try database.prepare(query).map(Self.activityEvent(from:))
+        return try database.prepare(query.order(ProviderEventSchema.occurredAt.desc).limit(rowLimit))
+            .map(Self.activityEvent(from:))
     }
 
     public func removeEvents(domainIdentifier: String) throws {
@@ -247,18 +336,52 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
             table.column(ProviderEventSchema.domainIdentifier)
             table.column(ProviderEventSchema.driveID)
             table.column(ProviderEventSchema.kind)
+            table.column(ProviderEventSchema.scope)
+            table.column(ProviderEventSchema.outcome)
+            table.column(ProviderEventSchema.severity)
             table.column(ProviderEventSchema.itemIdentifier)
             table.column(ProviderEventSchema.itemName)
             table.column(ProviderEventSchema.itemPath)
             table.column(ProviderEventSchema.summary)
             table.column(ProviderEventSchema.relatedConflictID)
+            table.column(ProviderEventSchema.errorCategory)
+            table.column(ProviderEventSchema.providerErrorCode)
+            table.column(ProviderEventSchema.underlyingErrorDomain)
+            table.column(ProviderEventSchema.underlyingErrorCode)
+            table.column(ProviderEventSchema.recoverySuggestion)
+            table.column(ProviderEventSchema.diagnosticSummary)
         })
+        try migrateActivityEvents(on: database)
 
         try database.execute("CREATE INDEX IF NOT EXISTS conflict_events_domainIdentifier_idx ON conflict_events(domainIdentifier)")
         try database.execute("CREATE INDEX IF NOT EXISTS conflict_events_detectedAt_idx ON conflict_events(detectedAt)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_domainIdentifier_idx ON provider_activity_events(domainIdentifier)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_occurredAt_idx ON provider_activity_events(occurredAt)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_relatedConflictID_idx ON provider_activity_events(relatedConflictID)")
+        try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_outcome_idx ON provider_activity_events(outcome)")
+    }
+
+    private static func migrateActivityEvents(on database: Connection) throws {
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN scope TEXT NOT NULL DEFAULT 'domain'")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN errorCategory TEXT")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN providerErrorCode INTEGER")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN underlyingErrorDomain TEXT")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN underlyingErrorCode INTEGER")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN recoverySuggestion TEXT")
+        try addActivityColumnIfMissing(on: database, sql: "ALTER TABLE provider_activity_events ADD COLUMN diagnosticSummary TEXT")
+    }
+
+    private static func addActivityColumnIfMissing(on database: Connection, sql: String) throws {
+        do {
+            try database.execute(sql)
+        } catch {
+            let description = "\(error.localizedDescription) \(String(describing: error))"
+            guard description.localizedCaseInsensitiveContains("duplicate column name") else {
+                throw error
+            }
+        }
     }
 
     static func removeEvents(on database: Connection, domainIdentifier: String) throws {
@@ -358,11 +481,20 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
             ProviderEventSchema.domainIdentifier <- event.domainIdentifier,
             ProviderEventSchema.driveID <- event.driveID,
             ProviderEventSchema.kind <- event.kind.rawValue,
+            ProviderEventSchema.scope <- event.scope.rawValue,
+            ProviderEventSchema.outcome <- event.outcome.rawValue,
+            ProviderEventSchema.severity <- event.severity.rawValue,
             ProviderEventSchema.itemIdentifier <- event.itemIdentifier,
             ProviderEventSchema.itemName <- event.itemName,
             ProviderEventSchema.itemPath <- event.itemPath,
             ProviderEventSchema.summary <- event.summary,
             ProviderEventSchema.relatedConflictID <- event.relatedConflictID?.uuidString,
+            ProviderEventSchema.errorCategory <- event.errorCategory?.rawValue,
+            ProviderEventSchema.providerErrorCode <- event.providerErrorCode,
+            ProviderEventSchema.underlyingErrorDomain <- event.underlyingErrorDomain,
+            ProviderEventSchema.underlyingErrorCode <- event.underlyingErrorCode,
+            ProviderEventSchema.recoverySuggestion <- event.recoverySuggestion,
+            ProviderEventSchema.diagnosticSummary <- event.diagnosticSummary,
         ]
     }
 
@@ -395,11 +527,26 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
             domainIdentifier: row[ProviderEventSchema.domainIdentifier],
             driveID: row[ProviderEventSchema.driveID],
             kind: KDriveProviderActivityKind(rawValue: row[ProviderEventSchema.kind]) ?? .conflict,
+            scope: KDriveProviderActivityScope(rawValue: row[ProviderEventSchema.scope]) ?? .domain,
+            outcome: KDriveProviderActivityOutcome(rawValue: row[ProviderEventSchema.outcome]) ?? .success,
+            severity: KDriveProviderActivitySeverity(rawValue: row[ProviderEventSchema.severity]) ?? .info,
             itemIdentifier: row[ProviderEventSchema.itemIdentifier],
             itemName: row[ProviderEventSchema.itemName],
             itemPath: row[ProviderEventSchema.itemPath],
             summary: row[ProviderEventSchema.summary],
-            relatedConflictID: row[ProviderEventSchema.relatedConflictID].flatMap(UUID.init(uuidString:))
+            relatedConflictID: row[ProviderEventSchema.relatedConflictID].flatMap(UUID.init(uuidString:)),
+            diagnostic: row[ProviderEventSchema.errorCategory].flatMap { category in
+                KDriveProviderActivityErrorCategory(rawValue: category).map {
+                    KDriveProviderActivityErrorDiagnostic(
+                        errorCategory: $0,
+                        providerErrorCode: row[ProviderEventSchema.providerErrorCode],
+                        underlyingErrorDomain: row[ProviderEventSchema.underlyingErrorDomain],
+                        underlyingErrorCode: row[ProviderEventSchema.underlyingErrorCode],
+                        recoverySuggestion: row[ProviderEventSchema.recoverySuggestion],
+                        diagnosticSummary: row[ProviderEventSchema.diagnosticSummary]
+                    )
+                }
+            }
         )
     }
 }
@@ -417,6 +564,9 @@ private enum ProviderEventSchema {
     static let driveID = Expression<Int>("driveID")
     static let operation = Expression<String>("operation")
     static let kind = Expression<String>("kind")
+    static let scope = Expression<String>("scope")
+    static let outcome = Expression<String>("outcome")
+    static let severity = Expression<String>("severity")
     static let originalItemIdentifier = Expression<String?>("originalItemIdentifier")
     static let originalItemName = Expression<String?>("originalItemName")
     static let originalItemPath = Expression<String?>("originalItemPath")
@@ -433,4 +583,10 @@ private enum ProviderEventSchema {
     static let itemPath = Expression<String?>("itemPath")
     static let summary = Expression<String>("summary")
     static let relatedConflictID = Expression<String?>("relatedConflictID")
+    static let errorCategory = Expression<String?>("errorCategory")
+    static let providerErrorCode = Expression<Int?>("providerErrorCode")
+    static let underlyingErrorDomain = Expression<String?>("underlyingErrorDomain")
+    static let underlyingErrorCode = Expression<Int?>("underlyingErrorCode")
+    static let recoverySuggestion = Expression<String?>("recoverySuggestion")
+    static let diagnosticSummary = Expression<String?>("diagnosticSummary")
 }

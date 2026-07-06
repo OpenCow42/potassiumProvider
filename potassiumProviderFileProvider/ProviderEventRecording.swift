@@ -31,19 +31,107 @@ enum ProviderEventRecorder {
         itemName: String?,
         itemPath: String?,
         summary: String,
-        relatedConflictID: UUID? = nil
+        relatedConflictID: UUID? = nil,
+        outcome: KDriveProviderActivityOutcome = .success,
+        severity: KDriveProviderActivitySeverity = .info,
+        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil
     ) async {
-        guard let eventStore = runtime.eventStore else { return }
+        await recordActivity(
+            kind: kind,
+            eventStore: runtime.eventStore,
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            driveID: runtime.configuration.driveID,
+            scope: .domain,
+            itemIdentifier: itemIdentifier,
+            itemName: itemName,
+            itemPath: itemPath,
+            summary: summary,
+            relatedConflictID: relatedConflictID,
+            outcome: outcome,
+            severity: severity,
+            diagnostic: diagnostic
+        )
+    }
+
+    static func recordFailure(
+        kind: KDriveProviderActivityKind,
+        runtime: FileProviderRuntime,
+        itemIdentifier: String?,
+        itemName: String?,
+        itemPath: String?,
+        summary: String,
+        diagnostic: KDriveProviderActivityErrorDiagnostic
+    ) async {
+        await recordActivity(
+            kind: kind,
+            runtime: runtime,
+            itemIdentifier: itemIdentifier,
+            itemName: itemName,
+            itemPath: itemPath,
+            summary: summary,
+            outcome: .failure,
+            severity: .error,
+            diagnostic: diagnostic
+        )
+    }
+
+    static func recordFailure(
+        kind: KDriveProviderActivityKind,
+        eventStore: (any KDriveProviderEventStoring)?,
+        domainIdentifier: String,
+        driveID: Int = 0,
+        itemIdentifier: String?,
+        itemName: String?,
+        itemPath: String?,
+        summary: String,
+        diagnostic: KDriveProviderActivityErrorDiagnostic
+    ) async {
+        await recordActivity(
+            kind: kind,
+            eventStore: eventStore,
+            domainIdentifier: domainIdentifier,
+            driveID: driveID,
+            scope: .domain,
+            itemIdentifier: itemIdentifier,
+            itemName: itemName,
+            itemPath: itemPath,
+            summary: summary,
+            outcome: .failure,
+            severity: .error,
+            diagnostic: diagnostic
+        )
+    }
+
+    private static func recordActivity(
+        kind: KDriveProviderActivityKind,
+        eventStore: (any KDriveProviderEventStoring)?,
+        domainIdentifier: String,
+        driveID: Int,
+        scope: KDriveProviderActivityScope,
+        itemIdentifier: String?,
+        itemName: String?,
+        itemPath: String?,
+        summary: String,
+        relatedConflictID: UUID? = nil,
+        outcome: KDriveProviderActivityOutcome,
+        severity: KDriveProviderActivitySeverity,
+        diagnostic: KDriveProviderActivityErrorDiagnostic?
+    ) async {
+        guard let eventStore else { return }
         do {
             try await eventStore.recordActivity(KDriveProviderActivityEvent(
-                domainIdentifier: runtime.configuration.domainIdentifier,
-                driveID: runtime.configuration.driveID,
+                domainIdentifier: domainIdentifier,
+                driveID: driveID,
                 kind: kind,
+                scope: scope,
+                outcome: outcome,
+                severity: severity,
                 itemIdentifier: itemIdentifier,
                 itemName: itemName,
                 itemPath: itemPath,
                 summary: summary,
-                relatedConflictID: relatedConflictID
+                relatedConflictID: relatedConflictID,
+                diagnostic: diagnostic
             ))
         } catch {
             FileProviderLog.runtime.error("failed to save provider activity event: \(error.localizedDescription, privacy: .public)")

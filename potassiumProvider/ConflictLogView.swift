@@ -33,7 +33,7 @@ struct ConflictLogView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Section(model.showsActivity ? "Timeline" : "Conflict Activity") {
+                    Section(model.showsActivity ? "Timeline" : "Conflict and Failure Activity") {
                         ForEach(model.timelineItems) { item in
                             switch item {
                             case .conflict(let event):
@@ -113,15 +113,12 @@ final class ConflictLogViewModel: ObservableObject {
     }
 
     var timelineItems: [ConflictTimelineItem] {
-        if showsActivity {
-            let conflictItems = conflicts.map(ConflictTimelineItem.conflict)
-            let activityItems = activity
-                .filter { $0.relatedConflictID == nil }
-                .map(ConflictTimelineItem.activity)
-            return (conflictItems + activityItems).sorted { $0.date > $1.date }
-        }
-
-        return conflicts.map(ConflictTimelineItem.conflict)
+        let conflictItems = conflicts.map(ConflictTimelineItem.conflict)
+        let activityItems = activity
+            .filter { $0.relatedConflictID == nil }
+            .filter { showsActivity || $0.outcome == .failure }
+            .map(ConflictTimelineItem.activity)
+        return (conflictItems + activityItems).sorted { $0.date > $1.date }
     }
 
     func load() async {
@@ -137,9 +134,11 @@ final class ConflictLogViewModel: ObservableObject {
 
         do {
             conflicts = try await eventStore.recentConflicts(domainIdentifier: nil, limit: 100)
-            activity = showsActivity
-                ? try await eventStore.recentActivity(domainIdentifier: nil, limit: 100)
-                : []
+            activity = try await eventStore.recentActivity(
+                domainIdentifier: nil,
+                outcome: showsActivity ? nil : .failure,
+                limit: 100
+            )
             errorMessage = nil
         } catch {
             errorMessage = "Could not load activity events: \(error.localizedDescription)"
@@ -233,7 +232,7 @@ private struct ActivityEventRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Label(event.kind.displayName, systemImage: event.kind.systemImage)
+                Label(title, systemImage: event.outcome.systemImage(for: event.kind))
                     .font(.headline)
                 Spacer()
                 Text(event.occurredAt, format: .dateTime.month().day().hour().minute())
@@ -244,14 +243,66 @@ private struct ActivityEventRow: View {
             Text(event.summary)
                 .font(.subheadline)
 
-            ProviderItemLink(
-                domainIdentifier: event.domainIdentifier,
-                itemIdentifier: event.itemIdentifier,
-                title: event.itemName ?? event.itemIdentifier ?? "Open item",
-                fallbackDetail: event.itemPath
-            )
+            if event.outcome == .failure {
+                HStack(spacing: 12) {
+                    Label(event.kind.displayName, systemImage: event.kind.systemImage)
+                    if let errorCategory = event.errorCategory {
+                        Label(errorCategory.displayName, systemImage: "tag")
+                    }
+                    if let diagnosticCode {
+                        Label(diagnosticCode, systemImage: "number")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if let recoverySuggestion = event.recoverySuggestion, recoverySuggestion.isEmpty == false {
+                    Text(recoverySuggestion)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let diagnosticSummary = event.diagnosticSummary, diagnosticSummary.isEmpty == false {
+                    Text(diagnosticSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if event.scope == .domain {
+                ProviderItemLink(
+                    domainIdentifier: event.domainIdentifier,
+                    itemIdentifier: event.itemIdentifier,
+                    title: event.itemName ?? event.itemIdentifier ?? "Open item",
+                    fallbackDetail: event.itemPath
+                )
+            } else {
+                Label("App", systemImage: "app")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    private var title: String {
+        switch event.outcome {
+        case .success:
+            return event.kind.displayName
+        case .failure:
+            return "Failed \(event.kind.displayName.lowercased())"
+        }
+    }
+
+    private var diagnosticCode: String? {
+        if let providerErrorCode = event.providerErrorCode {
+            return "Provider \(providerErrorCode)"
+        }
+        if let underlyingErrorDomain = event.underlyingErrorDomain,
+           let underlyingErrorCode = event.underlyingErrorCode {
+            return "\(underlyingErrorDomain) \(underlyingErrorCode)"
+        }
+        return nil
     }
 }
 
@@ -314,8 +365,12 @@ private extension KDriveProviderActivityKind {
             return "Enumeration"
         case .changeSync:
             return "Change Sync"
+        case .syncAnchor:
+            return "Sync Anchor"
         case .fetchContents:
             return "Fetch"
+        case .metadataLookup:
+            return "Metadata Lookup"
         case .create:
             return "Create"
         case .modify:
@@ -326,6 +381,16 @@ private extension KDriveProviderActivityKind {
             return "Delete"
         case .conflict:
             return "Conflict"
+        case .thumbnail:
+            return "Thumbnail"
+        case .runtimeLoading:
+            return "Runtime Loading"
+        case .authentication:
+            return "Authentication"
+        case .driveDiscovery:
+            return "Drive Discovery"
+        case .domainManagement:
+            return "Domain Management"
         }
     }
 
@@ -335,8 +400,12 @@ private extension KDriveProviderActivityKind {
             return "list.bullet.rectangle"
         case .changeSync:
             return "arrow.triangle.2.circlepath"
+        case .syncAnchor:
+            return "link"
         case .fetchContents:
             return "arrow.down.doc"
+        case .metadataLookup:
+            return "doc.text.magnifyingglass"
         case .create:
             return "plus"
         case .modify:
@@ -347,6 +416,54 @@ private extension KDriveProviderActivityKind {
             return "xmark.bin"
         case .conflict:
             return "exclamationmark.triangle"
+        case .thumbnail:
+            return "photo"
+        case .runtimeLoading:
+            return "gearshape"
+        case .authentication:
+            return "person.crop.circle.badge.exclamationmark"
+        case .driveDiscovery:
+            return "externaldrive.badge.questionmark"
+        case .domainManagement:
+            return "folder.badge.gearshape"
+        }
+    }
+}
+
+private extension KDriveProviderActivityOutcome {
+    func systemImage(for kind: KDriveProviderActivityKind) -> String {
+        switch self {
+        case .success:
+            return kind.systemImage
+        case .failure:
+            return "exclamationmark.triangle"
+        }
+    }
+}
+
+private extension KDriveProviderActivityErrorCategory {
+    var displayName: String {
+        switch self {
+        case .authentication:
+            return "Authentication"
+        case .network:
+            return "Network"
+        case .api:
+            return "API"
+        case .fileProvider:
+            return "File Provider"
+        case .listing:
+            return "Listing"
+        case .snapshot:
+            return "Snapshot"
+        case .storage:
+            return "Storage"
+        case .validation:
+            return "Validation"
+        case .mutationConflict:
+            return "Conflict"
+        case .unknown:
+            return "Unknown"
         }
     }
 }

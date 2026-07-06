@@ -64,7 +64,14 @@ token exists, it throws `NSFileProviderError.notAuthenticated`. That tells the
 system the provider cannot currently service the request.
 
 Network and API errors are mapped later by `providerError(...)` in the extension
-runtime.
+runtime. The same mapping path records sanitized authentication/runtime failure
+activity when the shared activity database is available.
+
+The app also records sanitized app-scoped authentication failures for OAuth,
+manual-token saving, token deletion, and drive loading. These activity rows can
+include categories and numeric error codes, but must not include bearer tokens,
+refresh tokens, ID tokens, raw API response bodies, or bearer-bearing request
+data.
 
 ## Secret Handling
 
