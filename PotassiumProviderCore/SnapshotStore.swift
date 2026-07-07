@@ -13,6 +13,35 @@ public protocol KDriveSnapshotStoring: Sendable {
     func removeSnapshots(domainIdentifier: String) async throws
 }
 
+public struct KDriveSnapshotDomainStatistics: Equatable, Sendable {
+    public let domainIdentifier: String
+    public let containerCount: Int
+    public let itemCount: Int
+    public let fullyEnumeratedContainerCount: Int
+    public let advancedListingContainerCount: Int
+    public let lastUpdatedAt: Date?
+
+    public init(
+        domainIdentifier: String,
+        containerCount: Int = 0,
+        itemCount: Int = 0,
+        fullyEnumeratedContainerCount: Int = 0,
+        advancedListingContainerCount: Int = 0,
+        lastUpdatedAt: Date? = nil
+    ) {
+        self.domainIdentifier = domainIdentifier
+        self.containerCount = containerCount
+        self.itemCount = itemCount
+        self.fullyEnumeratedContainerCount = fullyEnumeratedContainerCount
+        self.advancedListingContainerCount = advancedListingContainerCount
+        self.lastUpdatedAt = lastUpdatedAt
+    }
+}
+
+public protocol KDriveSnapshotStatisticsProviding: Sendable {
+    func snapshotStatistics(domainIdentifiers: Set<String>) async throws -> [KDriveSnapshotDomainStatistics]
+}
+
 public extension KDriveSnapshotStoring {
     func save(_ snapshot: KDriveSnapshot, domainIdentifier: String, containerIdentifier: String) async throws {
         try await save(

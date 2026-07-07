@@ -153,6 +153,20 @@ Activity rows support both domain-scoped provider events and app-scoped setup
 events. App-scoped rows use `ProviderConstants.appActivityDomainIdentifier` and
 `driveID = 0`, so domain cleanup does not remove app-level failures.
 
+The app reads Status dashboard totals through aggregate protocols implemented by
+the SQLite stores:
+
+- `KDriveSnapshotStatisticsProviding` reports per-domain snapshot container
+  counts, cached item row counts, fully enumerated containers, advanced-listing
+  containers, and the latest snapshot update date.
+- `KDriveProviderEventStatisticsProviding` reports per-domain conflict counts,
+  retained success/failure activity counts, and latest conflict/activity dates.
+
+These aggregate helpers are read-only and use the same sanitized local metadata
+already stored for File Provider enumeration, conflict tracking, and activity
+display. They do not expose OAuth tokens, remote account profile data, private
+links, file bytes, or thumbnail bytes.
+
 ## What Is Cached
 
 SQLite caches metadata needed to enumerate and diff containers:

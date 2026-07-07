@@ -62,6 +62,14 @@ final class PotassiumProviderAppModel: ObservableObject {
         eventStore
     }
 
+    var snapshotStatisticsProvider: (any KDriveSnapshotStatisticsProviding)? {
+        snapshotStore as? any KDriveSnapshotStatisticsProviding
+    }
+
+    var providerEventStatisticsProvider: (any KDriveProviderEventStatisticsProviding)? {
+        eventStore as? any KDriveProviderEventStatisticsProviding
+    }
+
     func account(accountIdentifier: String) -> ProviderAccount? {
         accounts.first { $0.accountIdentifier == accountIdentifier }
     }

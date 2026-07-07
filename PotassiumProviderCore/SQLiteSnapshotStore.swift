@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import SQLite
 
-public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
+public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotStatisticsProviding {
     private let databaseURL: URL
     private let database: Connection
 
@@ -111,6 +111,45 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
         }
     }
 
+    public func snapshotStatistics(domainIdentifiers: Set<String>) throws -> [KDriveSnapshotDomainStatistics] {
+        let requestedDomainIdentifiers = Set(domainIdentifiers.filter { $0.isEmpty == false })
+        guard requestedDomainIdentifiers.isEmpty == false else { return [] }
+
+        var builders = Dictionary(uniqueKeysWithValues: requestedDomainIdentifiers.map {
+            ($0, KDriveSnapshotDomainStatisticsBuilder(domainIdentifier: $0))
+        })
+
+        for row in try database.prepare(Schema.containerSnapshots) {
+            let domainIdentifier = row[Schema.domainIdentifier]
+            guard var builder = builders[domainIdentifier] else { continue }
+
+            builder.containerCount += 1
+            if row[Schema.isFullyEnumerated] {
+                builder.fullyEnumeratedContainerCount += 1
+            }
+            if row[Schema.usesAdvancedListing] {
+                builder.advancedListingContainerCount += 1
+            }
+
+            let updatedAt = Date(timeIntervalSince1970: row[Schema.updatedAt])
+            if builder.lastUpdatedAt.map({ updatedAt > $0 }) ?? true {
+                builder.lastUpdatedAt = updatedAt
+            }
+            builders[domainIdentifier] = builder
+        }
+
+        for row in try database.prepare(Schema.snapshotItems) {
+            let domainIdentifier = row[Schema.domainIdentifier]
+            guard var builder = builders[domainIdentifier] else { continue }
+            builder.itemCount += 1
+            builders[domainIdentifier] = builder
+        }
+
+        return requestedDomainIdentifiers
+            .sorted()
+            .compactMap { builders[$0]?.statistics }
+    }
+
     private func deleteSnapshot(domainIdentifier: String, containerIdentifier: String) throws {
         let filter = Schema.domainIdentifier == domainIdentifier && Schema.containerIdentifier == containerIdentifier
         try database.run(Schema.snapshotItems.filter(filter).delete())
@@ -195,6 +234,26 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring {
             createdAt: row[Schema.createdAt].map { Date(timeIntervalSince1970: $0) },
             modifiedAt: Date(timeIntervalSince1970: row[Schema.modifiedAt]),
             updatedAt: Date(timeIntervalSince1970: row[Schema.itemUpdatedAt])
+        )
+    }
+}
+
+private struct KDriveSnapshotDomainStatisticsBuilder {
+    let domainIdentifier: String
+    var containerCount = 0
+    var itemCount = 0
+    var fullyEnumeratedContainerCount = 0
+    var advancedListingContainerCount = 0
+    var lastUpdatedAt: Date?
+
+    var statistics: KDriveSnapshotDomainStatistics {
+        KDriveSnapshotDomainStatistics(
+            domainIdentifier: domainIdentifier,
+            containerCount: containerCount,
+            itemCount: itemCount,
+            fullyEnumeratedContainerCount: fullyEnumeratedContainerCount,
+            advancedListingContainerCount: advancedListingContainerCount,
+            lastUpdatedAt: lastUpdatedAt
         )
     }
 }

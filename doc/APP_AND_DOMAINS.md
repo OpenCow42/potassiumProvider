@@ -17,12 +17,25 @@ The app handles:
 - building a domain configuration for the selected account and drive
 - registering and removing `NSFileProviderDomain` entries
 - logging out one account without touching other accounts
-- showing configured domains and simple status/error state
+- showing a Status dashboard for configured accounts, drives, cached snapshots,
+  and sanitized provider activity
+- showing Setup for account and drive configuration
 
 On macOS, the app runs as an accessory menu bar app: it hides its Dock icon and
 keeps an atom status item visible while the process is running. Clicking the
 status item reveals the setup window, and right-clicking it opens a menu with a
 close option. Closing the setup window does not quit the app.
+
+The main window has three tabs: Status, Setup, and Activities. Status is the
+first tab and becomes the default once at least one File Provider domain is
+configured. If no drives are configured, the app opens on Setup by default while
+leaving the empty Status dashboard available.
+
+The Status dashboard only uses local/provider-safe state: local account records,
+configured domain records, currently loaded kDrive summaries, SQLite listing
+snapshot aggregates, and sanitized activity/conflict counts. It does not fetch
+remote account profile data, quotas, OAuth token details, private links, or file
+contents.
 
 The app does not enumerate files itself. File listing is handled by the File
 Provider extension after the system asks for an enumerator. Each extension

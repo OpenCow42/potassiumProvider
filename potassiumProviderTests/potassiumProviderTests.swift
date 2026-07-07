@@ -237,6 +237,57 @@ struct PotassiumProviderCoreTests {
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
     }
 
+    @Test func snapshotStoreReportsDomainStatistics() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+
+        try await store.save(
+            KDriveSnapshot(
+                serverCursor: "root-cursor",
+                isFullyEnumerated: true,
+                usesAdvancedListing: true,
+                items: [
+                    makeItem(id: 1, name: "Root.txt"),
+                    makeItem(id: 2, name: "Folder", type: "dir", mimeType: nil),
+                ]
+            ),
+            domainIdentifier: "domain-1",
+            containerIdentifier: "root"
+        )
+        try await store.save(
+            KDriveSnapshot(items: [makeItem(id: 3, name: "Trash.txt")]),
+            domainIdentifier: "domain-1",
+            containerIdentifier: "trash"
+        )
+        try await store.save(
+            KDriveSnapshot(isFullyEnumerated: true, items: [makeItem(id: 4, name: "Other.txt")]),
+            domainIdentifier: "domain-2",
+            containerIdentifier: "root"
+        )
+
+        let statistics = try await store.snapshotStatistics(domainIdentifiers: ["domain-1", "domain-2", "missing-domain"])
+        let statisticsByDomain = Dictionary(uniqueKeysWithValues: statistics.map { ($0.domainIdentifier, $0) })
+
+        let domainOne = try #require(statisticsByDomain["domain-1"])
+        #expect(domainOne.containerCount == 2)
+        #expect(domainOne.itemCount == 3)
+        #expect(domainOne.fullyEnumeratedContainerCount == 1)
+        #expect(domainOne.advancedListingContainerCount == 1)
+        #expect(domainOne.lastUpdatedAt != nil)
+
+        let domainTwo = try #require(statisticsByDomain["domain-2"])
+        #expect(domainTwo.containerCount == 1)
+        #expect(domainTwo.itemCount == 1)
+        #expect(domainTwo.fullyEnumeratedContainerCount == 1)
+
+        let missingDomain = try #require(statisticsByDomain["missing-domain"])
+        #expect(missingDomain.containerCount == 0)
+        #expect(missingDomain.itemCount == 0)
+        #expect(missingDomain.lastUpdatedAt == nil)
+    }
+
     @Test func guardedSnapshotSaveHonorsConditions() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -465,6 +516,109 @@ struct PotassiumProviderCoreTests {
         #expect(try await store.recentActivity(domainIdentifier: "domain-1", limit: 10).isEmpty)
         #expect(try await store.recentConflicts(domainIdentifier: nil, limit: 10).map(\.id) == [otherDomainConflictID])
         #expect(try await store.recentActivity(domainIdentifier: ProviderConstants.appActivityDomainIdentifier, limit: 10).map(\.summary) == ["Could not load kDrives."])
+    }
+
+    @Test func providerEventStoreReportsDomainStatistics() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try KDriveProviderEventSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        var resolvedConflict = makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 100),
+            domainIdentifier: "domain-1",
+            itemName: "Resolved.txt",
+            state: .automaticallyResolved
+        )
+        resolvedConflict.resolvedAt = Date(timeIntervalSince1970: 450)
+
+        try await store.saveConflict(makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-1",
+            itemName: "Unresolved.txt",
+            state: .unresolved
+        ))
+        try await store.saveConflict(makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 300),
+            domainIdentifier: "domain-1",
+            itemName: "Blocked.txt",
+            state: .blockedRetryable
+        ))
+        try await store.saveConflict(makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 400),
+            domainIdentifier: "domain-1",
+            itemName: "Failed.txt",
+            state: .failed
+        ))
+        try await store.saveConflict(resolvedConflict)
+        try await store.saveConflict(makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 500),
+            domainIdentifier: "domain-2",
+            itemName: "Other.txt",
+            state: .unresolved
+        ))
+
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 600),
+            domainIdentifier: "domain-1",
+            kind: .enumeration,
+            summary: "Enumerated folder."
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 700),
+            domainIdentifier: "domain-1",
+            kind: .metadataLookup,
+            summary: "Metadata failed.",
+            outcome: .failure
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 800),
+            domainIdentifier: "domain-1",
+            kind: .changeSync,
+            summary: "Sync failed.",
+            outcome: .failure
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 900),
+            domainIdentifier: ProviderConstants.appActivityDomainIdentifier,
+            kind: .driveDiscovery,
+            summary: "Could not load kDrives.",
+            scope: .app,
+            outcome: .failure
+        ))
+
+        let statistics = try await store.eventStatistics(domainIdentifiers: [
+            "domain-1",
+            "domain-2",
+            "missing-domain",
+            ProviderConstants.appActivityDomainIdentifier,
+        ])
+        let statisticsByDomain = Dictionary(uniqueKeysWithValues: statistics.map { ($0.domainIdentifier, $0) })
+
+        let domainOne = try #require(statisticsByDomain["domain-1"])
+        #expect(domainOne.unresolvedConflictCount == 1)
+        #expect(domainOne.blockedConflictCount == 1)
+        #expect(domainOne.failedConflictCount == 1)
+        #expect(domainOne.resolvedConflictCount == 1)
+        #expect(domainOne.recentSuccessCount == 1)
+        #expect(domainOne.recentFailureCount == 2)
+        #expect(domainOne.latestConflictAt == Date(timeIntervalSince1970: 450))
+        #expect(domainOne.latestActivityAt == Date(timeIntervalSince1970: 800))
+
+        let domainTwo = try #require(statisticsByDomain["domain-2"])
+        #expect(domainTwo.unresolvedConflictCount == 1)
+        #expect(domainTwo.recentFailureCount == 0)
+
+        let appStats = try #require(statisticsByDomain[ProviderConstants.appActivityDomainIdentifier])
+        #expect(appStats.recentFailureCount == 1)
+        #expect(appStats.latestActivityAt == Date(timeIntervalSince1970: 900))
+
+        let missingDomain = try #require(statisticsByDomain["missing-domain"])
+        #expect(missingDomain.attentionCount == 0)
     }
 
     @Test func providerEventStoreClearsActivityAndResolvedConflictsOnly() async throws {
@@ -720,6 +874,96 @@ struct PotassiumProviderCoreTests {
         #expect(model.timelineItems.map(\.id) == ["conflict-\(unresolvedConflict.id.uuidString)"])
         #expect(await store.storedConflicts().map(\.id) == [unresolvedConflict.id])
         #expect(await store.activities().isEmpty)
+    }
+
+    @MainActor
+    @Test func statusModelAggregatesAccountsDrivesSnapshotsAndEvents() async throws {
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Work",
+            authenticationKind: .oauth,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let domain = ProviderDomainConfiguration(
+            domainIdentifier: "domain-1",
+            accountIdentifier: account.accountIdentifier,
+            displayName: "Work Drive",
+            driveID: 10,
+            driveName: "Work Drive",
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let loadedDrive = KDriveDriveSummary(
+            id: 10,
+            name: "Work Drive",
+            accountID: 100,
+            role: "admin",
+            status: "active",
+            isInMaintenance: false
+        )
+        let model = ProviderStatusViewModel(
+            snapshotStatisticsProvider: FakeSnapshotStatisticsProvider(statistics: [
+                KDriveSnapshotDomainStatistics(
+                    domainIdentifier: domain.domainIdentifier,
+                    containerCount: 2,
+                    itemCount: 8,
+                    fullyEnumeratedContainerCount: 1,
+                    advancedListingContainerCount: 1,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 500)
+                )
+            ]),
+            eventStatisticsProvider: FakeProviderEventStatisticsProvider(statistics: [
+                KDriveProviderEventDomainStatistics(
+                    domainIdentifier: domain.domainIdentifier,
+                    unresolvedConflictCount: 1,
+                    blockedConflictCount: 1,
+                    recentFailureCount: 2,
+                    recentSuccessCount: 3,
+                    latestActivityAt: Date(timeIntervalSince1970: 700)
+                ),
+                KDriveProviderEventDomainStatistics(
+                    domainIdentifier: ProviderConstants.appActivityDomainIdentifier,
+                    recentFailureCount: 1,
+                    latestActivityAt: Date(timeIntervalSince1970: 800)
+                ),
+            ])
+        )
+
+        await model.load(input: ProviderStatusInput(
+            accounts: [account],
+            domains: [domain],
+            drivesByAccountIdentifier: [account.accountIdentifier: [loadedDrive]],
+            loadingDriveAccountIdentifiers: []
+        ))
+
+        #expect(model.dashboard.summary.accountCount == 1)
+        #expect(model.dashboard.summary.configuredDriveCount == 1)
+        #expect(model.dashboard.summary.loadedDriveCount == 1)
+        #expect(model.dashboard.summary.cachedSnapshotItemCount == 8)
+        #expect(model.dashboard.summary.issueCount == 5)
+        #expect(model.dashboard.summary.latestActivityAt == Date(timeIntervalSince1970: 800))
+        #expect(model.dashboard.warnings.isEmpty)
+
+        let accountRow = try #require(model.dashboard.accounts.first)
+        #expect(accountRow.displayName == "Work")
+        #expect(accountRow.configuredDriveCount == 1)
+        #expect(accountRow.loadedDriveCount == 1)
+
+        let driveRow = try #require(model.dashboard.drives.first)
+        #expect(driveRow.displayName == "Work Drive")
+        #expect(driveRow.accountName == "Work")
+        #expect(driveRow.role == "admin")
+        #expect(driveRow.snapshotContainerCount == 2)
+        #expect(driveRow.cachedSnapshotItemCount == 8)
+        #expect(driveRow.recentFailureCount == 2)
+        #expect(driveRow.issueCount == 4)
+        #expect(driveRow.health == .attention)
+    }
+
+    @Test func tabSelectionPolicyDefaultsToStatus() {
+        #expect(ProviderAppTabSelectionPolicy.defaultSelection(configuredDomainCount: 0) == .status)
+        #expect(ProviderAppTabSelectionPolicy.defaultSelection(configuredDomainCount: 1) == .status)
     }
 
     @Test func snapshotDecodesLegacyFileStoreShape() throws {
@@ -2358,6 +2602,28 @@ private struct SensitiveFailureError: LocalizedError {
 
     var errorDescription: String? {
         message
+    }
+}
+
+private struct FakeSnapshotStatisticsProvider: KDriveSnapshotStatisticsProviding {
+    let statistics: [KDriveSnapshotDomainStatistics]
+
+    func snapshotStatistics(domainIdentifiers: Set<String>) async throws -> [KDriveSnapshotDomainStatistics] {
+        let statisticsByDomain = Dictionary(uniqueKeysWithValues: statistics.map { ($0.domainIdentifier, $0) })
+        return domainIdentifiers
+            .sorted()
+            .map { statisticsByDomain[$0] ?? KDriveSnapshotDomainStatistics(domainIdentifier: $0) }
+    }
+}
+
+private struct FakeProviderEventStatisticsProvider: KDriveProviderEventStatisticsProviding {
+    let statistics: [KDriveProviderEventDomainStatistics]
+
+    func eventStatistics(domainIdentifiers: Set<String>) async throws -> [KDriveProviderEventDomainStatistics] {
+        let statisticsByDomain = Dictionary(uniqueKeysWithValues: statistics.map { ($0.domainIdentifier, $0) })
+        return domainIdentifiers
+            .sorted()
+            .map { statisticsByDomain[$0] ?? KDriveProviderEventDomainStatistics(domainIdentifier: $0) }
     }
 }
 

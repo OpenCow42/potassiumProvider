@@ -213,11 +213,53 @@ public protocol KDriveProviderEventStoring: Sendable {
     func removeEvents(domainIdentifier: String) async throws
 }
 
+public struct KDriveProviderEventDomainStatistics: Equatable, Sendable {
+    public let domainIdentifier: String
+    public let unresolvedConflictCount: Int
+    public let blockedConflictCount: Int
+    public let failedConflictCount: Int
+    public let resolvedConflictCount: Int
+    public let recentFailureCount: Int
+    public let recentSuccessCount: Int
+    public let latestConflictAt: Date?
+    public let latestActivityAt: Date?
+
+    public init(
+        domainIdentifier: String,
+        unresolvedConflictCount: Int = 0,
+        blockedConflictCount: Int = 0,
+        failedConflictCount: Int = 0,
+        resolvedConflictCount: Int = 0,
+        recentFailureCount: Int = 0,
+        recentSuccessCount: Int = 0,
+        latestConflictAt: Date? = nil,
+        latestActivityAt: Date? = nil
+    ) {
+        self.domainIdentifier = domainIdentifier
+        self.unresolvedConflictCount = unresolvedConflictCount
+        self.blockedConflictCount = blockedConflictCount
+        self.failedConflictCount = failedConflictCount
+        self.resolvedConflictCount = resolvedConflictCount
+        self.recentFailureCount = recentFailureCount
+        self.recentSuccessCount = recentSuccessCount
+        self.latestConflictAt = latestConflictAt
+        self.latestActivityAt = latestActivityAt
+    }
+
+    public var attentionCount: Int {
+        unresolvedConflictCount + blockedConflictCount + failedConflictCount + recentFailureCount
+    }
+}
+
+public protocol KDriveProviderEventStatisticsProviding: Sendable {
+    func eventStatistics(domainIdentifiers: Set<String>) async throws -> [KDriveProviderEventDomainStatistics]
+}
+
 public protocol KDriveProviderEventObserving: Sendable {
     func eventChanges(pollInterval: TimeInterval) async -> AsyncStream<Void>
 }
 
-public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveProviderEventObserving {
+public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveProviderEventStatisticsProviding, KDriveProviderEventObserving {
     private let database: Connection
     private var eventChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     private var isUpdateHookInstalled = false
@@ -287,6 +329,65 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
 
         return try database.prepare(query.order(ProviderEventSchema.occurredAt.desc).limit(rowLimit))
             .map(Self.activityEvent(from:))
+    }
+
+    public func eventStatistics(domainIdentifiers: Set<String>) throws -> [KDriveProviderEventDomainStatistics] {
+        let requestedDomainIdentifiers = Set(domainIdentifiers.filter { $0.isEmpty == false })
+        guard requestedDomainIdentifiers.isEmpty == false else { return [] }
+
+        var builders = Dictionary(uniqueKeysWithValues: requestedDomainIdentifiers.map {
+            ($0, KDriveProviderEventDomainStatisticsBuilder(domainIdentifier: $0))
+        })
+
+        for row in try database.prepare(ProviderEventSchema.conflictEvents) {
+            let domainIdentifier = row[ProviderEventSchema.domainIdentifier]
+            guard var builder = builders[domainIdentifier] else { continue }
+
+            let state = KDriveConflictResolutionState(rawValue: row[ProviderEventSchema.resolutionState]) ?? .unresolved
+            switch state {
+            case .unresolved:
+                builder.unresolvedConflictCount += 1
+            case .automaticallyResolved:
+                builder.resolvedConflictCount += 1
+            case .blockedRetryable:
+                builder.blockedConflictCount += 1
+            case .failed:
+                builder.failedConflictCount += 1
+            }
+
+            let detectedAt = Date(timeIntervalSince1970: row[ProviderEventSchema.detectedAt])
+            builder.latestConflictAt = Self.latest(builder.latestConflictAt, detectedAt)
+            if let resolvedAtInterval = row[ProviderEventSchema.resolvedAt] {
+                builder.latestConflictAt = Self.latest(
+                    builder.latestConflictAt,
+                    Date(timeIntervalSince1970: resolvedAtInterval)
+                )
+            }
+            builders[domainIdentifier] = builder
+        }
+
+        for row in try database.prepare(ProviderEventSchema.activityEvents) {
+            let domainIdentifier = row[ProviderEventSchema.domainIdentifier]
+            guard var builder = builders[domainIdentifier] else { continue }
+
+            let outcome = KDriveProviderActivityOutcome(rawValue: row[ProviderEventSchema.outcome]) ?? .success
+            switch outcome {
+            case .success:
+                builder.recentSuccessCount += 1
+            case .failure:
+                builder.recentFailureCount += 1
+            }
+
+            builder.latestActivityAt = Self.latest(
+                builder.latestActivityAt,
+                Date(timeIntervalSince1970: row[ProviderEventSchema.occurredAt])
+            )
+            builders[domainIdentifier] = builder
+        }
+
+        return requestedDomainIdentifiers
+            .sorted()
+            .compactMap { builders[$0]?.statistics }
     }
 
     public func removeEvents(domainIdentifier: String) throws {
@@ -522,6 +623,13 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
         try database.scalar("PRAGMA data_version") as? Int64 ?? 0
     }
 
+    private static func latest(_ lhs: Date?, _ rhs: Date) -> Date {
+        if let lhs, lhs > rhs {
+            return lhs
+        }
+        return rhs
+    }
+
     private static func setters(for event: KDriveConflictEvent) -> [Setter] {
         [
             ProviderEventSchema.id <- event.id.uuidString,
@@ -617,6 +725,32 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
                     )
                 }
             }
+        )
+    }
+}
+
+private struct KDriveProviderEventDomainStatisticsBuilder {
+    let domainIdentifier: String
+    var unresolvedConflictCount = 0
+    var blockedConflictCount = 0
+    var failedConflictCount = 0
+    var resolvedConflictCount = 0
+    var recentFailureCount = 0
+    var recentSuccessCount = 0
+    var latestConflictAt: Date?
+    var latestActivityAt: Date?
+
+    var statistics: KDriveProviderEventDomainStatistics {
+        KDriveProviderEventDomainStatistics(
+            domainIdentifier: domainIdentifier,
+            unresolvedConflictCount: unresolvedConflictCount,
+            blockedConflictCount: blockedConflictCount,
+            failedConflictCount: failedConflictCount,
+            resolvedConflictCount: resolvedConflictCount,
+            recentFailureCount: recentFailureCount,
+            recentSuccessCount: recentSuccessCount,
+            latestConflictAt: latestConflictAt,
+            latestActivityAt: latestActivityAt
         )
     }
 }

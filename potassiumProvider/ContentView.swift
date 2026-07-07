@@ -4,18 +4,41 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: PotassiumProviderAppModel
     @State private var accountPendingLogout: ProviderAccount?
+    @State private var selectedTab: ProviderAppTab
+
+    init(model: PotassiumProviderAppModel) {
+        _model = ObservedObject(wrappedValue: model)
+        _selectedTab = State(initialValue: ProviderAppTabSelectionPolicy.defaultSelection(
+            configuredDomainCount: model.domains.count
+        ))
+    }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
+            ProviderStatusView(appModel: model) {
+                selectedTab = .setup
+            }
+            .tabItem {
+                Label("Status", systemImage: "gauge.medium")
+            }
+            .tag(ProviderAppTab.status)
+
             setupView
                 .tabItem {
                     Label("Setup", systemImage: "externaldrive.connected.to.line.below")
                 }
+                .tag(ProviderAppTab.setup)
 
             ConflictLogView(eventStore: model.providerEventStore)
                 .tabItem {
                     Label("Activities", systemImage: "clock.arrow.circlepath")
                 }
+                .tag(ProviderAppTab.activities)
+        }
+        .onAppear {
+            selectedTab = ProviderAppTabSelectionPolicy.defaultSelection(
+                configuredDomainCount: model.domains.count
+            )
         }
     }
 
@@ -217,6 +240,18 @@ struct ContentView: View {
 
     private var setupAutoLoadTaskID: String {
         model.accounts.map(\.accountIdentifier).joined(separator: "|")
+    }
+}
+
+enum ProviderAppTab: Hashable {
+    case status
+    case setup
+    case activities
+}
+
+enum ProviderAppTabSelectionPolicy {
+    static func defaultSelection(configuredDomainCount _: Int) -> ProviderAppTab {
+        .status
     }
 }
 
