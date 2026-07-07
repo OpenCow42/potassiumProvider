@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var model: PotassiumProviderAppModel
+    @State private var accountPendingLogout: ProviderAccount?
 
     var body: some View {
         TabView {
@@ -21,10 +22,18 @@ struct ContentView: View {
     private var setupView: some View {
         NavigationStack {
             List {
-                accountSection
-                driveSection
-                domainFormSection
-                domainsSection
+                addAccountSection
+
+                if model.accounts.isEmpty {
+                    Section {
+                        Label("No accounts connected", systemImage: "person.crop.circle.badge.questionmark")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(model.accounts) { account in
+                        accountSection(account)
+                    }
+                }
 
                 if let statusMessage = model.statusMessage {
                     Section {
@@ -34,14 +43,21 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("potassiumProvider")
+            .task(id: setupAutoLoadTaskID) {
+                await model.loadDrivesForAccountsIfPossible()
+            }
             .toolbar {
                 ToolbarItem(placement: refreshToolbarPlacement) {
                     Button {
-                        Task { await model.loadDrives() }
+                        Task {
+                            for account in model.accounts {
+                                await model.loadDrives(accountIdentifier: account.accountIdentifier)
+                            }
+                        }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
-                    .disabled(model.canLoadDrives == false)
+                    .disabled(model.accounts.isEmpty)
                 }
             }
             .alert("kDrive", isPresented: errorBinding) {
@@ -49,31 +65,25 @@ struct ContentView: View {
             } message: {
                 Text(model.errorMessage ?? "")
             }
+            .alert(item: $accountPendingLogout) { account in
+                Alert(
+                    title: Text("Log Out \(account.displayName)?"),
+                    message: Text("This removes this account's drives from Files and clears its local provider state."),
+                    primaryButton: .destructive(Text("Log Out")) {
+                        Task { await model.logoutAccount(account) }
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
         }
     }
 
-    private var accountSection: some View {
-        Section("Account") {
-            HStack {
-                Label(
-                    model.isConnected ? "Connected" : "Disconnected",
-                    systemImage: model.isConnected ? "checkmark.seal.fill" : "xmark.seal"
-                )
-                Spacer()
-                if model.isConnected {
-                    Button(role: .destructive) {
-                        Task { await model.disconnect() }
-                    } label: {
-                        Label("Disconnect", systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                    .labelStyle(.iconOnly)
-                }
-            }
-
+    private var addAccountSection: some View {
+        Section("Accounts") {
             Button {
                 Task { await model.connectWithOAuth() }
             } label: {
-                Label(model.isConnecting ? "Connecting" : "Connect with Infomaniak", systemImage: "person.crop.circle.badge.checkmark")
+                Label(model.isConnecting ? "Connecting" : "Add Infomaniak Account", systemImage: "person.crop.circle.badge.plus")
             }
             .disabled(model.isConnecting)
 
@@ -90,53 +100,98 @@ struct ContentView: View {
         }
     }
 
-    private var driveSection: some View {
-        Section("kDrives") {
-            if model.drives.isEmpty {
-                Label("No drives loaded", systemImage: "externaldrive.badge.questionmark")
-                    .foregroundStyle(.secondary)
-            } else {
-                Picker("Drive", selection: $model.selectedDriveID) {
-                    ForEach(model.drives) { drive in
-                        Text(drive.name).tag(Optional(drive.id))
+    private func accountSection(_ account: ProviderAccount) -> some View {
+        Section {
+            HStack(spacing: 12) {
+                Label {
+                    TextField(
+                        "Account name",
+                        text: Binding {
+                            model.account(accountIdentifier: account.accountIdentifier)?.displayName ?? account.displayName
+                        } set: { newValue in
+                            Task {
+                                await model.renameAccount(
+                                    accountIdentifier: account.accountIdentifier,
+                                    displayName: newValue
+                                )
+                            }
+                        }
+                    )
+                } icon: {
+                    Image(systemName: account.authenticationKind == .oauth ? "person.crop.circle" : "key")
+                }
+
+                Spacer()
+
+                Button {
+                    Task { await model.loadDrives(accountIdentifier: account.accountIdentifier) }
+                } label: {
+                    Label("Refresh Drives", systemImage: "arrow.clockwise")
+                }
+                .labelStyle(.iconOnly)
+                .disabled(model.canLoadDrives(for: account.accountIdentifier) == false)
+
+                Button(role: .destructive) {
+                    accountPendingLogout = account
+                } label: {
+                    Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+                .labelStyle(.iconOnly)
+            }
+
+            drivesView(account)
+        } header: {
+            Text(account.displayName)
+        }
+    }
+
+    @ViewBuilder
+    private func drivesView(_ account: ProviderAccount) -> some View {
+        let drives = model.drives(for: account.accountIdentifier)
+        let configuredDomains = model.domains(for: account.accountIdentifier)
+        let configuredDomainsByDriveID = Dictionary(uniqueKeysWithValues: configuredDomains.map { ($0.driveID, $0) })
+        let loadedDriveIDs = Set(drives.map(\.id))
+        let configuredDomainsWithoutLoadedDrive = configuredDomains.filter { loadedDriveIDs.contains($0.driveID) == false }
+
+        if drives.isEmpty && configuredDomainsWithoutLoadedDrive.isEmpty {
+            Button {
+                Task { await model.loadDrives(accountIdentifier: account.accountIdentifier) }
+            } label: {
+                Label(
+                    model.isLoadingDrives(for: account.accountIdentifier) ? "Loading Drives" : "Load Drives",
+                    systemImage: "externaldrive.connected.to.line.below"
+                )
+            }
+            .disabled(model.canLoadDrives(for: account.accountIdentifier) == false)
+        } else {
+            ForEach(drives) { drive in
+                DriveConfigurationRow(
+                    driveID: drive.id,
+                    driveName: drive.name,
+                    detail: "Drive \(drive.id) · \(drive.role)",
+                    configuration: configuredDomainsByDriveID[drive.id]
+                ) {
+                    Task {
+                        await model.addDomain(
+                            accountIdentifier: account.accountIdentifier,
+                            drive: drive
+                        )
                     }
+                } remove: { configuration in
+                    Task { await model.removeDomain(configuration) }
                 }
             }
 
-            Button {
-                Task { await model.loadDrives() }
-            } label: {
-                Label(model.isLoadingDrives ? "Loading Drives" : "Load Drives", systemImage: "externaldrive.connected.to.line.below")
-            }
-            .disabled(model.canLoadDrives == false)
-        }
-    }
-
-    private var domainFormSection: some View {
-        Section("Domain") {
-            TextField("Drive ID", text: $model.manualDriveID)
-                .platformNumberEntry()
-            TextField("Drive name", text: $model.manualDriveName)
-
-            Button {
-                Task { await model.addDomain() }
-            } label: {
-                Label("Add Domain", systemImage: "folder.badge.plus")
-            }
-            .disabled(model.canAddDomain == false)
-        }
-    }
-
-    private var domainsSection: some View {
-        Section("Provider Domains") {
-            if model.domains.isEmpty {
-                Label("No domains configured", systemImage: "folder")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(model.domains) { domain in
-                    DomainConfigurationRow(configuration: domain) {
-                        Task { await model.removeDomain(domain) }
-                    }
+            ForEach(configuredDomainsWithoutLoadedDrive) { domain in
+                DriveConfigurationRow(
+                    driveID: domain.driveID,
+                    driveName: domain.driveName,
+                    detail: "Drive \(domain.driveID)",
+                    configuration: domain
+                ) {
+                    Task { await model.addDomain(accountIdentifier: account.accountIdentifier) }
+                } remove: { configuration in
+                    Task { await model.removeDomain(configuration) }
                 }
             }
         }
@@ -159,34 +214,55 @@ struct ContentView: View {
         .topBarTrailing
         #endif
     }
+
+    private var setupAutoLoadTaskID: String {
+        model.accounts.map(\.accountIdentifier).joined(separator: "|")
+    }
 }
 
-private struct DomainConfigurationRow: View {
-    let configuration: ProviderDomainConfiguration
-    let remove: () -> Void
+private struct DriveConfigurationRow: View {
+    let driveID: Int
+    let driveName: String
+    let detail: String
+    let configuration: ProviderDomainConfiguration?
+    let add: () -> Void
+    let remove: (ProviderDomainConfiguration) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "folder.fill")
+            Image(systemName: "externaldrive.fill")
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 4) {
-                Text(configuration.displayName)
+                Text(driveName)
                     .font(.headline)
-                Text("\(configuration.driveName) · Drive \(configuration.driveID)")
+                Text(configuration == nil ? detail : "\(detail) · In Files")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(role: .destructive, action: remove) {
-                Label("Remove", systemImage: "trash")
+            if let configuration {
+                Button(role: .destructive) {
+                    remove(configuration)
+                } label: {
+                    Label("Remove from Files", systemImage: "trash")
+                }
+                .labelStyle(.iconOnly)
+            } else {
+                Button(action: add) {
+                    Label("Use in Files", systemImage: "folder.badge.plus")
+                }
+                .labelStyle(.iconOnly)
             }
-            .labelStyle(.iconOnly)
         }
     }
 }
 
 #Preview {
     ContentView(model: PotassiumProviderAppModel(
+        accountStore: ProviderAccountFileStore(
+            directoryURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("potassiumProviderPreviewAccounts", isDirectory: true)
+        ),
         domainStore: DomainConfigurationFileStore(
             directoryURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("potassiumProviderPreview", isDirectory: true)

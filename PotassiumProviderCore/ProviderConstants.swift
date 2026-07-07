@@ -5,6 +5,7 @@ public enum ProviderConstants {
     public static let keychainAccessGroup = "2LST6WT4P6.net.weavee.potassiumProvider"
     public static let keychainService = "net.weavee.potassiumProvider.kDrive"
     public static let keychainAccount = "oauthToken"
+    public static let legacyAccountIdentifier = "legacy-account"
     public static let logSubsystem = "net.weavee.potassiumProvider"
     public static let appActivityDomainIdentifier = "__potassiumProvider_app__"
     public static let oauthCallbackScheme = "com.infomaniak.drive"

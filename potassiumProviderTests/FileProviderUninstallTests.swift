@@ -131,6 +131,7 @@ struct FileProviderUninstallTests {
         let domainManager = RecordingUninstallDomainManager(domains: [registeredDomain("domain-1")])
         let localState = RecordingUninstallLocalState(
             storedConfigurations: [configuration("domain-2")],
+            storedAccounts: [account("account-1")],
             stateItems: [],
             conflictStagingFileNames: ["retained.upload"]
         )
@@ -147,6 +148,7 @@ struct FileProviderUninstallTests {
             RemovedDomainRecord(domain: registeredDomain("domain-1"), mode: .preserveDirtyUserData)
         ])
         #expect(await localState.removedDomainIdentifiers() == ["domain-1", "domain-2"])
+        #expect(await localState.removedAccountIdentifiers().isEmpty)
         #expect(await localState.didRemoveConflictStaging() == false)
         #expect(await tokenStore.didDeleteToken() == false)
         #expect(result.deletedOAuthToken == false)
@@ -240,7 +242,11 @@ struct FileProviderUninstallTests {
 
     @Test func coordinatorFullLogoutDeletesTokenOnlyAfterDomainAndLocalCleanup() async throws {
         let domainManager = RecordingUninstallDomainManager(domains: [registeredDomain("domain-1")])
-        let localState = RecordingUninstallLocalState(storedConfigurations: [], stateItems: [])
+        let localState = RecordingUninstallLocalState(
+            storedConfigurations: [],
+            storedAccounts: [account("account-1")],
+            stateItems: []
+        )
         let tokenStore = RecordingUninstallTokenStore()
         let coordinator = FileProviderUninstallCoordinator(
             domainManager: domainManager,
@@ -256,6 +262,9 @@ struct FileProviderUninstallTests {
         #expect(await domainManager.removedRecords().map(\.mode) == [.preserveDirtyUserData])
         #expect(await localState.removedDomainIdentifiers() == ["domain-1"])
         #expect(await tokenStore.didDeleteToken())
+        #expect(await tokenStore.deletedAccountIdentifiers() == ["account-1"])
+        #expect(await tokenStore.didDeleteLegacyToken())
+        #expect(await localState.removedAccountIdentifiers() == ["account-1"])
         #expect(result.deletedOAuthToken)
     }
 
@@ -328,6 +337,16 @@ struct FileProviderUninstallTests {
             displayName: "Drive \(identifier)",
             driveID: 42,
             driveName: "Drive \(identifier)",
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+    }
+
+    private func account(_ identifier: String) -> ProviderAccount {
+        ProviderAccount(
+            accountIdentifier: identifier,
+            displayName: "Account \(identifier)",
+            authenticationKind: .oauth,
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 1)
         )
@@ -406,23 +425,31 @@ private actor RecordingUninstallDomainManager: FileProviderUninstallDomainManagi
 
 private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManaging {
     private let configurations: [ProviderDomainConfiguration]
+    private let accounts: [ProviderAccount]
     private let plannedStateItems: [FileProviderUninstallStateItem]
     private let conflictStagingFileNames: [String]
     private var removedIdentifiers: [String] = []
+    private var removedAccounts: [String] = []
     private var removedConflictStaging = false
 
     init(
         storedConfigurations: [ProviderDomainConfiguration],
+        storedAccounts: [ProviderAccount] = [],
         stateItems: [FileProviderUninstallStateItem],
         conflictStagingFileNames: [String] = []
     ) {
         self.configurations = storedConfigurations
+        self.accounts = storedAccounts
         self.plannedStateItems = stateItems
         self.conflictStagingFileNames = conflictStagingFileNames
     }
 
     func storedConfigurations() -> [ProviderDomainConfiguration] {
         configurations
+    }
+
+    func storedAccounts() -> [ProviderAccount] {
+        accounts
     }
 
     func stateItems(forDomainIdentifiers domainIdentifiers: Set<String>) -> [FileProviderUninstallStateItem] {
@@ -450,6 +477,10 @@ private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManag
         removedIdentifiers.append(domainIdentifier)
     }
 
+    func removeAccountRecords(accountIdentifiers: [String]) {
+        removedAccounts.append(contentsOf: accountIdentifiers)
+    }
+
     func removeConflictStaging() {
         removedConflictStaging = true
     }
@@ -461,16 +492,33 @@ private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManag
     func didRemoveConflictStaging() -> Bool {
         removedConflictStaging
     }
+
+    func removedAccountIdentifiers() -> [String] {
+        removedAccounts
+    }
 }
 
 private actor RecordingUninstallTokenStore: FileProviderUninstallTokenDeleting {
-    private var deleted = false
+    private var deletedAccountIDs: [String] = []
+    private var deletedLegacy = false
 
-    func deleteToken() {
-        deleted = true
+    func deleteToken(accountIdentifier: String) {
+        deletedAccountIDs.append(accountIdentifier)
+    }
+
+    func deleteLegacyToken() {
+        deletedLegacy = true
     }
 
     func didDeleteToken() -> Bool {
-        deleted
+        deletedAccountIDs.isEmpty == false || deletedLegacy
+    }
+
+    func deletedAccountIdentifiers() -> [String] {
+        deletedAccountIDs
+    }
+
+    func didDeleteLegacyToken() -> Bool {
+        deletedLegacy
     }
 }

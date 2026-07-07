@@ -67,8 +67,8 @@ enum FileProviderUninstallCommandLine {
         Options:
           --dry-run       Print the uninstall plan without removing domains or local state.
           --yes           Perform the uninstall. Required unless --dry-run is present.
-          --full-logout   Also delete the saved OAuth token.
-          --hard-purge    Use File Provider remove-all mode, delete ConflictStaging, and delete the OAuth token.
+          --full-logout   Also delete saved account records and OAuth tokens.
+          --hard-purge    Use File Provider remove-all mode, delete ConflictStaging, account records, and OAuth tokens.
         """
     }
 
@@ -109,6 +109,17 @@ enum FileProviderUninstallCommandLine {
             print("Stored domain configurations to remove:")
             for configuration in plan.storedConfigurations {
                 print("- \(configuration.displayName) [\(configuration.domainIdentifier)] driveID \(configuration.driveID)")
+            }
+        }
+
+        if plan.deletesOAuthToken {
+            if plan.storedAccounts.isEmpty {
+                print("Stored accounts to log out: none")
+            } else {
+                print("Stored accounts to log out:")
+                for account in plan.storedAccounts {
+                    print("- \(account.displayName) [\(account.accountIdentifier)]")
+                }
             }
         }
 
@@ -153,7 +164,7 @@ enum FileProviderUninstallCommandLine {
             print("Removed ConflictStaging contents.")
         }
         if result.deletedOAuthToken {
-            print("Deleted saved OAuth token.")
+            print("Deleted saved account records and OAuth token(s).")
         }
     }
 }
@@ -227,6 +238,7 @@ private extension FileProviderUninstallDomainRemovalMode {
 
 private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLocalStateManaging {
     private let containerURL: URL
+    private let accountsURL: URL
     private let domainConfigurationsURL: URL
     private let snapshotsDatabaseURL: URL
     private let conflictStagingURL: URL
@@ -238,6 +250,7 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
         }
 
         self.containerURL = containerURL
+        self.accountsURL = containerURL.appendingPathComponent("Accounts", isDirectory: true)
         self.domainConfigurationsURL = containerURL.appendingPathComponent("DomainConfigurations", isDirectory: true)
         self.snapshotsDatabaseURL = containerURL.appendingPathComponent("Snapshots.sqlite3")
         self.conflictStagingURL = containerURL.appendingPathComponent("ConflictStaging", isDirectory: true)
@@ -259,6 +272,23 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
             .filter { $0.pathExtension == "json" }
             .map { try Self.makeDecoder().decode(ProviderDomainConfiguration.self, from: Data(contentsOf: $0)) }
             .sorted { $0.domainIdentifier < $1.domainIdentifier }
+    }
+
+    func storedAccounts() throws -> [ProviderAccount] {
+        guard FileManager.default.fileExists(atPath: accountsURL.path) else {
+            return []
+        }
+
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: accountsURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        return try urls
+            .filter { $0.pathExtension == "json" }
+            .map { try Self.makeDecoder().decode(ProviderAccount.self, from: Data(contentsOf: $0)) }
+            .sorted { $0.accountIdentifier < $1.accountIdentifier }
     }
 
     func stateItems(forDomainIdentifiers domainIdentifiers: Set<String>) throws -> [FileProviderUninstallStateItem] {
@@ -346,6 +376,21 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
         try await eventStore.removeEvents(domainIdentifier: domainIdentifier)
     }
 
+    func removeAccountRecords(accountIdentifiers: [String]) throws {
+        guard FileManager.default.fileExists(atPath: accountsURL.path) else {
+            return
+        }
+
+        for accountIdentifier in accountIdentifiers {
+            let accountURL = accountsURL
+                .appendingPathComponent(Self.safeFileName(for: accountIdentifier))
+                .appendingPathExtension("json")
+            if FileManager.default.fileExists(atPath: accountURL.path) {
+                try FileManager.default.removeItem(at: accountURL)
+            }
+        }
+    }
+
     func removeConflictStaging() throws {
         guard FileManager.default.fileExists(atPath: conflictStagingURL.path) else {
             return
@@ -379,7 +424,11 @@ private struct FileProviderUninstallKeychainTokenDeleter: FileProviderUninstallT
         self.store = KeychainOAuthTokenStore(accessGroup: accessGroup)
     }
 
-    func deleteToken() async throws {
-        try await store.deleteToken()
+    func deleteToken(accountIdentifier: String) async throws {
+        try await store.deleteToken(accountIdentifier: accountIdentifier)
+    }
+
+    func deleteLegacyToken() async throws {
+        try await store.deleteLegacyToken()
     }
 }

@@ -116,7 +116,9 @@ Xcode requires a more specific macOS variant.
 ## Local State Caveats
 
 - App group availability depends on entitlements and signing.
-- Keychain access group behavior depends on provisioning.
+- Keychain access group behavior depends on provisioning. Multi-account tests
+  should prefer `InMemoryOAuthTokenStore` and synthetic local account IDs unless
+  they are explicitly validating keychain behavior.
 - The local Apple sample folder is a reference tree and should not be treated as
   part of the root project.
 - Build products, DerivedData, local caches, `.DS_Store`, and private fixtures
@@ -132,7 +134,8 @@ scripts/uninstall-file-provider.sh --dry-run
 scripts/uninstall-file-provider.sh --yes
 ```
 
-The default mode preserves dirty user data and keeps the saved OAuth token. See
+The default mode preserves dirty user data and keeps saved account records and
+account-scoped OAuth tokens. See
 [File Provider Cleanup](FILE_PROVIDER_CLEANUP.md) for the full mode matrix,
 stale archived app registration repair, and safety boundary.
 

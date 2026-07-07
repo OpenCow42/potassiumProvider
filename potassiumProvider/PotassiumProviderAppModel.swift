@@ -7,18 +7,19 @@ import PotassiumProviderCore
 final class PotassiumProviderAppModel: ObservableObject {
     private static let log = Logger(subsystem: ProviderConstants.logSubsystem, category: "app")
 
-    @Published private(set) var token: KDriveOAuthToken?
-    @Published private(set) var drives: [KDriveDriveSummary] = []
+    @Published private(set) var accounts: [ProviderAccount] = []
+    @Published private(set) var drivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:]
     @Published private(set) var domains: [ProviderDomainConfiguration] = []
     @Published private(set) var isConnecting = false
-    @Published private(set) var isLoadingDrives = false
+    @Published private(set) var loadingDriveAccountIdentifiers: Set<String> = []
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
-    @Published var selectedDriveID: Int?
-    @Published var manualDriveID = ""
-    @Published var manualDriveName = ""
+    @Published var selectedDriveIDs: [String: Int] = [:]
+    @Published var manualDriveIDs: [String: String] = [:]
+    @Published var manualDriveNames: [String: String] = [:]
 
+    private let accountStore: any ProviderAccountStoring
     private let domainStore: any DomainConfigurationStoring
     private let tokenStore: any OAuthTokenStoring
     private let oauthAuthenticator: any KDriveOAuthAuthenticating
@@ -26,8 +27,10 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let snapshotStore: (any KDriveSnapshotStoring)?
     private let eventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
+    private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
 
     init(
+        accountStore: (any ProviderAccountStoring)? = nil,
         domainStore: (any DomainConfigurationStoring)? = nil,
         tokenStore: (any OAuthTokenStoring)? = nil,
         oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
@@ -37,6 +40,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         automaticallyReloadStoredState: Bool = true,
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
     ) {
+        self.accountStore = accountStore ?? Self.makeDefaultAccountStore()
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
         self.tokenStore = tokenStore ?? KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
@@ -44,38 +48,87 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
-        statusMessage = "Not connected"
+        statusMessage = "No accounts connected."
         if automaticallyReloadStoredState {
             Task { await reloadStoredState() }
         }
     }
 
     var isConnected: Bool {
-        token != nil
-    }
-
-    var canLoadDrives: Bool {
-        token != nil && isLoadingDrives == false
-    }
-
-    var canAddDomain: Bool {
-        resolvedDriveDraft() != nil
-    }
-
-    var selectedDrive: KDriveDriveSummary? {
-        guard let selectedDriveID else { return nil }
-        return drives.first { $0.id == selectedDriveID }
+        accounts.isEmpty == false
     }
 
     var providerEventStore: (any KDriveProviderEventStoring)? {
         eventStore
     }
 
+    func account(accountIdentifier: String) -> ProviderAccount? {
+        accounts.first { $0.accountIdentifier == accountIdentifier }
+    }
+
+    func drives(for accountIdentifier: String) -> [KDriveDriveSummary] {
+        drivesByAccountIdentifier[accountIdentifier] ?? []
+    }
+
+    func domains(for accountIdentifier: String) -> [ProviderDomainConfiguration] {
+        domains.filter { $0.accountIdentifier == accountIdentifier }
+    }
+
+    func isLoadingDrives(for accountIdentifier: String) -> Bool {
+        loadingDriveAccountIdentifiers.contains(accountIdentifier)
+    }
+
+    func canLoadDrives(for accountIdentifier: String) -> Bool {
+        account(accountIdentifier: accountIdentifier) != nil && isLoadingDrives(for: accountIdentifier) == false
+    }
+
+    func loadDrivesForAccountsIfPossible() async {
+        for account in accounts {
+            await loadDrivesIfPossible(accountIdentifier: account.accountIdentifier)
+        }
+    }
+
+    func canAddDomain(for accountIdentifier: String) -> Bool {
+        resolvedDriveDraft(accountIdentifier: accountIdentifier) != nil
+    }
+
+    func isConfigured(accountIdentifier: String, driveID: Int) -> Bool {
+        domains.contains { $0.accountIdentifier == accountIdentifier && $0.driveID == driveID }
+    }
+
+    func selectedDriveID(for accountIdentifier: String) -> Int? {
+        selectedDriveIDs[accountIdentifier]
+    }
+
+    func setSelectedDriveID(_ driveID: Int?, for accountIdentifier: String) {
+        selectedDriveIDs[accountIdentifier] = driveID
+        refreshDraftFromSelectedDrive(accountIdentifier: accountIdentifier)
+    }
+
+    func manualDriveID(for accountIdentifier: String) -> String {
+        manualDriveIDs[accountIdentifier] ?? ""
+    }
+
+    func setManualDriveID(_ driveID: String, for accountIdentifier: String) {
+        manualDriveIDs[accountIdentifier] = driveID
+    }
+
+    func manualDriveName(for accountIdentifier: String) -> String {
+        manualDriveNames[accountIdentifier] ?? ""
+    }
+
+    func setManualDriveName(_ driveName: String, for accountIdentifier: String) {
+        manualDriveNames[accountIdentifier] = driveName
+    }
+
     func reloadStoredState() async {
         do {
-            token = try await tokenStore.loadToken()
+            try await migrateLegacyStateIfNeeded()
+            accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
+            seedDraftState()
+
             if let synchronizationError = synchronizedState.registrationError {
                 errorMessage = "Could not refresh Finder domain names: \(synchronizationError.localizedDescription)"
                 statusMessage = nil
@@ -87,7 +140,7 @@ final class PotassiumProviderAppModel: ObservableObject {
                 )
             } else {
                 errorMessage = nil
-                statusMessage = token == nil ? "Not connected" : "Connected to kDrive."
+                statusMessage = accounts.isEmpty ? "No accounts connected." : "Loaded \(accounts.count) account\(accounts.count == 1 ? "" : "s")."
             }
         } catch {
             await recordAppFailure(
@@ -97,6 +150,7 @@ final class PotassiumProviderAppModel: ObservableObject {
                 category: .storage
             )
             errorMessage = "Could not load saved provider state: \(error.localizedDescription)"
+            statusMessage = nil
         }
     }
 
@@ -108,9 +162,9 @@ final class PotassiumProviderAppModel: ObservableObject {
 
         do {
             let token = try await oauthAuthenticator.authenticate()
-            try await saveConnectedToken(token)
-            statusMessage = "Connected. Loading kDrives."
-            await loadDrives()
+            let account = try await createAccount(authenticationKind: .oauth, token: token)
+            statusMessage = "Connected \(account.displayName). Loading kDrives."
+            await loadDrives(accountIdentifier: account.accountIdentifier)
         } catch {
             await recordAppFailure(
                 kind: .authentication,
@@ -141,10 +195,10 @@ final class PotassiumProviderAppModel: ObservableObject {
         )
 
         do {
-            try await saveConnectedToken(token)
+            let account = try await createAccount(authenticationKind: .manualAccessToken, token: token)
             manualAccessToken = ""
-            statusMessage = "Access token saved. Loading kDrives."
-            await loadDrives()
+            statusMessage = "Access token saved for \(account.displayName). Loading kDrives."
+            await loadDrives(accountIdentifier: account.accountIdentifier)
         } catch {
             await recordAppFailure(
                 kind: .authentication,
@@ -157,19 +211,31 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
-    func loadDrives() async {
-        do {
-            let token = try await usableToken()
-            isLoadingDrives = true
-            errorMessage = nil
-            defer { isLoadingDrives = false }
+    func loadDrives(accountIdentifier: String) async {
+        guard let account = account(accountIdentifier: accountIdentifier) else {
+            errorMessage = "Choose an account before loading kDrives."
+            statusMessage = nil
+            return
+        }
+        guard loadingDriveAccountIdentifiers.contains(accountIdentifier) == false else {
+            return
+        }
 
-            drives = try await fileProviderFactory(token.accessToken).listDrives()
-            if selectedDriveID == nil || drives.contains(where: { $0.id == selectedDriveID }) == false {
-                selectedDriveID = drives.first?.id
+        loadingDriveAccountIdentifiers.insert(accountIdentifier)
+        defer { loadingDriveAccountIdentifiers.remove(accountIdentifier) }
+
+        do {
+            let token = try await usableToken(accountIdentifier: accountIdentifier)
+            errorMessage = nil
+
+            let drives = try await fileProviderFactory(token.accessToken).listDrives()
+            drivesByAccountIdentifier[accountIdentifier] = drives
+            if selectedDriveIDs[accountIdentifier] == nil ||
+                drives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
+                selectedDriveIDs[accountIdentifier] = drives.first?.id
             }
-            refreshDraftFromSelectedDrive()
-            statusMessage = drives.isEmpty ? "No kDrives returned for this account." : "Loaded \(drives.count) kDrive account."
+            refreshDraftFromSelectedDrive(accountIdentifier: accountIdentifier)
+            statusMessage = drives.isEmpty ? "No kDrives returned for \(account.displayName)." : "Loaded \(drives.count) kDrive\(drives.count == 1 ? "" : "s") for \(account.displayName)."
         } catch {
             await recordAppFailure(
                 kind: .driveDiscovery,
@@ -182,9 +248,19 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
-    func addDomain() async {
-        guard let draft = resolvedDriveDraft() else {
+    func addDomain(accountIdentifier: String) async {
+        guard let account = account(accountIdentifier: accountIdentifier) else {
+            errorMessage = "Choose an account before adding a domain."
+            statusMessage = nil
+            return
+        }
+        guard let draft = resolvedDriveDraft(accountIdentifier: accountIdentifier) else {
             errorMessage = "Choose or enter a kDrive before adding a domain."
+            statusMessage = nil
+            return
+        }
+        guard isConfigured(accountIdentifier: accountIdentifier, driveID: draft.id) == false else {
+            errorMessage = "\(draft.name) is already available in Files for \(account.displayName)."
             statusMessage = nil
             return
         }
@@ -193,6 +269,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         do {
             let now = Date()
             let configuration = ProviderDomainConfiguration(
+                accountIdentifier: accountIdentifier,
                 displayName: ProviderDomainConfiguration.finderDisplayName(forDriveName: draft.name),
                 driveID: draft.id,
                 driveName: draft.name,
@@ -202,9 +279,12 @@ final class PotassiumProviderAppModel: ObservableObject {
 
             try await domainStore.save(configuration)
             savedConfiguration = configuration
-            domains = try await domainStore.allConfigurations()
-            try await domainRegistrar.addDomain(for: configuration)
-            statusMessage = "Added \(configuration.displayName) to Files."
+            let synchronizedState = try await synchronizedDomainConfigurations()
+            domains = synchronizedState.configurations
+            if let registrationError = synchronizedState.registrationError {
+                throw registrationError
+            }
+            statusMessage = "Added \(configuration.driveName) to Files."
             errorMessage = nil
         } catch {
             if let savedConfiguration {
@@ -221,14 +301,18 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
+    func addDomain(accountIdentifier: String, drive: KDriveDriveSummary) async {
+        selectedDriveIDs[accountIdentifier] = drive.id
+        manualDriveIDs[accountIdentifier] = String(drive.id)
+        manualDriveNames[accountIdentifier] = drive.name
+        await addDomain(accountIdentifier: accountIdentifier)
+    }
+
     func removeDomain(_ configuration: ProviderDomainConfiguration) async {
         do {
-            try await domainRegistrar.removeDomain(for: configuration)
-            try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
-            try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
-            try? KDriveThumbnailPipeline.removeCachedThumbnails(domainIdentifier: configuration.domainIdentifier)
-            try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
-            domains = try await domainStore.allConfigurations()
+            try await removeDomainAndLocalState(configuration)
+            let synchronizedState = try await synchronizedDomainConfigurations()
+            domains = synchronizedState.configurations
             statusMessage = "Removed \(configuration.displayName) from Files."
             errorMessage = nil
         } catch {
@@ -243,51 +327,197 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
-    func disconnect() async {
+    func logoutAccount(_ account: ProviderAccount) async {
         do {
-            try await tokenStore.deleteToken()
-            token = nil
-            drives = []
-            selectedDriveID = nil
-            manualAccessToken = ""
-            statusMessage = "Disconnected."
+            let accountDomains = domains(for: account.accountIdentifier)
+            for domain in accountDomains {
+                try await removeDomainAndLocalState(domain)
+            }
+
+            try await tokenStore.deleteToken(accountIdentifier: account.accountIdentifier)
+            try await accountStore.remove(accountIdentifier: account.accountIdentifier)
+            drivesByAccountIdentifier[account.accountIdentifier] = nil
+            selectedDriveIDs[account.accountIdentifier] = nil
+            manualDriveIDs[account.accountIdentifier] = nil
+            manualDriveNames[account.accountIdentifier] = nil
+            automaticallyLoadedDriveAccountIdentifiers.remove(account.accountIdentifier)
+
+            accounts = try await accountStore.allAccounts()
+            let synchronizedState = try await synchronizedDomainConfigurations()
+            domains = synchronizedState.configurations
+            statusMessage = "Logged out \(account.displayName)."
             errorMessage = nil
         } catch {
             await recordAppFailure(
                 kind: .authentication,
-                summary: "Could not remove the saved token.",
+                summary: "Could not log out the account.",
                 error: error,
                 category: .authentication
             )
-            errorMessage = "Could not remove the saved token: \(error.localizedDescription)"
+            errorMessage = "Could not log out \(account.displayName): \(error.localizedDescription)"
             statusMessage = nil
         }
     }
 
-    private func saveConnectedToken(_ token: KDriveOAuthToken) async throws {
-        try await tokenStore.saveToken(token)
-        self.token = token
+    func renameAccount(accountIdentifier: String, displayName: String) async {
+        guard var account = account(accountIdentifier: accountIdentifier) else { return }
+        guard account.updateDisplayName(displayName) else { return }
+
+        do {
+            try await accountStore.save(account)
+            accounts = try await accountStore.allAccounts()
+            let synchronizedState = try await synchronizedDomainConfigurations()
+            domains = synchronizedState.configurations
+            errorMessage = nil
+        } catch {
+            await recordAppFailure(
+                kind: .domainManagement,
+                summary: "Could not rename the account.",
+                error: error,
+                category: .storage
+            )
+            errorMessage = "Could not rename the account: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    private func loadDrivesIfPossible(accountIdentifier: String) async {
+        guard account(accountIdentifier: accountIdentifier) != nil,
+              loadingDriveAccountIdentifiers.contains(accountIdentifier) == false,
+              drivesByAccountIdentifier[accountIdentifier] == nil,
+              automaticallyLoadedDriveAccountIdentifiers.contains(accountIdentifier) == false
+        else {
+            return
+        }
+
+        do {
+            guard let token = try await tokenStore.loadToken(accountIdentifier: accountIdentifier) else {
+                return
+            }
+            guard token.shouldRefresh() == false || token.refreshToken != nil else {
+                return
+            }
+
+            automaticallyLoadedDriveAccountIdentifiers.insert(accountIdentifier)
+            await loadDrives(accountIdentifier: accountIdentifier)
+        } catch {
+            automaticallyLoadedDriveAccountIdentifiers.insert(accountIdentifier)
+            await recordAppFailure(
+                kind: .driveDiscovery,
+                summary: "Could not check saved account credentials.",
+                error: error,
+                category: .authentication
+            )
+            errorMessage = "Could not check saved account credentials: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    private func createAccount(authenticationKind: ProviderAccountAuthenticationKind, token: KDriveOAuthToken) async throws -> ProviderAccount {
+        let now = Date()
+        let account = ProviderAccount(
+            displayName: nextAccountDisplayName(authenticationKind: authenticationKind, token: token),
+            authenticationKind: authenticationKind,
+            createdAt: now,
+            updatedAt: now
+        )
+
+        try await tokenStore.saveToken(token, accountIdentifier: account.accountIdentifier)
+        do {
+            try await accountStore.save(account)
+        } catch {
+            try? await tokenStore.deleteToken(accountIdentifier: account.accountIdentifier)
+            throw error
+        }
+
+        accounts = try await accountStore.allAccounts()
+        seedDraftState(for: account.accountIdentifier)
         errorMessage = nil
+        return account
+    }
+
+    private func nextAccountDisplayName(authenticationKind: ProviderAccountAuthenticationKind, token: KDriveOAuthToken) -> String {
+        let baseName = idTokenDisplayName(from: token) ??
+            (authenticationKind == .manualAccessToken ? "Manual Token" : "Infomaniak Account")
+        return uniqueAccountDisplayName(baseName: baseName)
+    }
+
+    private func uniqueAccountDisplayName(baseName: String) -> String {
+        let existingNames = Set(accounts.map(\.displayName))
+        let normalizedBaseName = trimmed(baseName).nilIfEmpty ?? "Infomaniak Account"
+        guard existingNames.contains(normalizedBaseName) else {
+            return normalizedBaseName
+        }
+
+        var index = 2
+        var candidate = "\(normalizedBaseName) \(index)"
+        while existingNames.contains(candidate) {
+            index += 1
+            candidate = "\(normalizedBaseName) \(index)"
+        }
+        return candidate
+    }
+
+    private func idTokenDisplayName(from token: KDriveOAuthToken) -> String? {
+        guard let idToken = token.idToken,
+              let payloadData = jwtPayloadData(from: idToken),
+              let claims = try? JSONDecoder().decode(OAuthIDTokenDisplayNameClaims.self, from: payloadData)
+        else {
+            return nil
+        }
+
+        let fullName = [claims.givenName, claims.familyName]
+            .compactMap { trimmed($0 ?? "").nilIfEmpty }
+            .joined(separator: " ")
+
+        return [claims.name, fullName.nilIfEmpty]
+            .compactMap { $0 }
+            .compactMap { trimmed($0).nilIfEmpty }
+            .first
+    }
+
+    private func jwtPayloadData(from token: String) -> Data? {
+        let segments = token.split(separator: ".")
+        guard segments.count >= 2 else { return nil }
+
+        var payload = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        let padding = payload.count % 4
+        if padding > 0 {
+            payload += String(repeating: "=", count: 4 - padding)
+        }
+
+        return Data(base64Encoded: payload)
+    }
+
+    private func removeDomainAndLocalState(_ configuration: ProviderDomainConfiguration) async throws {
+        try await domainRegistrar.removeDomain(for: configuration)
+        try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
+        try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
+        try? KDriveThumbnailPipeline.removeCachedThumbnails(domainIdentifier: configuration.domainIdentifier)
+        try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
     }
 
     private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) async {
         try? await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
         try? await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
 
-        if let storedDomains = try? await domainStore.allConfigurations() {
+        if let synchronizedState = try? await synchronizedDomainConfigurations() {
+            domains = synchronizedState.configurations
+        } else if let storedDomains = try? await domainStore.allConfigurations() {
             domains = storedDomains
         } else {
             domains.removeAll { $0.domainIdentifier == configuration.domainIdentifier }
         }
     }
 
-    private func usableToken() async throws -> KDriveOAuthToken {
-        var loadedToken = token
-        if loadedToken == nil {
-            loadedToken = try await tokenStore.loadToken()
+    private func usableToken(accountIdentifier: String) async throws -> KDriveOAuthToken {
+        guard account(accountIdentifier: accountIdentifier) != nil else {
+            throw PotassiumProviderAppModelError.missingAccount
         }
-
-        guard var token = loadedToken else {
+        guard var token = try await tokenStore.loadToken(accountIdentifier: accountIdentifier) else {
             throw PotassiumProviderAppModelError.missingToken
         }
 
@@ -296,29 +526,47 @@ final class PotassiumProviderAppModel: ObservableObject {
                 throw PotassiumProviderAppModelError.expiredToken
             }
             token = try await KDriveOAuthClient.refresh(refreshToken: refreshToken)
-            try await tokenStore.saveToken(token)
-            self.token = token
+            try await tokenStore.saveToken(token, accountIdentifier: accountIdentifier)
         }
 
         return token
     }
 
-    private func refreshDraftFromSelectedDrive() {
-        guard let selectedDrive else { return }
-        manualDriveID = String(selectedDrive.id)
-        manualDriveName = selectedDrive.name
+    private func refreshDraftFromSelectedDrive(accountIdentifier: String) {
+        guard let selectedDriveID = selectedDriveIDs[accountIdentifier],
+              let selectedDrive = drivesByAccountIdentifier[accountIdentifier]?.first(where: { $0.id == selectedDriveID })
+        else {
+            return
+        }
+        manualDriveIDs[accountIdentifier] = String(selectedDrive.id)
+        manualDriveNames[accountIdentifier] = selectedDrive.name
     }
 
-    private func resolvedDriveDraft() -> (id: Int, name: String)? {
-        if let selectedDrive {
+    private func resolvedDriveDraft(accountIdentifier: String) -> (id: Int, name: String)? {
+        if let selectedDriveID = selectedDriveIDs[accountIdentifier],
+           let selectedDrive = drivesByAccountIdentifier[accountIdentifier]?.first(where: { $0.id == selectedDriveID }) {
             return (selectedDrive.id, selectedDrive.name)
         }
 
-        guard let id = Int(trimmed(manualDriveID)), id > 0 else {
+        guard let id = Int(trimmed(manualDriveIDs[accountIdentifier] ?? "")), id > 0 else {
             return nil
         }
-        let name = trimmed(manualDriveName).nilIfEmpty ?? "kDrive \(id)"
+        let name = trimmed(manualDriveNames[accountIdentifier] ?? "").nilIfEmpty ?? "kDrive \(id)"
         return (id, name)
+    }
+
+    private static func makeDefaultAccountStore() -> any ProviderAccountStoring {
+        if let appGroupStore = try? ProviderAccountFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier) {
+            return appGroupStore
+        }
+
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first ?? FileManager.default.temporaryDirectory
+        return ProviderAccountFileStore(
+            directoryURL: applicationSupport
+                .appendingPathComponent("potassiumProvider", isDirectory: true)
+                .appendingPathComponent("Accounts", isDirectory: true)
+        )
     }
 
     private static func makeDefaultDomainStore() -> any DomainConfigurationStoring {
@@ -347,12 +595,62 @@ final class PotassiumProviderAppModel: ObservableObject {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func migrateLegacyStateIfNeeded() async throws {
+        let storedDomains = try await domainStore.allConfigurations()
+        let legacyToken = try await tokenStore.loadLegacyToken()
+        let needsLegacyAccount = legacyToken != nil ||
+            storedDomains.contains { $0.accountIdentifier == ProviderConstants.legacyAccountIdentifier }
+
+        guard needsLegacyAccount else { return }
+
+        if try await accountStore.account(accountIdentifier: ProviderConstants.legacyAccountIdentifier) == nil {
+            let now = Date()
+            let authenticationKind: ProviderAccountAuthenticationKind = legacyToken?.refreshToken == nil ? .manualAccessToken : .oauth
+            try await accountStore.save(ProviderAccount(
+                accountIdentifier: ProviderConstants.legacyAccountIdentifier,
+                displayName: "Legacy Account",
+                authenticationKind: authenticationKind,
+                createdAt: now,
+                updatedAt: now
+            ))
+        }
+
+        try await tokenStore.migrateLegacyToken(to: ProviderConstants.legacyAccountIdentifier)
+
+        for configuration in storedDomains where configuration.accountIdentifier == ProviderConstants.legacyAccountIdentifier {
+            try await domainStore.save(configuration)
+        }
+    }
+
+    private func seedDraftState() {
+        for account in accounts {
+            seedDraftState(for: account.accountIdentifier)
+        }
+    }
+
+    private func seedDraftState(for accountIdentifier: String) {
+        if selectedDriveIDs[accountIdentifier] == nil {
+            selectedDriveIDs[accountIdentifier] = drivesByAccountIdentifier[accountIdentifier]?.first?.id
+        }
+        if manualDriveIDs[accountIdentifier] == nil {
+            manualDriveIDs[accountIdentifier] = ""
+        }
+        if manualDriveNames[accountIdentifier] == nil {
+            manualDriveNames[accountIdentifier] = ""
+        }
+    }
+
     private func synchronizedDomainConfigurations() async throws -> (configurations: [ProviderDomainConfiguration], registrationError: Error?) {
         var configurations = try await domainStore.allConfigurations()
+        let accountLookup = Dictionary(uniqueKeysWithValues: accounts.map { ($0.accountIdentifier, $0) })
+        let displayNames = desiredDomainDisplayNames(for: configurations, accounts: accountLookup)
         var registrationError: Error?
 
         for index in configurations.indices {
-            if configurations[index].normalizeFinderDisplayName() {
+            let desiredDisplayName = displayNames[configurations[index].domainIdentifier] ?? configurations[index].displayName
+            if configurations[index].displayName != desiredDisplayName {
+                configurations[index].displayName = desiredDisplayName
+                configurations[index].updatedAt = Date()
                 try await domainStore.save(configurations[index])
             }
 
@@ -368,7 +666,57 @@ final class PotassiumProviderAppModel: ObservableObject {
                 lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
             },
             registrationError
-            )
+        )
+    }
+
+    private func desiredDomainDisplayNames(
+        for configurations: [ProviderDomainConfiguration],
+        accounts: [String: ProviderAccount]
+    ) -> [String: String] {
+        let baseNames = Dictionary(uniqueKeysWithValues: configurations.map {
+            ($0.domainIdentifier, ProviderDomainConfiguration.finderDisplayName(forDriveName: $0.driveName))
+        })
+        let groupedByBaseName = Dictionary(grouping: configurations) { configuration in
+            baseNames[configuration.domainIdentifier]?.localizedLowercase ?? configuration.driveName.localizedLowercase
+        }
+
+        var names: [String: String] = [:]
+        for (_, group) in groupedByBaseName {
+            if group.count == 1, let configuration = group.first {
+                names[configuration.domainIdentifier] = baseNames[configuration.domainIdentifier]
+                continue
+            }
+
+            for configuration in group {
+                let baseName = baseNames[configuration.domainIdentifier] ?? "kDrive"
+                let accountName = accounts[configuration.accountIdentifier]?.displayName ?? "Account"
+                names[configuration.domainIdentifier] = "\(baseName) (\(accountName))"
+            }
+        }
+
+        names = disambiguatedDisplayNames(names, configurations: configurations, suffix: { " - Drive \($0.driveID)" })
+        names = disambiguatedDisplayNames(names, configurations: configurations, suffix: { " - \($0.domainIdentifier.prefix(8))" })
+        return names
+    }
+
+    private func disambiguatedDisplayNames(
+        _ names: [String: String],
+        configurations: [ProviderDomainConfiguration],
+        suffix: (ProviderDomainConfiguration) -> String
+    ) -> [String: String] {
+        let groupedNames = Dictionary(grouping: configurations) { configuration in
+            names[configuration.domainIdentifier] ?? configuration.displayName
+        }
+        var updatedNames = names
+
+        for (_, group) in groupedNames where group.count > 1 {
+            for configuration in group {
+                let currentName = updatedNames[configuration.domainIdentifier] ?? configuration.displayName
+                updatedNames[configuration.domainIdentifier] = currentName + suffix(configuration)
+            }
+        }
+
+        return updatedNames
     }
 
     private func recordAppFailure(
@@ -424,7 +772,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         if error is KDriveSnapshotStoreError {
             return .snapshot
         }
-        if error is DomainConfigurationStoreError {
+        if error is ProviderAccountStoreError || error is DomainConfigurationStoreError {
             return .storage
         }
         if nsError.domain == NSURLErrorDomain {
@@ -463,11 +811,14 @@ final class PotassiumProviderAppModel: ObservableObject {
 }
 
 enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
+    case missingAccount
     case missingToken
     case expiredToken
 
     var errorDescription: String? {
         switch self {
+        case .missingAccount:
+            return "Choose an account before loading drives."
         case .missingToken:
             return "Connect to kDrive before loading drives."
         case .expiredToken:
@@ -479,5 +830,17 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
 private extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
+    }
+}
+
+private struct OAuthIDTokenDisplayNameClaims: Decodable {
+    let name: String?
+    let givenName: String?
+    let familyName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case givenName = "given_name"
+        case familyName = "family_name"
     }
 }

@@ -146,6 +146,7 @@ public struct FileProviderUninstallPlan: Equatable, Sendable {
     public var registeredDomains: [FileProviderUninstallRegisteredDomain]
     public var domainListingFailure: FileProviderUninstallDomainListingFailure?
     public var storedConfigurations: [ProviderDomainConfiguration]
+    public var storedAccounts: [ProviderAccount]
     public var cleanupDomainIdentifiers: [String]
     public var stateItems: [FileProviderUninstallStateItem]
     public var conflictStaging: FileProviderUninstallConflictStagingPlan?
@@ -155,6 +156,7 @@ public struct FileProviderUninstallPlan: Equatable, Sendable {
         registeredDomains: [FileProviderUninstallRegisteredDomain],
         domainListingFailure: FileProviderUninstallDomainListingFailure? = nil,
         storedConfigurations: [ProviderDomainConfiguration],
+        storedAccounts: [ProviderAccount],
         stateItems: [FileProviderUninstallStateItem],
         conflictStaging: FileProviderUninstallConflictStagingPlan?
     ) {
@@ -162,6 +164,7 @@ public struct FileProviderUninstallPlan: Equatable, Sendable {
         self.registeredDomains = registeredDomains.sorted { $0.identifier < $1.identifier }
         self.domainListingFailure = domainListingFailure
         self.storedConfigurations = storedConfigurations.sorted { $0.domainIdentifier < $1.domainIdentifier }
+        self.storedAccounts = storedAccounts.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
         self.cleanupDomainIdentifiers = Array(Set(
             registeredDomains.map(\.identifier) + storedConfigurations.map(\.domainIdentifier)
         )).sorted()
@@ -176,6 +179,7 @@ public struct FileProviderUninstallPlan: Equatable, Sendable {
     public var hasWork: Bool {
         registeredDomains.isEmpty == false ||
             storedConfigurations.isEmpty == false ||
+            (deletesOAuthToken && storedAccounts.isEmpty == false) ||
             stateItems.isEmpty == false ||
             conflictStaging != nil ||
             deletesOAuthToken
@@ -245,14 +249,17 @@ public protocol FileProviderUninstallDomainManaging: Sendable {
 
 public protocol FileProviderUninstallLocalStateManaging: Sendable {
     func storedConfigurations() async throws -> [ProviderDomainConfiguration]
+    func storedAccounts() async throws -> [ProviderAccount]
     func stateItems(forDomainIdentifiers domainIdentifiers: Set<String>) async throws -> [FileProviderUninstallStateItem]
     func conflictStagingPlan(removeContents: Bool) async throws -> FileProviderUninstallConflictStagingPlan?
     func removeLocalState(domainIdentifier: String) async throws
+    func removeAccountRecords(accountIdentifiers: [String]) async throws
     func removeConflictStaging() async throws
 }
 
 public protocol FileProviderUninstallTokenDeleting: Sendable {
-    func deleteToken() async throws
+    func deleteToken(accountIdentifier: String) async throws
+    func deleteLegacyToken() async throws
 }
 
 public struct FileProviderUninstallCoordinator: Sendable {
@@ -272,6 +279,7 @@ public struct FileProviderUninstallCoordinator: Sendable {
 
     public func makePlan(options: FileProviderUninstallOptions) async throws -> FileProviderUninstallPlan {
         let storedConfigurations = try await localState.storedConfigurations()
+        let storedAccounts = try await localState.storedAccounts()
         let registeredDomains: [FileProviderUninstallRegisteredDomain]
         let domainListingFailure: FileProviderUninstallDomainListingFailure?
 
@@ -292,6 +300,7 @@ public struct FileProviderUninstallCoordinator: Sendable {
             registeredDomains: registeredDomains,
             domainListingFailure: domainListingFailure,
             storedConfigurations: storedConfigurations,
+            storedAccounts: storedAccounts,
             stateItems: stateItems,
             conflictStaging: conflictStaging
         )
@@ -349,7 +358,11 @@ public struct FileProviderUninstallCoordinator: Sendable {
 
         var deletedOAuthToken = false
         if plan.options.deletesOAuthToken {
-            try await tokenStore?.deleteToken()
+            for account in plan.storedAccounts {
+                try await tokenStore?.deleteToken(accountIdentifier: account.accountIdentifier)
+            }
+            try await tokenStore?.deleteLegacyToken()
+            try await localState.removeAccountRecords(accountIdentifiers: plan.storedAccounts.map(\.accountIdentifier))
             deletedOAuthToken = tokenStore != nil
         }
 

@@ -1,7 +1,9 @@
 # Authentication
 
 Authentication is shared between the SwiftUI app and the File Provider extension
-through the keychain access group configured in `ProviderConstants`.
+through the keychain access group configured in `ProviderConstants`. The app can
+store multiple local accounts at the same time, and each File Provider domain
+loads the token for the account recorded in its domain configuration.
 
 ## OAuth PKCE Flow
 
@@ -33,18 +35,26 @@ exchanges the code for a `KDriveOAuthToken`.
 `shouldRefresh(now:leeway:)` asks for refresh when the token expires within the
 configured leeway, currently five minutes by default.
 
-## Keychain Storage
+## Account-Scoped Keychain Storage
 
-`KeychainOAuthTokenStore` stores the encoded `KDriveOAuthToken` as a generic
-password item using:
+`KeychainOAuthTokenStore` stores one encoded `KDriveOAuthToken` per local
+account as a generic password item using:
 
 - keychain service: `ProviderConstants.keychainService`
-- keychain account: `ProviderConstants.keychainAccount`
+- keychain account: `oauthToken:<local account identifier>`
 - access group: `ProviderConstants.keychainAccessGroup`
 
-The app saves tokens. The extension loads them in `FileProviderRuntime.load`.
-If a token is refreshable and near expiration, the extension refreshes it and
-saves the replacement token before continuing.
+The app saves tokens when a local account is created. The extension loads the
+domain configuration in `FileProviderRuntime.load`, reads that configuration's
+`accountIdentifier`, and then loads only that account's token. If a token is
+refreshable and near expiration, the extension refreshes it and saves the
+replacement token back to the same account-scoped keychain item.
+
+Legacy installs used a single `oauthToken` keychain account. On app reload, if
+that old token or old domain configuration shape is present, the app creates a
+fixed local legacy account, copies the old token into `oauthToken:legacy-account`,
+deletes the old single-token key, and rewrites legacy domain configuration JSON
+with the account identifier.
 
 ## Manual Access Token Path
 
@@ -55,13 +65,16 @@ The app also supports a manual access token. This creates a token value with:
 - no expiration date
 
 This path is useful for development but is less robust than OAuth because the
-extension cannot refresh the token when it stops working.
+extension cannot refresh the token when it stops working. Each manual token
+creates its own local account and can be logged out independently.
 
 ## Error Behavior
 
-If the extension cannot load a token, or if it needs to refresh but no refresh
-token exists, it throws `NSFileProviderError.notAuthenticated`. That tells the
-system the provider cannot currently service the request.
+If the extension cannot load the token for a domain's account, or if it needs to
+refresh but no refresh token exists, it throws `NSFileProviderError.notAuthenticated`.
+That tells the system only the affected provider domain cannot currently service
+the request. Other domains backed by other accounts continue to use their own
+tokens.
 
 Network and API errors are mapped later by `providerError(...)` in the extension
 runtime. The same mapping path records sanitized authentication/runtime failure

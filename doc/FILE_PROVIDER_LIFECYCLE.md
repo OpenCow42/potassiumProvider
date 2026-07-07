@@ -9,8 +9,9 @@ bytes, mutations, or enumeration.
 Most callbacks begin by loading `FileProviderRuntime`:
 
 1. Load the domain configuration from app group JSON.
-2. Load the OAuth token from keychain.
-3. Refresh the token when needed and possible.
+2. Load the account-scoped OAuth token from keychain using the domain
+   configuration's `accountIdentifier`.
+3. Refresh that account's token when needed and possible.
 4. Create `PotassiumKDriveService`.
 5. Open `KDriveSnapshotSQLiteStore`.
 

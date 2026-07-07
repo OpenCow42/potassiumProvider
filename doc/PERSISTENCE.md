@@ -1,8 +1,9 @@
 # Persistence
 
 The app and extension share state through the configured app group and keychain
-access group. The app group stores domain configuration, listing snapshots, and
-a capped thumbnail data cache. The keychain stores OAuth tokens.
+access group. The app group stores local account records, domain configuration,
+listing snapshots, and a capped thumbnail data cache. The keychain stores
+account-scoped OAuth tokens.
 
 ## App Group Storage
 
@@ -10,11 +11,27 @@ The app group identifier is defined by `ProviderConstants.appGroupIdentifier`.
 
 Current app group contents:
 
+- `Accounts/*.json`
 - `DomainConfigurations/*.json`
 - `Snapshots.sqlite3`, including listing snapshots, conflict events, and recent
   provider/app activity
 - `ConflictStaging/*.upload` while a stale-content conflict copy is being sent
 - `ThumbnailCache/*` for cached remote thumbnail bytes
+
+## Accounts
+
+`ProviderAccountFileStore` stores one JSON file per local `ProviderAccount`.
+These records intentionally contain only local metadata:
+
+- local account identifier
+- user-editable display name
+- authentication kind, either OAuth or manual access token
+- local creation and update dates
+
+Account records do not store remote Infomaniak account IDs, email addresses,
+profile data, bearer tokens, refresh tokens, or ID tokens. Tokens are stored
+separately in the keychain using the account identifier as part of the keychain
+account name.
 
 ## DomainConfigurations
 
@@ -26,9 +43,15 @@ These files are used by:
 - the app, to list configured domains
 - the extension, to load the drive ID, display name, domain ID, and root file ID
   for the active File Provider domain
+- the extension, to load the account identifier used for account-scoped token
+  lookup
 
 Filenames are sanitized from domain identifiers. Removing a domain deletes its
 configuration JSON after the File Provider domain is removed.
+
+Legacy domain JSON that does not contain `accountIdentifier` decodes to the fixed
+`legacy-account` local account. The app rewrites those configurations during
+reload so future extension loads can use explicit account-scoped token lookup.
 
 ## Snapshots.sqlite3
 
@@ -162,6 +185,7 @@ SQLite does not cache:
 
 - file bytes
 - OAuth tokens
+- remote account profile data
 - pending local operations
 - kDrive version history
 - private kDrive web URLs
@@ -210,10 +234,11 @@ For local development resets, `scripts/uninstall-file-provider.sh` invokes the
 signed app's hidden uninstall command. That command removes registered File
 Provider domains through `NSFileProviderManager`, deletes matching
 `DomainConfigurations` JSON files, and removes per-domain SQLite snapshot,
-conflict, activity rows, and thumbnail-cache files. It preserves
-`ConflictStaging` and the OAuth token by default; `--hard-purge` removes
-`ConflictStaging`, and `--full-logout` or `--hard-purge` deletes the saved OAuth
-token. See
+conflict, activity rows, and thumbnail-cache files. It preserves account
+records, `ConflictStaging`, and account-scoped OAuth tokens by default;
+`--hard-purge` removes `ConflictStaging`, and `--full-logout` or `--hard-purge`
+deletes all account-scoped tokens, the legacy single-token key, and stored
+account records. See
 [File Provider Cleanup](FILE_PROVIDER_CLEANUP.md) for the full script behavior.
 
 ## Old JSON Snapshot Store

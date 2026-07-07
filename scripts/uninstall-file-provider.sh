@@ -22,8 +22,8 @@ Options:
   --app PATH      Use an existing macOS potassiumProvider.app instead of building.
   --dry-run       Print the uninstall plan without removing domains or local state.
   --yes           Perform the uninstall. Required unless --dry-run is present.
-  --full-logout   Also delete the saved OAuth token.
-  --hard-purge    Use File Provider remove-all mode, delete ConflictStaging, and delete the OAuth token.
+  --full-logout   Also delete saved account records and OAuth tokens.
+  --hard-purge    Use File Provider remove-all mode, delete ConflictStaging, account records, and OAuth tokens.
   --help          Show this help.
 USAGE
 }

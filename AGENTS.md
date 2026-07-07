@@ -89,11 +89,11 @@ scripts/uninstall-file-provider.sh --dry-run
 # domain/cache/audit state while preserving dirty local user data and OAuth.
 scripts/uninstall-file-provider.sh --yes
 
-# Also delete the saved OAuth token.
+# Also delete saved account records and OAuth tokens.
 scripts/uninstall-file-provider.sh --yes --full-logout
 
 # Destructive local reset: use File Provider remove-all mode, delete
-# ConflictStaging, and delete the saved OAuth token.
+# ConflictStaging, saved account records, and OAuth tokens.
 scripts/uninstall-file-provider.sh --yes --hard-purge
 ```
 

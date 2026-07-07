@@ -33,6 +33,73 @@ struct PotassiumProviderCoreTests {
         #expect(try await store.allConfigurations().isEmpty)
     }
 
+    @Test func providerAccountStorePersistsAndRemovesAccounts() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = ProviderAccountFileStore(directoryURL: directory)
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Work",
+            authenticationKind: .oauth,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        try await store.save(account)
+
+        #expect(try await store.account(accountIdentifier: "account-1") == account)
+        #expect(try await store.allAccounts() == [account])
+
+        try await store.remove(accountIdentifier: "account-1")
+
+        #expect(try await store.account(accountIdentifier: "account-1") == nil)
+        #expect(try await store.allAccounts().isEmpty)
+    }
+
+    @Test func domainConfigurationDecodesLegacyAccountIdentifier() throws {
+        let json = """
+        {
+          "domainIdentifier": "domain-1",
+          "displayName": "Work Drive",
+          "driveID": 42,
+          "driveName": "Work Drive",
+          "rootFileID": 1,
+          "createdAt": "1970-01-01T00:16:40Z",
+          "updatedAt": "1970-01-01T00:16:40Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let configuration = try decoder.decode(ProviderDomainConfiguration.self, from: Data(json.utf8))
+
+        #expect(configuration.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
+        #expect(configuration.driveID == 42)
+    }
+
+    @Test func inMemoryTokenStoreScopesTokensAndMigratesLegacyToken() async throws {
+        let store = InMemoryOAuthTokenStore()
+        let firstToken = token(accessToken: "first-token")
+        let secondToken = token(accessToken: "second-token")
+
+        await store.saveToken(firstToken, accountIdentifier: "account-1")
+        await store.saveToken(secondToken, accountIdentifier: "account-2")
+
+        #expect(await store.loadToken(accountIdentifier: "account-1")?.accessToken == "first-token")
+        #expect(await store.loadToken(accountIdentifier: "account-2")?.accessToken == "second-token")
+
+        await store.deleteToken(accountIdentifier: "account-1")
+
+        #expect(await store.loadToken(accountIdentifier: "account-1") == nil)
+        #expect(await store.loadToken(accountIdentifier: "account-2")?.accessToken == "second-token")
+
+        let legacyStore = InMemoryOAuthTokenStore(token: token(accessToken: "legacy-token"))
+        #expect(try await legacyStore.migrateLegacyToken(to: "migrated-account"))
+        #expect(await legacyStore.loadToken(accountIdentifier: "migrated-account")?.accessToken == "legacy-token")
+        #expect(await legacyStore.loadLegacyToken() == nil)
+    }
+
     @Test func providerDomainConfigurationDerivesFinderDisplayName() {
         #expect(ProviderDomainConfiguration.finderDisplayName(forDriveName: " Work Drive ") == "Work Drive")
         #expect(ProviderDomainConfiguration.finderDisplayName(forDriveName: "   ") == "kDrive")
@@ -1196,7 +1263,8 @@ struct PotassiumProviderCoreTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
         let tokenStore = InMemoryOAuthTokenStore()
         let drive = KDriveDriveSummary(
             id: 42,
@@ -1207,6 +1275,7 @@ struct PotassiumProviderCoreTests {
             isInMaintenance: false
         )
         let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
             domainStore: domainStore,
             tokenStore: tokenStore,
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
@@ -1224,11 +1293,180 @@ struct PotassiumProviderCoreTests {
 
         #expect(model.isConnected)
         #expect(model.manualAccessToken.isEmpty)
-        #expect(model.drives == [drive])
-        #expect(model.selectedDriveID == drive.id)
-        let savedToken = await tokenStore.loadToken()
+        let account = try #require(model.accounts.first)
+        #expect(account.authenticationKind == .manualAccessToken)
+        #expect(model.drives(for: account.accountIdentifier) == [drive])
+        #expect(model.selectedDriveID(for: account.accountIdentifier) == drive.id)
+        let savedToken = await tokenStore.loadToken(accountIdentifier: account.accountIdentifier)
         #expect(savedToken?.accessToken == "manual-token")
         #expect(savedToken?.scope == nil)
+    }
+
+    @MainActor
+    @Test func appModelAutomaticallyLoadsSavedAccountDrivesWhenPossible() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
+        let tokenStore = InMemoryOAuthTokenStore()
+        let accountWithToken = ProviderAccount(
+            accountIdentifier: "account-with-token",
+            displayName: "Connected Account",
+            authenticationKind: .manualAccessToken
+        )
+        let accountWithoutToken = ProviderAccount(
+            accountIdentifier: "account-without-token",
+            displayName: "Disconnected Account",
+            authenticationKind: .manualAccessToken
+        )
+        try await accountStore.save(accountWithToken)
+        try await accountStore.save(accountWithoutToken)
+        await tokenStore.saveToken(token(accessToken: "saved-token"), accountIdentifier: accountWithToken.accountIdentifier)
+
+        let drive = KDriveDriveSummary(
+            id: 42,
+            name: "Work Drive",
+            accountID: 100,
+            role: "admin",
+            status: "ok",
+            isInMaintenance: false
+        )
+        var requestedTokens: [String] = []
+        let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
+            domainStore: domainStore,
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { token in
+                requestedTokens.append(token)
+                return FakeKDriveFileProvider(drives: [drive])
+            }
+        )
+
+        await model.reloadStoredState()
+        await model.loadDrivesForAccountsIfPossible()
+        await model.loadDrivesForAccountsIfPossible()
+
+        #expect(requestedTokens == ["saved-token"])
+        #expect(model.drives(for: accountWithToken.accountIdentifier) == [drive])
+        #expect(model.drives(for: accountWithoutToken.accountIdentifier).isEmpty)
+        #expect(model.errorMessage == nil)
+    }
+
+    @MainActor
+    @Test func appModelUsesOAuthIDTokenNameForAccountDisplayName() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
+        let tokenStore = InMemoryOAuthTokenStore()
+        let drive = KDriveDriveSummary(
+            id: 42,
+            name: "Work Drive",
+            accountID: 100,
+            role: "admin",
+            status: "ok",
+            isInMaintenance: false
+        )
+        let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
+            domainStore: domainStore,
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(token: KDriveOAuthToken(
+                accessToken: "oauth-token",
+                tokenType: "Bearer",
+                refreshToken: nil,
+                scope: nil,
+                idToken: unsignedIDToken(payload: #"{"name":"Alice Example","email":"alice@example.test"}"#),
+                expiresAt: nil
+            )),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: [drive]) }
+        )
+
+        await model.connectWithOAuth()
+
+        let account = try #require(model.accounts.first)
+        #expect(account.displayName == "Alice Example")
+        #expect(account.authenticationKind == .oauth)
+        #expect(model.drives(for: account.accountIdentifier) == [drive])
+    }
+
+    @MainActor
+    @Test func appModelKeepsMultipleAccountsAndLogsOutIndependently() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
+        let tokenStore = InMemoryOAuthTokenStore()
+        let driveA = KDriveDriveSummary(
+            id: 42,
+            name: "Work Drive",
+            accountID: 100,
+            role: "admin",
+            status: "ok",
+            isInMaintenance: false
+        )
+        let driveB = KDriveDriveSummary(
+            id: 84,
+            name: "Work Drive",
+            accountID: 200,
+            role: "admin",
+            status: "ok",
+            isInMaintenance: false
+        )
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+        let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
+        let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
+            domainStore: domainStore,
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            snapshotStore: snapshotStore,
+            eventStore: eventStore,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { token in
+                FakeKDriveFileProvider(drives: token == "token-a" ? [driveA] : [driveB])
+            }
+        )
+
+        model.manualAccessToken = "token-a"
+        await model.saveManualAccessToken()
+        let accountA = try #require(model.accounts.first)
+
+        model.manualAccessToken = "token-b"
+        await model.saveManualAccessToken()
+        let accountB = try #require(model.accounts.first { $0.accountIdentifier != accountA.accountIdentifier })
+
+        await model.addDomain(accountIdentifier: accountA.accountIdentifier, drive: driveA)
+        await model.addDomain(accountIdentifier: accountB.accountIdentifier, drive: driveB)
+
+        let configuredDomains = try await domainStore.allConfigurations()
+        #expect(configuredDomains.count == 2)
+        #expect(Set(configuredDomains.map(\.accountIdentifier)) == [
+            accountA.accountIdentifier,
+            accountB.accountIdentifier,
+        ])
+        #expect(Set(configuredDomains.map(\.displayName)) == [
+            "Work Drive (\(accountA.displayName))",
+            "Work Drive (\(accountB.displayName))",
+        ])
+
+        await model.logoutAccount(accountA)
+
+        #expect(model.accounts.map(\.accountIdentifier) == [accountB.accountIdentifier])
+        #expect(model.domains.map(\.accountIdentifier) == [accountB.accountIdentifier])
+        #expect(await tokenStore.loadToken(accountIdentifier: accountA.accountIdentifier) == nil)
+        #expect(await tokenStore.loadToken(accountIdentifier: accountB.accountIdentifier)?.accessToken == "token-b")
+        #expect(try await domainStore.allConfigurations().map(\.accountIdentifier) == [accountB.accountIdentifier])
     }
 
     @MainActor
@@ -1236,13 +1474,16 @@ struct PotassiumProviderCoreTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
+        let tokenStore = InMemoryOAuthTokenStore()
         let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
         let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
         let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
         let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
             domainStore: domainStore,
-            tokenStore: InMemoryOAuthTokenStore(),
+            tokenStore: tokenStore,
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: NoopProviderDomainRegistrar(),
             snapshotStore: snapshotStore,
@@ -1251,12 +1492,16 @@ struct PotassiumProviderCoreTests {
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
 
-        model.manualDriveID = " 42 "
-        model.manualDriveName = "Work Drive"
+        model.manualAccessToken = "token"
+        await model.saveManualAccessToken()
+        let account = try #require(model.accounts.first)
+        model.setManualDriveID(" 42 ", for: account.accountIdentifier)
+        model.setManualDriveName("Work Drive", for: account.accountIdentifier)
 
-        await model.addDomain()
+        await model.addDomain(accountIdentifier: account.accountIdentifier)
 
         let domain = try #require(model.domains.first)
+        #expect(domain.accountIdentifier == account.accountIdentifier)
         #expect(domain.displayName == "Work Drive")
         #expect(domain.driveID == 42)
         #expect(domain.driveName == "Work Drive")
@@ -1308,6 +1553,7 @@ struct PotassiumProviderCoreTests {
 
         let registrar = RecordingProviderDomainRegistrar()
         let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)),
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
@@ -1319,12 +1565,17 @@ struct PotassiumProviderCoreTests {
         await model.reloadStoredState()
 
         let domain = try #require(model.domains.first)
+        let account = try #require(model.accounts.first)
+        #expect(account.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
+        #expect(account.displayName == "Legacy Account")
         #expect(domain.displayName == "Work Drive")
+        #expect(domain.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
         #expect(domain.driveName == "Work Drive")
         #expect(domain.updatedAt > legacyUpdatedAt)
 
         let storedDomain = try #require(await domainStore.configuration(domainIdentifier: "legacy-domain"))
         #expect(storedDomain.displayName == "Work Drive")
+        #expect(storedDomain.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
 
         let registeredDomain = try #require(registrar.addedConfigurations.first)
         #expect(registeredDomain.domainIdentifier == "legacy-domain")
@@ -1336,10 +1587,12 @@ struct PotassiumProviderCoreTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let domainStore = DomainConfigurationFileStore(directoryURL: directory)
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
         let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
         let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
         let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
             domainStore: domainStore,
             tokenStore: InMemoryOAuthTokenStore(),
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
@@ -1350,10 +1603,13 @@ struct PotassiumProviderCoreTests {
             fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
         )
 
-        model.manualDriveID = "42"
-        model.manualDriveName = "Work Drive"
+        model.manualAccessToken = "token"
+        await model.saveManualAccessToken()
+        let account = try #require(model.accounts.first)
+        model.setManualDriveID("42", for: account.accountIdentifier)
+        model.setManualDriveName("Work Drive", for: account.accountIdentifier)
 
-        await model.addDomain()
+        await model.addDomain(accountIdentifier: account.accountIdentifier)
 
         #expect(model.domains.isEmpty)
         #expect(try await domainStore.allConfigurations().isEmpty)
@@ -1372,6 +1628,13 @@ struct PotassiumProviderCoreTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Stored Account",
+            authenticationKind: .manualAccessToken
+        )
+        try await accountStore.save(account)
         let tokenStore = InMemoryOAuthTokenStore()
         await tokenStore.saveToken(KDriveOAuthToken(
             accessToken: "secret-token",
@@ -1380,10 +1643,11 @@ struct PotassiumProviderCoreTests {
             scope: nil,
             idToken: nil,
             expiresAt: nil
-        ))
+        ), accountIdentifier: account.accountIdentifier)
         let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
         let model = PotassiumProviderAppModel(
-            domainStore: DomainConfigurationFileStore(directoryURL: directory),
+            accountStore: accountStore,
+            domainStore: DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)),
             tokenStore: tokenStore,
             oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
             domainRegistrar: NoopProviderDomainRegistrar(),
@@ -1397,7 +1661,8 @@ struct PotassiumProviderCoreTests {
             }
         )
 
-        await model.loadDrives()
+        await model.reloadStoredState()
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
 
         let failure = try #require(await eventStore.activities().first)
         #expect(failure.scope == .app)
@@ -1433,6 +1698,34 @@ struct PotassiumProviderCoreTests {
             modifiedAt: modifiedAt,
             updatedAt: updatedAt
         )
+    }
+
+    private func token(accessToken: String) -> KDriveOAuthToken {
+        KDriveOAuthToken(
+            accessToken: accessToken,
+            tokenType: "Bearer",
+            refreshToken: nil,
+            scope: nil,
+            idToken: nil,
+            expiresAt: nil
+        )
+    }
+
+    private func unsignedIDToken(payload: String) -> String {
+        let header = #"{"alg":"none"}"#
+        return [
+            base64URLEncodedString(header),
+            base64URLEncodedString(payload),
+            "",
+        ].joined(separator: ".")
+    }
+
+    private func base64URLEncodedString(_ value: String) -> String {
+        Data(value.utf8)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     private func makeConflictEvent(

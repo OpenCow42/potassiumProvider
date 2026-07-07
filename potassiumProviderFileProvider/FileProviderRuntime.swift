@@ -33,7 +33,7 @@ struct FileProviderRuntime: Sendable {
         FileProviderLog.runtime.debug("load runtime for domain(\(domain.identifier.rawValue, privacy: .public))")
         let configuration = try await loadConfiguration(domain: domain)
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
-        guard var token = try await tokenStore.loadToken() else {
+        guard var token = try await tokenStore.loadToken(accountIdentifier: configuration.accountIdentifier) else {
             FileProviderLog.runtime.error("missing OAuth token for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
             throw NSFileProviderError(.notAuthenticated)
         }
@@ -45,7 +45,7 @@ struct FileProviderRuntime: Sendable {
                 throw NSFileProviderError(.notAuthenticated)
             }
             token = try await KDriveOAuthClient.refresh(refreshToken: refreshToken)
-            try await tokenStore.saveToken(token)
+            try await tokenStore.saveToken(token, accountIdentifier: configuration.accountIdentifier)
             FileProviderLog.runtime.info("refreshed OAuth token for domain(\(domain.identifier.rawValue, privacy: .public))")
         }
 

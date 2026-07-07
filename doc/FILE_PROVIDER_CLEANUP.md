@@ -23,7 +23,7 @@ Perform the normal safe development reset:
 scripts/uninstall-file-provider.sh --yes
 ```
 
-Also delete the saved OAuth token:
+Also delete all saved account records and OAuth tokens:
 
 ```sh
 scripts/uninstall-file-provider.sh --yes --full-logout
@@ -65,8 +65,8 @@ that contains XCTest injection libraries.
 ## App Command Behavior
 
 `--dry-run` prints the plan and does not remove domains, SQLite rows, thumbnail
-cache files, domain configuration JSON, ConflictStaging contents, or OAuth
-tokens.
+cache files, domain configuration JSON, account JSON, ConflictStaging contents,
+or OAuth tokens.
 
 Without `--yes`, a non-dry run prints the plan and exits without mutating local
 state.
@@ -79,21 +79,23 @@ state.
 - removes matching SQLite snapshot, conflict, and activity rows;
 - removes matching ThumbnailCache files;
 - keeps ConflictStaging contents;
-- keeps the saved OAuth token.
+- keeps all saved account records and OAuth tokens.
 
 If File Provider domain listing fails, the app can still build a cleanup plan
 from saved domain configurations. For plain `--yes`, targeted domain removal
 must still succeed; otherwise the command stops with a detailed File Provider
 error instead of silently escalating to a destructive mode.
 
-`--full-logout` includes the normal dev reset and also deletes the saved OAuth
-token.
+`--full-logout` includes the normal dev reset and also deletes every stored
+account record, every account-scoped OAuth token, and the legacy single-token
+key if it still exists.
 
 `--hard-purge` is the destructive local reset:
 
 - uses File Provider remove-all mode;
 - deletes ConflictStaging contents;
-- deletes the saved OAuth token;
+- deletes every stored account record, every account-scoped OAuth token, and the
+  legacy single-token key if it still exists;
 - may use the File Provider remove-all fallback if domain listing failed and
   targeted removal by saved configuration also fails.
 
