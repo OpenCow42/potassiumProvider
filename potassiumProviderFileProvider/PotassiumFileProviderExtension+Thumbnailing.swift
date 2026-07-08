@@ -1,5 +1,6 @@
 import FileProvider
 import Foundation
+import InfomaniakConcurrency
 import OSLog
 import PotassiumProviderCore
 
@@ -20,26 +21,17 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
                 runtime = loadedRuntime
-                let thumbnailPipeline = try await KDriveThumbnailPipelinePool.shared.pipeline()
                 try Task.checkCancellation()
 
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    for itemIdentifier in itemIdentifiers {
-                        group.addTask {
-                            try Task.checkCancellation()
-                            try await self.fetchThumbnail(
-                                for: itemIdentifier,
-                                dimensions: dimensions,
-                                runtime: loadedRuntime,
-                                thumbnailPipeline: thumbnailPipeline,
-                                perThumbnailCompletionHandler: perThumbnailCompletionHandler
-                            )
-                        }
-                    }
-
-                    while try await group.next() != nil {
-                        progress.completedUnitCount += 1
-                    }
+                try await itemIdentifiers.concurrentForEach(customConcurrency: Self.maximumConcurrentContentFetches) { itemIdentifier in
+                    try Task.checkCancellation()
+                    try await self.fetchThumbnail(
+                        for: itemIdentifier,
+                        dimensions: dimensions,
+                        runtime: loadedRuntime,
+                        perThumbnailCompletionHandler: perThumbnailCompletionHandler
+                    )
+                    progress.completedUnitCount += 1
                 }
 
                 try Task.checkCancellation()
@@ -73,26 +65,17 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
         for itemIdentifier: NSFileProviderItemIdentifier,
         dimensions: KDriveThumbnailDimensions,
         runtime: FileProviderRuntime,
-        thumbnailPipeline: KDriveThumbnailPipeline,
         perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void
     ) async throws {
         try Task.checkCancellation()
         do {
-            guard let fileID = try await KDriveThumbnailEligibilityResolver.thumbnailFileID(
-                rawItemIdentifier: itemIdentifier.rawValue,
-                domainIdentifier: runtime.configuration.domainIdentifier,
-                driveID: runtime.configuration.driveID,
-                snapshotStore: runtime.snapshotStore,
-                remote: runtime.remote
-            ) else {
-                FileProviderLog.replicatedExtension.debug("skip thumbnail for non-file item(\(itemIdentifier.rawValue, privacy: .public))")
+            let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
+            guard case let .item(fileID) = identifier else {
                 perThumbnailCompletionHandler(itemIdentifier, nil, nil)
                 return
             }
 
-            let data = try await thumbnailPipeline.thumbnail(
-                domainIdentifier: runtime.configuration.domainIdentifier,
-                remote: runtime.remote,
+            let data = try await runtime.remote.thumbnail(
                 driveID: runtime.configuration.driveID,
                 fileID: fileID,
                 width: dimensions.width,

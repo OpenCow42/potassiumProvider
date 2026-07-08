@@ -2,8 +2,7 @@
 
 The app and extension share state through the configured app group and keychain
 access group. The app group stores local account records, domain configuration,
-listing snapshots, and a capped thumbnail data cache. The keychain stores
-account-scoped OAuth tokens.
+and listing snapshots. The keychain stores account-scoped OAuth tokens.
 
 ## App Group Storage
 
@@ -16,7 +15,6 @@ Current app group contents:
 - `Snapshots.sqlite3`, including listing snapshots, conflict events, and recent
   provider/app activity
 - `ConflictStaging/*.upload` while a stale-content conflict copy is being sent
-- `ThumbnailCache/*` for cached remote thumbnail bytes
 
 ## Accounts
 
@@ -186,18 +184,12 @@ SQLite caches metadata needed to enumerate and diff containers:
 Fully enumerated normal-folder snapshots can be served directly from SQLite on a
 future initial enumeration.
 
-Remote thumbnails are cached separately in `ThumbnailCache` under the app group.
-The Nuke-backed thumbnail pipeline stores original thumbnail bytes with stable
-keys derived only from the File Provider domain identifier, drive ID, file ID,
-and requested width/height. The cache is capped at 64 MiB and does not include
-bearer tokens, private URLs, or request URLs in cache keys. Folder thumbnails are
-never requested or cached.
-
 ## What Is Not Cached
 
 SQLite does not cache:
 
 - file bytes
+- thumbnails
 - OAuth tokens
 - remote account profile data
 - pending local operations
@@ -240,16 +232,15 @@ If the stored row no longer matches the requested condition, the store throws
 ## Domain Removal Cleanup
 
 When the app removes a domain, it calls
-`removeSnapshots(domainIdentifier:)`, `removeEvents(domainIdentifier:)`, and
-removes matching `ThumbnailCache` files. That deletes all snapshot, conflict,
-activity, and thumbnail-cache state for the domain.
+`removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`.
+That deletes all snapshot, conflict, and activity rows for the domain.
 
 For local development resets, `scripts/uninstall-file-provider.sh` invokes the
 signed app's hidden uninstall command. That command removes registered File
 Provider domains through `NSFileProviderManager`, deletes matching
 `DomainConfigurations` JSON files, and removes per-domain SQLite snapshot,
-conflict, activity rows, and thumbnail-cache files. It preserves account
-records, `ConflictStaging`, and account-scoped OAuth tokens by default;
+conflict, and activity rows. It preserves account records, `ConflictStaging`,
+and account-scoped OAuth tokens by default;
 `--hard-purge` removes `ConflictStaging`, and `--full-logout` or `--hard-purge`
 deletes all account-scoped tokens, the legacy single-token key, and stored
 account records. See

@@ -132,11 +132,6 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     containerIdentifier: self.snapshotContainerIdentifier,
                     condition: saveCondition
                 )
-                await ThumbnailCacheInvalidation.removeCachedThumbnails(
-                    for: changes,
-                    previousSnapshot: baselineSnapshot,
-                    runtime: loadedRuntime
-                )
                 self.emit(changes, to: observer, rootFileID: loadedRuntime.configuration.rootFileID)
                 FileProviderLog.enumeration.info("enumerateChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(changes.updatedItems.count, privacy: .public)) deleted(\(changes.deletedItemIDs.count, privacy: .public)) total(\(newSnapshot.items.count, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
@@ -425,11 +420,6 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 containerIdentifier: snapshotContainerIdentifier,
                 condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
             )
-            await ThumbnailCacheInvalidation.removeCachedThumbnails(
-                for: result.changes,
-                previousSnapshot: oldSnapshot,
-                runtime: runtime
-            )
             emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
             FileProviderLog.enumeration.info("enumerateAdvancedChanges success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
             await ProviderEventRecorder.recordActivity(
@@ -459,11 +449,6 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 domainIdentifier: runtime.configuration.domainIdentifier,
                 containerIdentifier: snapshotContainerIdentifier,
                 condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
-            )
-            await ThumbnailCacheInvalidation.removeCachedThumbnails(
-                for: changes,
-                previousSnapshot: oldSnapshot,
-                runtime: runtime
             )
             emit(changes, to: observer, rootFileID: runtime.configuration.rootFileID)
             await ProviderEventRecorder.recordActivity(

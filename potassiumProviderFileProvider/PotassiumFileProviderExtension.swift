@@ -9,7 +9,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 public final class PotassiumFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
-    private static let maximumConcurrentContentFetches = 4
+    static let maximumConcurrentContentFetches = 4
     private static let contentFetchLimiter = AsyncOperationLimiter(
         maxConcurrentOperations: maximumConcurrentContentFetches
     )
@@ -310,7 +310,6 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
 
                 let updatedItem: KDriveRemoteItem
-                var replacedContents = false
                 if let newContents, changedFields.contains(.contents) {
                     let data = try Data(contentsOf: newContents)
                     FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
@@ -325,7 +324,6 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     switch result {
                     case .replaced(let replacedItem):
                         updatedItem = replacedItem
-                        replacedContents = true
                     case .conflictCopy(let conflictItem):
                         FileProviderLog.replicatedExtension.info("preserved stale content edit as conflict item(\(conflictItem.id, privacy: .public)) original(\(fileID, privacy: .public))")
                         await self.invalidateCachedSnapshotsAndSignal(
@@ -402,9 +400,6 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
 
                 FileProviderLog.replicatedExtension.info("modified item(\(item.itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) remainingFields([])")
-                if replacedContents {
-                    await ThumbnailCacheInvalidation.removeCachedThumbnail(for: updatedItem, runtime: loadedRuntime)
-                }
                 await ProviderEventRecorder.recordActivity(
                     kind: .modify,
                     runtime: loadedRuntime,
@@ -483,7 +478,6 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     throw error
                 }
                 FileProviderLog.replicatedExtension.info("deleted trashed item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public))")
-                await ThumbnailCacheInvalidation.removeCachedThumbnail(for: latestItem, runtime: loadedRuntime)
                 await ProviderEventRecorder.recordActivity(
                     kind: .delete,
                     runtime: loadedRuntime,

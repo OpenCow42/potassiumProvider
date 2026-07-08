@@ -77,7 +77,6 @@ state.
   `NSFileProviderManager` using the preserve-dirty-user-data mode;
 - removes matching `DomainConfigurations` JSON files;
 - removes matching SQLite snapshot, conflict, and activity rows;
-- removes matching ThumbnailCache files;
 - keeps ConflictStaging contents;
 - keeps all saved account records and OAuth tokens.
 

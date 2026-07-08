@@ -99,11 +99,6 @@ struct FileProviderUninstallTests {
                     domainIdentifier: "domain-1",
                     description: "Snapshots.sqlite3 rows for domain domain-1"
                 ),
-                FileProviderUninstallStateItem(
-                    kind: .thumbnailCache,
-                    domainIdentifier: "domain-1",
-                    description: "ThumbnailCache files for domain domain-1"
-                ),
             ],
             conflictStagingFileNames: ["stale.upload"]
         )
@@ -117,9 +112,7 @@ struct FileProviderUninstallTests {
         let result = try await coordinator.run(options: FileProviderUninstallOptions(dryRun: true))
 
         #expect(result.plan.cleanupDomainIdentifiers == ["domain-1", "domain-2"])
-        #expect(result.plan.stateItems.contains {
-            $0.kind == .thumbnailCache && $0.domainIdentifier == "domain-1"
-        })
+        #expect(result.plan.stateItems.count == 2)
         #expect(result.plan.conflictStaging?.willRemove == false)
         #expect(await domainManager.removedRecords().isEmpty)
         #expect(await localState.removedDomainIdentifiers().isEmpty)

@@ -504,7 +504,6 @@ final class PotassiumProviderAppModel: ObservableObject {
         try await domainRegistrar.removeDomain(for: configuration)
         try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
         try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
-        try? KDriveThumbnailPipeline.removeCachedThumbnails(domainIdentifier: configuration.domainIdentifier)
         try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
     }
 

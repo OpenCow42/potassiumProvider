@@ -114,7 +114,6 @@ public struct FileProviderUninstallDomainListingFailure: Equatable, Sendable {
 public enum FileProviderUninstallStateItemKind: String, Equatable, Sendable {
     case domainConfiguration
     case sqliteRows
-    case thumbnailCache
 }
 
 public struct FileProviderUninstallStateItem: Equatable, Sendable {
