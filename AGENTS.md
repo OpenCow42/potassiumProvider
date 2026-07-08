@@ -152,6 +152,10 @@ app.
 
 - Treat `NSFileProvider` enumeration, sync anchors, item identifiers, progress,
   cancellation, and completion handlers as correctness-critical.
+- Treat Apple's Replicated File Provider extension documentation as the source
+  of truth for replicated File Provider implementation. Check it when planning
+  changes in this area:
+  https://developer.apple.com/documentation/fileprovider/replicated-file-provider-extension
 - Map File Provider errors deliberately. Resolvable errors such as
   `.notAuthenticated`, `.serverUnreachable`, `.insufficientQuota`, and
   `.cannotSynchronize` should be surfaced in ways the system can recover from.
