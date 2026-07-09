@@ -2,6 +2,9 @@ import Combine
 import FileProvider
 import PotassiumProviderCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct ConflictLogView: View {
     @StateObject private var model: ConflictLogViewModel
@@ -152,7 +155,32 @@ private extension View {
         glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 8))
         #endif
     }
+
+    @ViewBuilder
+    func providerActivityCopyableText(_ text: String) -> some View {
+        #if os(macOS)
+        textSelection(.enabled)
+            .contextMenu {
+                Button {
+                    ProviderActivityClipboard.copy(text)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+            }
+        #else
+        self
+        #endif
+    }
 }
+
+#if os(macOS)
+private enum ProviderActivityClipboard {
+    static func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+#endif
 
 @MainActor
 final class ConflictLogViewModel: ObservableObject {
@@ -303,6 +331,7 @@ private struct ConflictEventRow: View {
             )
         }
         .padding(.vertical, 4)
+        .providerActivityCopyableText(copyText)
     }
 
     private var eventTitle: String {
@@ -316,6 +345,34 @@ private struct ConflictEventRow: View {
         event.conflictItemName
             ?? event.originalItemName
             ?? "Open item"
+    }
+
+    private var copyText: String {
+        var lines = [
+            "Conflict: \(eventTitle)",
+            "Detected: \(event.detectedAt.providerActivityCopyFormatted)",
+            "Operation: \(event.operation.displayName)",
+            "State: \(event.resolutionState.displayName)",
+            "Summary: \(event.resolutionSummary)"
+        ]
+
+        if let resolvedAt = event.resolvedAt {
+            lines.insert("Resolved: \(resolvedAt.providerActivityCopyFormatted)", at: 2)
+        }
+        if event.automaticallyResolved {
+            lines.append("Automatic: Yes")
+        }
+        if let stagedUploadRelativePath = event.stagedUploadRelativePath, stagedUploadRelativePath.isEmpty == false {
+            lines.append("Staged upload: \(stagedUploadRelativePath)")
+        }
+        if let itemPath = event.conflictItemPath ?? event.originalItemPath, itemPath.isEmpty == false {
+            lines.append("Item path: \(itemPath)")
+        }
+        if let itemIdentifier = event.conflictItemIdentifier ?? event.originalItemIdentifier, itemIdentifier.isEmpty == false {
+            lines.append("Item identifier: \(itemIdentifier)")
+        }
+
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -376,6 +433,7 @@ private struct ActivityEventRow: View {
             }
         }
         .padding(.vertical, 4)
+        .providerActivityCopyableText(copyText)
     }
 
     private var title: String {
@@ -396,6 +454,64 @@ private struct ActivityEventRow: View {
             return "\(underlyingErrorDomain) \(underlyingErrorCode)"
         }
         return nil
+    }
+
+    private var copyText: String {
+        var lines = [
+            "Activity: \(title)",
+            "Occurred: \(event.occurredAt.providerActivityCopyFormatted)",
+            "Outcome: \(event.outcome.copyDisplayName)",
+            "Outcome key: \(event.outcome.rawValue)",
+            "Kind: \(event.kind.displayName)",
+            "Kind key: \(event.kind.rawValue)",
+            "Summary: \(event.summary)"
+        ]
+
+        if event.outcome == .failure {
+            lines.append("Severity: \(event.severity.copyDisplayName)")
+            lines.append("Severity key: \(event.severity.rawValue)")
+            if let errorCategory = event.errorCategory {
+                lines.append("Error category: \(errorCategory.displayName)")
+                lines.append("Error category key: \(errorCategory.rawValue)")
+            }
+            if let providerErrorCode = event.providerErrorCode {
+                lines.append("Provider error code: \(providerErrorCode)")
+            }
+            if let underlyingErrorDomain = event.underlyingErrorDomain, underlyingErrorDomain.isEmpty == false {
+                lines.append("Underlying error domain: \(underlyingErrorDomain)")
+            }
+            if let underlyingErrorCode = event.underlyingErrorCode {
+                lines.append("Underlying error code: \(underlyingErrorCode)")
+            }
+            if let recoverySuggestion = event.recoverySuggestion, recoverySuggestion.isEmpty == false {
+                lines.append("Recovery suggestion: \(recoverySuggestion)")
+            }
+            if let diagnosticSummary = event.diagnosticSummary, diagnosticSummary.isEmpty == false {
+                lines.append("Diagnostic summary: \(diagnosticSummary)")
+            }
+            if let relatedConflictID = event.relatedConflictID {
+                lines.append("Related conflict ID: \(relatedConflictID.uuidString)")
+            }
+            lines.append("Event ID: \(event.id.uuidString)")
+            lines.append("Domain identifier: \(event.domainIdentifier)")
+            lines.append("Drive ID: \(event.driveID)")
+        }
+        if event.scope == .domain {
+            lines.append("Scope: Domain")
+            if let itemName = event.itemName, itemName.isEmpty == false {
+                lines.append("Item: \(itemName)")
+            }
+            if let itemPath = event.itemPath, itemPath.isEmpty == false {
+                lines.append("Item path: \(itemPath)")
+            }
+            if let itemIdentifier = event.itemIdentifier, itemIdentifier.isEmpty == false {
+                lines.append("Item identifier: \(itemIdentifier)")
+            }
+        } else {
+            lines.append("Scope: App")
+        }
+
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -448,6 +564,12 @@ private struct ProviderItemLink: View {
             }
         }
         didResolve = true
+    }
+}
+
+private extension Date {
+    var providerActivityCopyFormatted: String {
+        formatted(.dateTime.year().month().day().hour().minute().second())
     }
 }
 
@@ -530,6 +652,28 @@ private extension KDriveProviderActivityOutcome {
             return kind.systemImage
         case .failure:
             return "exclamationmark.triangle"
+        }
+    }
+
+    var copyDisplayName: String {
+        switch self {
+        case .success:
+            return "Success"
+        case .failure:
+            return "Failure"
+        }
+    }
+}
+
+private extension KDriveProviderActivitySeverity {
+    var copyDisplayName: String {
+        switch self {
+        case .info:
+            return "Info"
+        case .warning:
+            return "Warning"
+        case .error:
+            return "Error"
         }
     }
 }
