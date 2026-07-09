@@ -1,4 +1,5 @@
 import Foundation
+import PotassiumChannelCore
 import Testing
 import UniformTypeIdentifiers
 @preconcurrency import SQLite
@@ -1259,6 +1260,122 @@ struct PotassiumProviderCoreTests {
         #expect(KDriveUploadConflictStrategy.rename.rawValue == "rename")
     }
 
+    @Test func kdriveRemoteAPIRejectionClassifierMapsHTTPStatusWithoutPersistingBody() throws {
+        let quotaError = APIClientError.unacceptableStatusCode(
+            507,
+            body: #"{"error":"quota exceeded","token":"secret-token"}"#
+        )
+        let quotaRejection = try #require(KDriveRemoteErrorClassifier.apiRejection(from: quotaError))
+
+        #expect(quotaRejection.statusCode == 507)
+        #expect(quotaRejection.recovery == .insufficientQuota)
+        #expect(quotaRejection.diagnosticSummary == "The remote API rejected the operation. HTTP 507.")
+        #expect(quotaRejection.diagnosticSummary.contains("secret-token") == false)
+        #expect(quotaRejection.responseBodyPreview(maxLength: 8) == #"{"error"..."#)
+
+        let authRejection = try #require(KDriveRemoteErrorClassifier.apiRejection(
+            from: APIClientError.unacceptableStatusCode(401, body: "Unauthorized")
+        ))
+        let serverRejection = try #require(KDriveRemoteErrorClassifier.apiRejection(
+            from: APIClientError.unacceptableStatusCode(503, body: "Unavailable")
+        ))
+        let validationRejection = try #require(KDriveRemoteErrorClassifier.apiRejection(
+            from: APIClientError.unacceptableStatusCode(422, body: "Invalid upload parameters")
+        ))
+
+        #expect(authRejection.recovery == .notAuthenticated)
+        #expect(serverRejection.recovery == .serverUnreachable)
+        #expect(validationRejection.recovery == .cannotSynchronize)
+        #expect(KDriveRemoteErrorClassifier.apiRejection(from: NSError(domain: NSURLErrorDomain, code: -1009)) == nil)
+    }
+
+    @Test func kdriveServiceReplacesFileByNameWithVersionConflictStrategy() async throws {
+        await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.fileUploadResponseData)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+        let contents = Data([0xFF, 0xD8, 0xFF, 0xE0])
+
+        let item = try await service.replaceFile(
+            driveID: 100,
+            parentID: 7,
+            fileName: "Edited.jpg",
+            contents: contents,
+            lastModifiedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
+        let body = try #require(await KDriveJSONRequestCapturingURLProtocol.lastBody())
+        let requestURL = try #require(request.url)
+        let components = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
+        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
+
+        #expect(item.id == 42)
+        #expect(body == contents)
+        #expect(request.httpMethod == "POST")
+        #expect(components.path == "/3/drive/100/upload")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
+        #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+        #expect(query["total_size"] == "4")
+        #expect(query["directory_id"] == "7")
+        #expect(query["file_name"] == "Edited.jpg")
+        #expect(query["last_modified_at"] == "1700000001")
+        #expect(query["conflict"] == "version")
+        #expect(query["file_id"] == nil)
+    }
+
+    @Test func kdriveServiceCreatesFileWithVersionConflictStrategy() async throws {
+        await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.fileUploadResponseData)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+        let contents = Data("new picture bytes".utf8)
+
+        let item = try await service.uploadFile(
+            driveID: 100,
+            parentID: 7,
+            fileName: "Edited.jpg",
+            contents: contents,
+            lastModifiedAt: Date(timeIntervalSince1970: 1_700_000_002),
+            conflictStrategy: .version
+        )
+        let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
+        let body = try #require(await KDriveJSONRequestCapturingURLProtocol.lastBody())
+        let requestURL = try #require(request.url)
+        let components = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false))
+        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
+
+        #expect(item.id == 42)
+        #expect(body == contents)
+        #expect(request.httpMethod == "POST")
+        #expect(components.path == "/3/drive/100/upload")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+        #expect(query["total_size"] == "\(contents.count)")
+        #expect(query["directory_id"] == "7")
+        #expect(query["file_name"] == "Edited.jpg")
+        #expect(query["last_modified_at"] == "1700000002")
+        #expect(query["conflict"] == "version")
+        #expect(query["file_id"] == nil)
+    }
+
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
         await KDriveDataRequestCapturingURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
@@ -1923,6 +2040,30 @@ struct PotassiumProviderCoreTests {
     }
     """.data(using: .utf8)!
 
+    private static let fileUploadResponseData = """
+    {
+      "result": "success",
+      "data": {
+        "id": 42,
+        "name": "Edited.jpg",
+        "path": "/Pictures/Edited.jpg",
+        "type": "file",
+        "status": "active",
+        "visibility": "is_private_space",
+        "drive_id": 100,
+        "parent_id": 7,
+        "depth": 3,
+        "created_at": 1700000000,
+        "last_modified_at": 1700000001,
+        "updated_at": 1700000002,
+        "size": 4,
+        "mime_type": "image/jpeg",
+        "is_favorite": false
+      },
+      "response_at": 1700000003
+    }
+    """.data(using: .utf8)!
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("potassium-provider-tests-\(UUID().uuidString)", isDirectory: true)
@@ -2116,6 +2257,10 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
         await capture.lastRequest()
     }
 
+    static func lastBody() async -> Data? {
+        await capture.lastBody()
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         true
     }
@@ -2155,6 +2300,10 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
         await capture.lastRequest()
     }
 
+    static func lastBody() async -> Data? {
+        await capture.lastBody()
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         true
     }
@@ -2165,8 +2314,9 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
 
     override func startLoading() {
         let request = request
+        let body = request.httpBody ?? Self.readBodyStream(from: request)
         Task {
-            await Self.capture.record(request: request)
+            await Self.capture.record(request: request, body: body)
             let data = await Self.responseStore.data()
             let response = HTTPURLResponse(
                 url: request.url!,
@@ -2181,6 +2331,26 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    private static func readBodyStream(from request: URLRequest) -> Data? {
+        guard let stream = request.httpBodyStream else {
+            return nil
+        }
+
+        stream.open()
+        defer { stream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(&buffer, maxLength: buffer.count)
+            guard bytesRead > 0 else {
+                break
+            }
+            data.append(buffer, count: bytesRead)
+        }
+        return data
+    }
 }
 
 private actor CapturedURLRequestStore {
@@ -2304,7 +2474,13 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
-    func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+    func replaceFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) async throws -> KDriveRemoteItem {
         throw FakeKDriveFileProviderError.unimplemented
     }
 

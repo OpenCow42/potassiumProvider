@@ -18,7 +18,13 @@ public protocol KDriveFileProviding: Sendable {
         lastModifiedAt: Date?,
         conflictStrategy: KDriveUploadConflictStrategy
     ) async throws -> KDriveRemoteItem
-    func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem
+    func replaceFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) async throws -> KDriveRemoteItem
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem
     func renameItem(driveID: Int, fileID: Int, name: String) async throws
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws
@@ -164,13 +170,20 @@ public struct PotassiumKDriveService: KDriveFileProviding {
         return response.data.remoteItem
     }
 
-    public func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+    public func replaceFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) async throws -> KDriveRemoteItem {
         let response = try await service.uploadFile(
             driveId: driveID,
             data: contents,
             options: UploadKDriveFileOptions(
-                conflict: "version",
-                fileId: fileID,
+                conflict: KDriveUploadConflictStrategy.version.rawValue,
+                directoryId: parentID,
+                fileName: fileName,
                 lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
             )
         )
@@ -212,6 +225,14 @@ public struct PotassiumKDriveService: KDriveFileProviding {
 }
 
 public enum KDriveRemoteErrorClassifier {
+    public static func apiRejection(from error: Error) -> KDriveRemoteAPIRejection? {
+        guard case let APIClientError.unacceptableStatusCode(statusCode, body) = error else {
+            return nil
+        }
+
+        return KDriveRemoteAPIRejection(statusCode: statusCode, responseBody: body)
+    }
+
     public static func isInvalidCursor(_ error: Error) -> Bool {
         guard case let APIClientError.unacceptableStatusCode(_, body) = error else {
             return false
@@ -220,6 +241,62 @@ public enum KDriveRemoteErrorClassifier {
         let lowercasedBody = body.lowercased()
         return lowercasedBody.contains("invalid") && lowercasedBody.contains("cursor")
     }
+}
+
+public struct KDriveRemoteAPIRejection: Equatable, Sendable {
+    public let statusCode: Int
+    public let responseBody: String
+
+    public init(statusCode: Int, responseBody: String) {
+        self.statusCode = statusCode
+        self.responseBody = responseBody
+    }
+
+    public var recovery: KDriveRemoteAPIRejectionRecovery {
+        if statusCode == 401 {
+            return .notAuthenticated
+        }
+        if isInsufficientQuota {
+            return .insufficientQuota
+        }
+        if (500..<600).contains(statusCode) {
+            return .serverUnreachable
+        }
+        return .cannotSynchronize
+    }
+
+    public var diagnosticSummary: String {
+        "The remote API rejected the operation. HTTP \(statusCode)."
+    }
+
+    public func responseBodyPreview(maxLength: Int = 1024) -> String {
+        guard responseBody.isEmpty == false else {
+            return "<empty>"
+        }
+        guard responseBody.count > maxLength else {
+            return responseBody
+        }
+        return "\(responseBody.prefix(maxLength))..."
+    }
+
+    private var isInsufficientQuota: Bool {
+        if statusCode == 507 {
+            return true
+        }
+
+        let lowercasedBody = responseBody.lowercased()
+        return lowercasedBody.contains("quota")
+            || lowercasedBody.contains("insufficient storage")
+            || lowercasedBody.contains("not enough space")
+            || lowercasedBody.contains("storage limit")
+    }
+}
+
+public enum KDriveRemoteAPIRejectionRecovery: Equatable, Sendable {
+    case notAuthenticated
+    case serverUnreachable
+    case insufficientQuota
+    case cannotSynchronize
 }
 
 private struct KDriveInitPayload: Decodable, Sendable {

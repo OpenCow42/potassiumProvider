@@ -169,7 +169,8 @@ public struct KDriveMutationCoordinator: Sendable {
 
         let replacedItem = try await remote.replaceFile(
             driveID: configuration.driveID,
-            fileID: fileID,
+            parentID: latestItem.parentID,
+            fileName: latestItem.name,
             contents: contents,
             lastModifiedAt: lastModifiedAt
         )

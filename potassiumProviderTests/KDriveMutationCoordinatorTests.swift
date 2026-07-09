@@ -45,10 +45,11 @@ struct KDriveMutationCoordinatorTests {
     }
 
     @Test func matchingContentVersionReplacesFileWithoutConflictCopy() async throws {
-        let latestItem = makeItem(id: Self.fileID, name: "Report.txt")
+        let latestItem = makeItem(id: Self.fileID, name: "Server Report.txt", parentID: 777)
         let replacedItem = makeItem(
             id: Self.fileID,
-            name: "Report.txt",
+            name: "Server Report.txt",
+            parentID: 777,
             modifiedAt: Date(timeIntervalSince1970: 250),
             updatedAt: Date(timeIntervalSince1970: 350)
         )
@@ -64,7 +65,7 @@ struct KDriveMutationCoordinatorTests {
         let result = try await coordinator.replaceContents(
             itemIdentifier: "\(Self.fileID)",
             fileID: Self.fileID,
-            localFilename: "Report.txt",
+            localFilename: "Local Report.txt",
             baseContentVersion: latestItem.contentVersion,
             contents: contents,
             lastModifiedAt: lastModifiedAt
@@ -76,7 +77,8 @@ struct KDriveMutationCoordinatorTests {
             .item(driveID: Self.driveID, fileID: Self.fileID),
             .replaceFile(
                 driveID: Self.driveID,
-                fileID: Self.fileID,
+                parentID: latestItem.parentID,
+                fileName: latestItem.name,
                 contents: contents,
                 lastModifiedAt: lastModifiedAt
             )
@@ -735,7 +737,7 @@ private enum RecordingKDriveCall: Equatable, Sendable {
         lastModifiedAt: Date?,
         conflictStrategy: KDriveUploadConflictStrategy
     )
-    case replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?)
+    case replaceFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?)
     case createDirectory(driveID: Int, parentID: Int, name: String)
     case renameItem(driveID: Int, fileID: Int, name: String)
     case moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?)
@@ -839,10 +841,17 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
         return uploadResult
     }
 
-    func replaceFile(driveID: Int, fileID: Int, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem {
+    func replaceFile(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) async throws -> KDriveRemoteItem {
         recordedCalls.append(.replaceFile(
             driveID: driveID,
-            fileID: fileID,
+            parentID: parentID,
+            fileName: fileName,
             contents: contents,
             lastModifiedAt: lastModifiedAt
         ))

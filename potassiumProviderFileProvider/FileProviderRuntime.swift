@@ -145,6 +145,21 @@ func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
         )
     }
 
+    if let apiRejection = KDriveRemoteErrorClassifier.apiRejection(from: error) {
+        let mappedError = fileProviderError(for: apiRejection.recovery)
+        let mappedNSError = mappedError as NSError
+        FileProviderLog.runtime.error("map API rejection HTTP \(apiRejection.statusCode, privacy: .public) to \(mappedNSError.domain, privacy: .public) code(\(mappedNSError.code, privacy: .public)); response body: \(apiRejection.responseBodyPreview(), privacy: .private)")
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: .api,
+                originalError: error,
+                mappedError: mappedError,
+                diagnosticSummary: apiRejection.diagnosticSummary
+            )
+        )
+    }
+
     if let mutationConflictError = error as? KDriveMutationConflictError {
         switch mutationConflictError {
         case .staleVersion:
@@ -248,6 +263,10 @@ func providerActivityKindForRuntimeLoadFailure(_ error: Error) -> KDriveProvider
        nsError.code == NSFileProviderError.notAuthenticated.rawValue {
         return .authentication
     }
+    if let apiRejection = KDriveRemoteErrorClassifier.apiRejection(from: error),
+       apiRejection.recovery == .notAuthenticated {
+        return .authentication
+    }
     if error is KDriveOAuthError || error is KeychainTokenStoreError {
         return .authentication
     }
@@ -257,7 +276,8 @@ func providerActivityKindForRuntimeLoadFailure(_ error: Error) -> KDriveProvider
 private func providerDiagnostic(
     category: KDriveProviderActivityErrorCategory,
     originalError: Error,
-    mappedError: Error
+    mappedError: Error,
+    diagnosticSummary: String? = nil
 ) -> KDriveProviderActivityErrorDiagnostic {
     let originalNSError = originalError as NSError
     let mappedNSError = mappedError as NSError
@@ -271,8 +291,21 @@ private func providerDiagnostic(
         underlyingErrorDomain: originalNSError.domain,
         underlyingErrorCode: originalNSError.code,
         recoverySuggestion: recoverySuggestion,
-        diagnosticSummary: providerDiagnosticSummary(category: category)
+        diagnosticSummary: diagnosticSummary ?? providerDiagnosticSummary(category: category)
     )
+}
+
+private func fileProviderError(for recovery: KDriveRemoteAPIRejectionRecovery) -> Error {
+    switch recovery {
+    case .notAuthenticated:
+        return NSFileProviderError(.notAuthenticated)
+    case .serverUnreachable:
+        return NSFileProviderError(.serverUnreachable)
+    case .insufficientQuota:
+        return NSFileProviderError(.insufficientQuota)
+    case .cannotSynchronize:
+        return NSFileProviderError(.cannotSynchronize)
+    }
 }
 
 private func providerActivityErrorCategory(originalError nsError: NSError) -> KDriveProviderActivityErrorCategory {
