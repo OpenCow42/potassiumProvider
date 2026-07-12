@@ -5,7 +5,7 @@ import PotassiumProviderCore
 
 @MainActor
 final class PotassiumProviderAppModel: ObservableObject {
-    private static let log = Logger(subsystem: ProviderConstants.logSubsystem, category: "app")
+    private static let log = ProviderLog.app
 
     @Published private(set) var accounts: [ProviderAccount] = []
     @Published private(set) var drivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:]
@@ -746,7 +746,8 @@ final class PotassiumProviderAppModel: ObservableObject {
                 itemName: nil,
                 itemPath: nil,
                 summary: summary,
-                diagnostic: appDiagnostic(for: error, category: category)
+                diagnostic: appDiagnostic(for: error, category: category),
+                correlationID: UUID().uuidString
             ))
         } catch {
             Self.log.error("failed to save app failure activity event: \(error.localizedDescription, privacy: .public)")

@@ -143,9 +143,16 @@ versions are rebuilt from kDrive instead of reused for later mutations.
 - `underlyingErrorCode`
 - `recoverySuggestion`
 - `diagnosticSummary`
+- `correlationID`
+- `durationMilliseconds`
+- `networkOperation`
+- `httpStatusCode`
+- `remoteRequestID`
 
 Conflict and activity tables are indexed by domain and event date. Activity rows
-are also indexed by related conflict ID and outcome.
+are also indexed by related conflict ID, outcome, and correlation ID. Activity
+rows are bounded to the newest 5,000 records by default; conflict rows are not
+removed by this retention rule.
 
 Activity rows support both domain-scoped provider events and app-scoped setup
 events. App-scoped rows use `ProviderConstants.appActivityDomainIdentifier` and
@@ -211,6 +218,10 @@ paths, sanitized error categories, numeric error codes, recovery suggestions,
 and short diagnostic summaries. They do not store OAuth tokens, raw API response
 bodies, file bytes, private URLs, bearer-bearing request data, or generated web
 links.
+
+The Activities support-log export is a separate redacted JSON view of this data.
+It pseudonymizes identifiers with a fresh per-export salt and omits filenames,
+paths, staged-upload paths, and raw identifiers. See [Logging](LOGGING.md).
 
 ## Snapshot Replacement
 

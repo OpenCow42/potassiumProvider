@@ -4,9 +4,9 @@ import OSLog
 import PotassiumProviderCore
 
 enum FileProviderLog {
-    static let replicatedExtension = Logger(subsystem: ProviderConstants.logSubsystem, category: "file-provider")
-    static let enumeration = Logger(subsystem: ProviderConstants.logSubsystem, category: "enumeration")
-    static let runtime = Logger(subsystem: ProviderConstants.logSubsystem, category: "runtime")
+    static let replicatedExtension = ProviderLog.fileProvider
+    static let enumeration = ProviderLog.enumeration
+    static let runtime = ProviderLog.runtime
 }
 
 struct FileProviderRuntime: Sendable {
@@ -148,7 +148,7 @@ func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
     if let apiRejection = KDriveRemoteErrorClassifier.apiRejection(from: error) {
         let mappedError = fileProviderError(for: apiRejection.recovery)
         let mappedNSError = mappedError as NSError
-        FileProviderLog.runtime.error("map API rejection HTTP \(apiRejection.statusCode, privacy: .public) to \(mappedNSError.domain, privacy: .public) code(\(mappedNSError.code, privacy: .public)); response body: \(apiRejection.responseBodyPreview(), privacy: .private)")
+        FileProviderLog.runtime.error("map API rejection HTTP \(apiRejection.statusCode, privacy: .public) to \(mappedNSError.domain, privacy: .public) code(\(mappedNSError.code, privacy: .public))")
         return ProviderErrorMapping(
             mappedError: mappedError,
             diagnostic: providerDiagnostic(

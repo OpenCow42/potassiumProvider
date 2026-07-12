@@ -11,7 +11,7 @@ protocol ProviderDomainRegistering {
 
 @MainActor
 struct FileProviderDomainRegistrar: ProviderDomainRegistering {
-    nonisolated private static let logger = Logger(subsystem: ProviderConstants.logSubsystem, category: "domain")
+    nonisolated private static let logger = ProviderLog.domain
 
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {
         let domain = NSFileProviderDomain(

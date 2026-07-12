@@ -208,6 +208,9 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   database, including enumeration/change sync and major item operations.
 - The Clear button removes activity event rows and automatically resolved
   conflict rows while preserving unresolved, blocked, and failed conflict rows.
+- The Export button creates a redacted JSON support log. It pseudonymizes
+  identifiers and omits item names, paths, staged-upload paths, and raw conflict
+  identifiers.
 - Failure rows store sanitized diagnostics such as category, severity, mapped
   provider error code, underlying error domain/code, recovery suggestion, and a
   short diagnostic summary. They do not store tokens or raw response bodies.
@@ -218,6 +221,9 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   by the File Provider extension's separate connection.
 - This is an audit/read model only. It does not replay failed operations or
   automatically retry retained staged uploads.
+
+For unified-log categories, durable activity fields, retention, and support
+export privacy rules, see [Logging](LOGGING.md).
 
 ### Listing, Snapshot, And Sync State
 

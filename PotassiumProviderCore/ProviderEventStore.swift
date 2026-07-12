@@ -164,6 +164,11 @@ public struct KDriveProviderActivityEvent: Identifiable, Codable, Equatable, Sen
     public var underlyingErrorCode: Int?
     public var recoverySuggestion: String?
     public var diagnosticSummary: String?
+    public var correlationID: String?
+    public var durationMilliseconds: Int?
+    public var networkOperation: String?
+    public var httpStatusCode: Int?
+    public var remoteRequestID: String?
 
     public init(
         id: UUID = UUID(),
@@ -179,7 +184,12 @@ public struct KDriveProviderActivityEvent: Identifiable, Codable, Equatable, Sen
         itemPath: String?,
         summary: String,
         relatedConflictID: UUID? = nil,
-        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil
+        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil,
+        correlationID: String? = nil,
+        durationMilliseconds: Int? = nil,
+        networkOperation: String? = nil,
+        httpStatusCode: Int? = nil,
+        remoteRequestID: String? = nil
     ) {
         self.id = id
         self.occurredAt = occurredAt
@@ -200,6 +210,11 @@ public struct KDriveProviderActivityEvent: Identifiable, Codable, Equatable, Sen
         self.underlyingErrorCode = diagnostic?.underlyingErrorCode
         self.recoverySuggestion = diagnostic?.recoverySuggestion
         self.diagnosticSummary = diagnostic?.diagnosticSummary
+        self.correlationID = correlationID
+        self.durationMilliseconds = durationMilliseconds
+        self.networkOperation = networkOperation
+        self.httpStatusCode = httpStatusCode
+        self.remoteRequestID = remoteRequestID
     }
 }
 
@@ -259,14 +274,19 @@ public protocol KDriveProviderEventObserving: Sendable {
     func eventChanges(pollInterval: TimeInterval) async -> AsyncStream<Void>
 }
 
-public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveProviderEventStatisticsProviding, KDriveProviderEventObserving {
+public protocol KDriveProviderEventPruning: Sendable {
+    func pruneActivityEvents(maximumCount: Int) async throws
+}
+
+public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveProviderEventStatisticsProviding, KDriveProviderEventObserving, KDriveProviderEventPruning, KDriveProviderEventExporting {
     private let database: Connection
+    private let maximumActivityEventCount: Int
     private var eventChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     private var isUpdateHookInstalled = false
     private var lastObservedDataVersion: Int64?
     private var dataVersionPollingTask: Task<Void, Never>?
 
-    public init(databaseURL: URL) throws {
+    public init(databaseURL: URL, maximumActivityEventCount: Int = 5_000) throws {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -275,13 +295,17 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
         try Self.configure(database)
         try Self.createTables(on: database)
         self.database = database
+        self.maximumActivityEventCount = max(0, maximumActivityEventCount)
     }
 
-    public init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
+    public init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier, maximumActivityEventCount: Int = 5_000) throws {
         guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             throw KDriveSnapshotStoreError.missingAppGroupContainer(appGroupIdentifier)
         }
-        try self.init(databaseURL: containerURL.appendingPathComponent("Snapshots.sqlite3"))
+        try self.init(
+            databaseURL: containerURL.appendingPathComponent("Snapshots.sqlite3"),
+            maximumActivityEventCount: maximumActivityEventCount
+        )
     }
 
     public func saveConflict(_ event: KDriveConflictEvent) throws {
@@ -290,6 +314,7 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
 
     public func recordActivity(_ event: KDriveProviderActivityEvent) throws {
         try database.run(ProviderEventSchema.activityEvents.insert(or: .replace, Self.setters(for: event)))
+        try pruneActivityEvents(maximumCount: maximumActivityEventCount)
     }
 
     public func recentConflicts(domainIdentifier: String?, limit: Int = 100) throws -> [KDriveConflictEvent] {
@@ -398,6 +423,41 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
         try Self.removeActivityAndResolvedConflicts(on: database, domainIdentifier: domainIdentifier)
     }
 
+    public func pruneActivityEvents(maximumCount: Int) throws {
+        let maximumCount = max(0, maximumCount)
+        let count = try database.scalar("SELECT COUNT(*) FROM provider_activity_events") as? Int64 ?? 0
+        guard count > Int64(maximumCount) else { return }
+
+        let orderedEvents = try database.prepare(
+            ProviderEventSchema.activityEvents.order(ProviderEventSchema.occurredAt.desc)
+        )
+        let discardedIdentifiers = orderedEvents.dropFirst(maximumCount).map { $0[ProviderEventSchema.id] }
+        guard discardedIdentifiers.isEmpty == false else { return }
+
+        try database.transaction {
+            for identifier in discardedIdentifiers {
+                try database.run(ProviderEventSchema.activityEvents
+                    .filter(ProviderEventSchema.id == identifier)
+                    .delete()
+                )
+            }
+        }
+    }
+
+    public func supportLogData(domainIdentifier: String? = nil) throws -> Data {
+        let activity = try recentActivity(
+            domainIdentifier: domainIdentifier,
+            outcome: nil,
+            limit: maximumActivityEventCount
+        )
+        let conflicts = try recentConflicts(domainIdentifier: domainIdentifier, limit: maximumActivityEventCount)
+        let supportLog = KDriveProviderSupportLog(activity: activity, conflicts: conflicts)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(supportLog)
+    }
+
     public func eventChanges(pollInterval: TimeInterval = 1) async -> AsyncStream<Void> {
         AsyncStream { continuation in
             let id = UUID()
@@ -456,6 +516,11 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
             table.column(ProviderEventSchema.underlyingErrorCode)
             table.column(ProviderEventSchema.recoverySuggestion)
             table.column(ProviderEventSchema.diagnosticSummary)
+            table.column(ProviderEventSchema.correlationID)
+            table.column(ProviderEventSchema.durationMilliseconds)
+            table.column(ProviderEventSchema.networkOperation)
+            table.column(ProviderEventSchema.httpStatusCode)
+            table.column(ProviderEventSchema.remoteRequestID)
         })
         try migrateActivityEvents(on: database)
 
@@ -465,6 +530,7 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_occurredAt_idx ON provider_activity_events(occurredAt)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_relatedConflictID_idx ON provider_activity_events(relatedConflictID)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_outcome_idx ON provider_activity_events(outcome)")
+        try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_correlationID_idx ON provider_activity_events(correlationID)")
     }
 
     private static func migrateActivityEvents(on database: Connection) throws {
@@ -524,6 +590,36 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
             existingColumns: existingColumns,
             name: "diagnosticSummary",
             sql: "ALTER TABLE provider_activity_events ADD COLUMN diagnosticSummary TEXT"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "correlationID",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN correlationID TEXT"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "durationMilliseconds",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN durationMilliseconds INTEGER"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "networkOperation",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN networkOperation TEXT"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "httpStatusCode",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN httpStatusCode INTEGER"
+        )
+        try addActivityColumnIfMissing(
+            on: database,
+            existingColumns: existingColumns,
+            name: "remoteRequestID",
+            sql: "ALTER TABLE provider_activity_events ADD COLUMN remoteRequestID TEXT"
         )
     }
 
@@ -673,6 +769,11 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
             ProviderEventSchema.underlyingErrorCode <- event.underlyingErrorCode,
             ProviderEventSchema.recoverySuggestion <- event.recoverySuggestion,
             ProviderEventSchema.diagnosticSummary <- event.diagnosticSummary,
+            ProviderEventSchema.correlationID <- event.correlationID,
+            ProviderEventSchema.durationMilliseconds <- event.durationMilliseconds,
+            ProviderEventSchema.networkOperation <- event.networkOperation,
+            ProviderEventSchema.httpStatusCode <- event.httpStatusCode,
+            ProviderEventSchema.remoteRequestID <- event.remoteRequestID,
         ]
     }
 
@@ -724,7 +825,12 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
                         diagnosticSummary: row[ProviderEventSchema.diagnosticSummary]
                     )
                 }
-            }
+            },
+            correlationID: row[ProviderEventSchema.correlationID],
+            durationMilliseconds: row[ProviderEventSchema.durationMilliseconds],
+            networkOperation: row[ProviderEventSchema.networkOperation],
+            httpStatusCode: row[ProviderEventSchema.httpStatusCode],
+            remoteRequestID: row[ProviderEventSchema.remoteRequestID]
         )
     }
 }
@@ -794,4 +900,9 @@ private enum ProviderEventSchema {
     static let underlyingErrorCode = Expression<Int?>("underlyingErrorCode")
     static let recoverySuggestion = Expression<String?>("recoverySuggestion")
     static let diagnosticSummary = Expression<String?>("diagnosticSummary")
+    static let correlationID = Expression<String?>("correlationID")
+    static let durationMilliseconds = Expression<Int?>("durationMilliseconds")
+    static let networkOperation = Expression<String?>("networkOperation")
+    static let httpStatusCode = Expression<Int?>("httpStatusCode")
+    static let remoteRequestID = Expression<String?>("remoteRequestID")
 }

@@ -17,7 +17,8 @@ enum ProviderEventRecorder {
                 itemName: event.conflictItemName ?? event.originalItemName,
                 itemPath: event.conflictItemPath ?? event.originalItemPath,
                 summary: event.resolutionSummary,
-                relatedConflictID: event.id
+                relatedConflictID: event.id,
+                correlationID: UUID().uuidString
             ))
         } catch {
             FileProviderLog.runtime.error("failed to save provider conflict event: \(error.localizedDescription, privacy: .public)")
@@ -34,7 +35,11 @@ enum ProviderEventRecorder {
         relatedConflictID: UUID? = nil,
         outcome: KDriveProviderActivityOutcome = .success,
         severity: KDriveProviderActivitySeverity = .info,
-        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil
+        diagnostic: KDriveProviderActivityErrorDiagnostic? = nil,
+        context: ProviderLogContext? = nil,
+        networkOperation: String? = nil,
+        httpStatusCode: Int? = nil,
+        remoteRequestID: String? = nil
     ) async {
         await recordActivity(
             kind: kind,
@@ -49,7 +54,11 @@ enum ProviderEventRecorder {
             relatedConflictID: relatedConflictID,
             outcome: outcome,
             severity: severity,
-            diagnostic: diagnostic
+            diagnostic: diagnostic,
+            context: context,
+            networkOperation: networkOperation,
+            httpStatusCode: httpStatusCode,
+            remoteRequestID: remoteRequestID
         )
     }
 
@@ -60,7 +69,11 @@ enum ProviderEventRecorder {
         itemName: String?,
         itemPath: String?,
         summary: String,
-        diagnostic: KDriveProviderActivityErrorDiagnostic
+        diagnostic: KDriveProviderActivityErrorDiagnostic,
+        context: ProviderLogContext? = nil,
+        networkOperation: String? = nil,
+        httpStatusCode: Int? = nil,
+        remoteRequestID: String? = nil
     ) async {
         await recordActivity(
             kind: kind,
@@ -71,7 +84,11 @@ enum ProviderEventRecorder {
             summary: summary,
             outcome: .failure,
             severity: .error,
-            diagnostic: diagnostic
+            diagnostic: diagnostic,
+            context: context,
+            networkOperation: networkOperation,
+            httpStatusCode: httpStatusCode,
+            remoteRequestID: remoteRequestID
         )
     }
 
@@ -84,7 +101,11 @@ enum ProviderEventRecorder {
         itemName: String?,
         itemPath: String?,
         summary: String,
-        diagnostic: KDriveProviderActivityErrorDiagnostic
+        diagnostic: KDriveProviderActivityErrorDiagnostic,
+        context: ProviderLogContext? = nil,
+        networkOperation: String? = nil,
+        httpStatusCode: Int? = nil,
+        remoteRequestID: String? = nil
     ) async {
         await recordActivity(
             kind: kind,
@@ -98,7 +119,11 @@ enum ProviderEventRecorder {
             summary: summary,
             outcome: .failure,
             severity: .error,
-            diagnostic: diagnostic
+            diagnostic: diagnostic,
+            context: context,
+            networkOperation: networkOperation,
+            httpStatusCode: httpStatusCode,
+            remoteRequestID: remoteRequestID
         )
     }
 
@@ -115,9 +140,20 @@ enum ProviderEventRecorder {
         relatedConflictID: UUID? = nil,
         outcome: KDriveProviderActivityOutcome,
         severity: KDriveProviderActivitySeverity,
-        diagnostic: KDriveProviderActivityErrorDiagnostic?
+        diagnostic: KDriveProviderActivityErrorDiagnostic?,
+        context: ProviderLogContext?,
+        networkOperation: String?,
+        httpStatusCode: Int?,
+        remoteRequestID: String?
     ) async {
         guard let eventStore else { return }
+        let context = context ?? ProviderLogContext(
+            scope: scope,
+            domainIdentifier: domainIdentifier,
+            driveID: driveID,
+            operation: kind.rawValue,
+            itemIdentifier: itemIdentifier
+        )
         do {
             try await eventStore.recordActivity(KDriveProviderActivityEvent(
                 domainIdentifier: domainIdentifier,
@@ -131,10 +167,16 @@ enum ProviderEventRecorder {
                 itemPath: itemPath,
                 summary: summary,
                 relatedConflictID: relatedConflictID,
-                diagnostic: diagnostic
+                diagnostic: diagnostic,
+                correlationID: context.correlationID,
+                durationMilliseconds: context.durationMilliseconds(),
+                networkOperation: networkOperation,
+                httpStatusCode: httpStatusCode,
+                remoteRequestID: remoteRequestID
             ))
+            ProviderLog.persistence.debug("recorded activity kind(\(kind.rawValue, privacy: .public)) outcome(\(outcome.rawValue, privacy: .public)) correlationID(\(context.correlationID, privacy: .public))")
         } catch {
-            FileProviderLog.runtime.error("failed to save provider activity event: \(error.localizedDescription, privacy: .public)")
+            ProviderLog.persistence.error("failed to save provider activity event: \(error.localizedDescription, privacy: .public)")
         }
     }
 

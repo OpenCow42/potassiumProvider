@@ -86,6 +86,9 @@ include categories and numeric error codes, but must not include bearer tokens,
 refresh tokens, ID tokens, raw API response bodies, or bearer-bearing request
 data.
 
+The shared logging mechanism follows the same boundary for unified logging and
+support exports. See [Logging](LOGGING.md).
+
 ## Secret Handling
 
 Never log, commit, store in docs, or include in fixtures:

@@ -29,7 +29,8 @@ flowchart LR
   and delete items.
 - `PotassiumProviderCore`: shared framework with domain configuration storage,
   OAuth/keychain storage, kDrive models, kDrive service adapter, snapshot diffing,
-  and SQLite snapshot storage.
+  SQLite snapshot storage, unified-log categories, durable activity retention,
+  and redacted support-log export.
 - `potassiumProviderTests`: Swift Testing unit tests for shared behavior and app
   model flows.
 - `potassiumProviderUITests`: XCTest UI automation tests.

@@ -749,6 +749,91 @@ struct PotassiumProviderCoreTests {
         #expect(event.outcome == .success)
         #expect(event.severity == .info)
         #expect(event.errorCategory == nil)
+        #expect(event.correlationID == nil)
+        #expect(event.durationMilliseconds == nil)
+        #expect(event.networkOperation == nil)
+        #expect(event.httpStatusCode == nil)
+        #expect(event.remoteRequestID == nil)
+    }
+
+    @Test func providerEventStoreRetainsOnlyTheMostRecentActivityEvents() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try KDriveProviderEventSQLiteStore(
+            databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"),
+            maximumActivityEventCount: 2
+        )
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 100),
+            domainIdentifier: "domain-1",
+            kind: .enumeration,
+            summary: "Oldest activity."
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-1",
+            kind: .changeSync,
+            summary: "Middle activity."
+        ))
+        try await store.recordActivity(makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 300),
+            domainIdentifier: "domain-1",
+            kind: .metadataLookup,
+            summary: "Newest activity."
+        ))
+
+        let activity = try await store.recentActivity(domainIdentifier: "domain-1", limit: 10)
+        #expect(activity.map(\.summary) == ["Newest activity.", "Middle activity."])
+    }
+
+    @Test func providerEventStoreExportsRedactedSupportLog() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try KDriveProviderEventSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        var activity = makeActivityEvent(
+            occurredAt: Date(timeIntervalSince1970: 100),
+            domainIdentifier: "domain-1",
+            kind: .fetchContents,
+            summary: "Could not download Report.txt from https://example.test/private/Report.txt.",
+            outcome: .failure,
+            diagnostic: KDriveProviderActivityErrorDiagnostic(
+                errorCategory: .network,
+                diagnosticSummary: "Request for /Report.txt failed."
+            )
+        )
+        activity.correlationID = "correlation-secret"
+        activity.durationMilliseconds = 125
+        activity.networkOperation = "downloadFile"
+        activity.httpStatusCode = 503
+        activity.remoteRequestID = "request-secret"
+        try await store.recordActivity(activity)
+        try await store.saveConflict(makeConflictEvent(
+            id: UUID(),
+            detectedAt: Date(timeIntervalSince1970: 200),
+            domainIdentifier: "domain-1",
+            itemName: "Report.txt",
+            state: .blockedRetryable
+        ))
+
+        let data = try await store.supportLogData(domainIdentifier: nil)
+        let text = try #require(String(data: data, encoding: .utf8))
+        #expect(text.contains("downloadFile"))
+        #expect(text.contains("durationMilliseconds"))
+        #expect(text.contains("Report.txt") == false)
+        #expect(text.contains("/Report.txt") == false)
+        #expect(text.contains("domain-1") == false)
+        #expect(text.contains("correlation-secret") == false)
+        #expect(text.contains("request-secret") == false)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let supportLog = try decoder.decode(KDriveProviderSupportLog.self, from: data)
+        #expect(supportLog.schemaVersion == KDriveProviderSupportLog.schemaVersion)
+        #expect(supportLog.activity.first?.durationMilliseconds == 125)
+        #expect(supportLog.activity.first?.httpStatusCode == 503)
+        #expect(supportLog.activity.first?.domain.hasPrefix("domain-") == true)
     }
 
     @Test func providerEventStoreObservesLocalAndExternalDatabaseChanges() async throws {

@@ -2,6 +2,7 @@ import Combine
 import FileProvider
 import PotassiumProviderCore
 import SwiftUI
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
@@ -9,6 +10,8 @@ import AppKit
 struct ConflictLogView: View {
     @StateObject private var model: ConflictLogViewModel
     @State private var isClearConfirmationPresented = false
+    @State private var isSupportLogExporterPresented = false
+    @State private var supportLogDocument: ProviderSupportLogDocument?
 
     init(eventStore: (any KDriveProviderEventStoring)?) {
         _model = StateObject(wrappedValue: ConflictLogViewModel(eventStore: eventStore))
@@ -62,6 +65,17 @@ struct ConflictLogView: View {
                         Label(model.isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
                     }
                     .disabled(model.isLoading)
+
+                    Button {
+                        Task {
+                            guard let data = await model.supportLogData() else { return }
+                            supportLogDocument = ProviderSupportLogDocument(data: data)
+                            isSupportLogExporterPresented = true
+                        }
+                    } label: {
+                        Label(model.isExporting ? "Exporting" : "Export", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(model.canExportSupportLog == false)
                 }
             }
             .task {
@@ -77,6 +91,16 @@ struct ConflictLogView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Activity events and resolved conflict rows will be removed. Unresolved, blocked, and failed conflicts stay visible.")
+            }
+            .fileExporter(
+                isPresented: $isSupportLogExporterPresented,
+                document: supportLogDocument,
+                contentType: .json,
+                defaultFilename: "potassium-provider-support-log"
+            ) { result in
+                if case let .failure(error) = result {
+                    model.recordExportFailure(error)
+                }
             }
         }
     }
@@ -188,6 +212,7 @@ final class ConflictLogViewModel: ObservableObject {
     @Published private(set) var activity: [KDriveProviderActivityEvent] = []
     @Published private(set) var isLoading = false
     @Published private(set) var isClearing = false
+    @Published private(set) var isExporting = false
     @Published var showsActivity = false
     @Published var errorMessage: String?
 
@@ -221,6 +246,10 @@ final class ConflictLogViewModel: ObservableObject {
 
     var canClearActivity: Bool {
         eventStore != nil && isLoading == false && isClearing == false
+    }
+
+    var canExportSupportLog: Bool {
+        eventStore is any KDriveProviderEventExporting && isExporting == false
     }
 
     func load() async {
@@ -264,6 +293,50 @@ final class ConflictLogViewModel: ObservableObject {
         } catch {
             errorMessage = "Could not clear activity events: \(error.localizedDescription)"
         }
+    }
+
+    func supportLogData() async -> Data? {
+        guard let eventStore = eventStore as? any KDriveProviderEventExporting else {
+            errorMessage = "Support-log export is unavailable."
+            return nil
+        }
+
+        isExporting = true
+        defer { isExporting = false }
+
+        do {
+            let data = try await eventStore.supportLogData(domainIdentifier: nil)
+            errorMessage = nil
+            return data
+        } catch {
+            errorMessage = "Could not create support log: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    func recordExportFailure(_ error: Error) {
+        errorMessage = "Could not export support log: \(error.localizedDescription)"
+    }
+}
+
+private struct ProviderSupportLogDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.data = data
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }
 
@@ -466,6 +539,19 @@ private struct ActivityEventRow: View {
             "Kind key: \(event.kind.rawValue)",
             "Summary: \(event.summary)"
         ]
+
+        if let correlationID = event.correlationID, correlationID.isEmpty == false {
+            lines.append("Correlation ID: \(correlationID)")
+        }
+        if let durationMilliseconds = event.durationMilliseconds {
+            lines.append("Duration: \(durationMilliseconds) ms")
+        }
+        if let networkOperation = event.networkOperation, networkOperation.isEmpty == false {
+            lines.append("Network operation: \(networkOperation)")
+        }
+        if let httpStatusCode = event.httpStatusCode {
+            lines.append("HTTP status: \(httpStatusCode)")
+        }
 
         if event.outcome == .failure {
             lines.append("Severity: \(event.severity.copyDisplayName)")

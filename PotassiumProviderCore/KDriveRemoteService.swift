@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import PotassiumChannelCore
 import PotassiumKDrive
 
@@ -60,93 +61,107 @@ public struct PotassiumKDriveService: KDriveFileProviding {
     }
 
     public func listDrives() async throws -> [KDriveDriveSummary] {
-        let response = try await driveClient.send(APIRequest<InfomaniakResponse<KDriveInitPayload>>(
-            method: .get,
-            path: "/2/drive/init",
-            queryParameters: [QueryParameter(name: "with", value: .string("drives"))]
-        ))
-        return response.data.drives.map {
-            KDriveDriveSummary(
-                id: $0.id,
-                name: $0.name,
-                accountID: $0.accountId,
-                role: $0.role,
-                status: $0.status ?? "ok",
-                isInMaintenance: $0.inMaintenance ?? false
-            )
+        try await performNetworkOperation("listDrives") {
+            let response = try await driveClient.send(APIRequest<InfomaniakResponse<KDriveInitPayload>>(
+                method: .get,
+                path: "/2/drive/init",
+                queryParameters: [QueryParameter(name: "with", value: .string("drives"))]
+            ))
+            return response.data.drives.map {
+                KDriveDriveSummary(
+                    id: $0.id,
+                    name: $0.name,
+                    accountID: $0.accountId,
+                    role: $0.role,
+                    status: $0.status ?? "ok",
+                    isInMaintenance: $0.inMaintenance ?? false
+                )
+            }
         }
     }
 
     public func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        try await service.getFile(driveId: driveID, fileId: fileID).data.remoteItem
+        try await performNetworkOperation("item") {
+            try await service.getFile(driveId: driveID, fileId: fileID).data.remoteItem
+        }
     }
 
     public func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
-        let response = try await service.listDirectoryFiles(
-            driveId: driveID,
-            fileId: folderID,
-            options: ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
-        )
-        return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
+        try await performNetworkOperation("listDirectory") {
+            let response = try await service.listDirectoryFiles(
+                driveId: driveID,
+                fileId: folderID,
+                options: ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
+            )
+            return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
+        }
     }
 
     public func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage {
         let orderBy = ["type", "name"]
         let orderFor = ["type": "asc", "name": "asc"]
 
-        let response: CursorPaginatedInfomaniakResponse<KDriveAdvancedDirectoryListing>
-        if let cursor {
-            response = try await service.continueAdvancedDirectoryListing(
-                driveId: driveID,
-                fileId: folderID,
-                cursor: cursor,
-                options: ContinueKDriveAdvancedDirectoryListingOptions(
-                    limit: limit,
-                    orderBy: orderBy,
-                    orderFor: orderFor
+        return try await performNetworkOperation("listAdvancedDirectory") {
+            let response: CursorPaginatedInfomaniakResponse<KDriveAdvancedDirectoryListing>
+            if let cursor {
+                response = try await service.continueAdvancedDirectoryListing(
+                    driveId: driveID,
+                    fileId: folderID,
+                    cursor: cursor,
+                    options: ContinueKDriveAdvancedDirectoryListingOptions(
+                        limit: limit,
+                        orderBy: orderBy,
+                        orderFor: orderFor
+                    )
                 )
-            )
-        } else {
-            response = try await service.listAdvancedDirectoryListing(
-                driveId: driveID,
-                fileId: folderID,
-                options: ListKDriveAdvancedDirectoryListingOptions(
-                    limit: limit,
-                    orderBy: orderBy,
-                    orderFor: orderFor
+            } else {
+                response = try await service.listAdvancedDirectoryListing(
+                    driveId: driveID,
+                    fileId: folderID,
+                    options: ListKDriveAdvancedDirectoryListingOptions(
+                        limit: limit,
+                        orderBy: orderBy,
+                        orderFor: orderFor
+                    )
                 )
+            }
+
+            return KDriveAdvancedItemPage(
+                items: response.data.files.map(\.remoteItem),
+                actions: response.data.actions.map {
+                    KDriveRemoteFileAction(action: $0.action, fileID: $0.fileId, parentID: $0.parentId)
+                },
+                actionItems: response.data.actionsFiles.map(\.remoteItem),
+                nextCursor: response.cursor,
+                hasMore: response.hasMore
             )
         }
-
-        return KDriveAdvancedItemPage(
-            items: response.data.files.map(\.remoteItem),
-            actions: response.data.actions.map {
-                KDriveRemoteFileAction(action: $0.action, fileID: $0.fileId, parentID: $0.parentId)
-            },
-            actionItems: response.data.actionsFiles.map(\.remoteItem),
-            nextCursor: response.cursor,
-            hasMore: response.hasMore
-        )
     }
 
     public func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
-        let response = try await service.listTrashFiles(
-            driveId: driveID,
-            options: ListKDriveTrashOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
-        )
-        return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
+        try await performNetworkOperation("listTrash") {
+            let response = try await service.listTrashFiles(
+                driveId: driveID,
+                options: ListKDriveTrashOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
+            )
+            return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
+        }
     }
 
     public func downloadFile(driveID: Int, fileID: Int) async throws -> Data {
-        try await service.downloadFile(driveId: driveID, fileId: fileID)
+        try await performNetworkOperation("downloadFile") {
+            try await service.downloadFile(driveId: driveID, fileId: fileID)
+        }
     }
 
     public func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
-        try await service.getFileThumbnail(
-            driveId: driveID,
-            fileId: fileID,
-            options: GetKDriveFileThumbnailOptions(height: height, width: width)
-        )
+        try await performNetworkOperation("thumbnail") {
+            try await service.getFileThumbnail(
+                driveId: driveID,
+                fileId: fileID,
+                options: GetKDriveFileThumbnailOptions(height: height, width: width)
+            )
+        }
     }
 
     public func uploadFile(
@@ -157,17 +172,19 @@ public struct PotassiumKDriveService: KDriveFileProviding {
         lastModifiedAt: Date?,
         conflictStrategy: KDriveUploadConflictStrategy
     ) async throws -> KDriveRemoteItem {
-        let response = try await service.uploadFile(
-            driveId: driveID,
-            data: contents,
-            options: UploadKDriveFileOptions(
-                conflict: conflictStrategy.rawValue,
-                directoryId: parentID,
-                fileName: fileName,
-                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
+        try await performNetworkOperation("uploadFile") {
+            let response = try await service.uploadFile(
+                driveId: driveID,
+                data: contents,
+                options: UploadKDriveFileOptions(
+                    conflict: conflictStrategy.rawValue,
+                    directoryId: parentID,
+                    fileName: fileName,
+                    lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
+                )
             )
-        )
-        return response.data.remoteItem
+            return response.data.remoteItem
+        }
     }
 
     public func replaceFile(
@@ -177,46 +194,80 @@ public struct PotassiumKDriveService: KDriveFileProviding {
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
-        let response = try await service.uploadFile(
-            driveId: driveID,
-            data: contents,
-            options: UploadKDriveFileOptions(
-                conflict: KDriveUploadConflictStrategy.version.rawValue,
-                directoryId: parentID,
-                fileName: fileName,
-                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
+        try await performNetworkOperation("replaceFile") {
+            let response = try await service.uploadFile(
+                driveId: driveID,
+                data: contents,
+                options: UploadKDriveFileOptions(
+                    conflict: KDriveUploadConflictStrategy.version.rawValue,
+                    directoryId: parentID,
+                    fileName: fileName,
+                    lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
+                )
             )
-        )
-        return response.data.remoteItem
+            return response.data.remoteItem
+        }
     }
 
     public func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem {
-        try await service.createDirectory(
-            driveId: driveID,
-            fileId: parentID,
-            options: CreateKDriveDirectoryOptions(name: name)
-        ).data.remoteItem
+        try await performNetworkOperation("createDirectory") {
+            try await service.createDirectory(
+                driveId: driveID,
+                fileId: parentID,
+                options: CreateKDriveDirectoryOptions(name: name)
+            ).data.remoteItem
+        }
     }
 
     public func renameItem(driveID: Int, fileID: Int, name: String) async throws {
-        _ = try await service.renameFile(driveId: driveID, fileId: fileID, options: RenameKDriveFileOptions(name: name))
+        _ = try await performNetworkOperation("renameItem") {
+            try await service.renameFile(driveId: driveID, fileId: fileID, options: RenameKDriveFileOptions(name: name))
+        }
     }
 
     public func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
-        _ = try await service.moveFile(
-            driveId: driveID,
-            fileId: fileID,
-            destinationDirectoryId: destinationParentID,
-            options: MoveKDriveFileOptions(conflict: "rename", name: name)
-        )
+        _ = try await performNetworkOperation("moveItem") {
+            try await service.moveFile(
+                driveId: driveID,
+                fileId: fileID,
+                destinationDirectoryId: destinationParentID,
+                options: MoveKDriveFileOptions(conflict: "rename", name: name)
+            )
+        }
     }
 
     public func trashItem(driveID: Int, fileID: Int) async throws {
-        _ = try await service.trashFileV2(driveId: driveID, fileId: fileID)
+        _ = try await performNetworkOperation("trashItem") {
+            try await service.trashFileV2(driveId: driveID, fileId: fileID)
+        }
     }
 
     public func deleteTrashedItem(driveID: Int, fileID: Int) async throws {
-        _ = try await service.removeTrashedFile(driveId: driveID, fileId: fileID)
+        _ = try await performNetworkOperation("deleteTrashedItem") {
+            try await service.removeTrashedFile(driveId: driveID, fileId: fileID)
+        }
+    }
+
+    private func performNetworkOperation<Value>(
+        _ operation: String,
+        _ work: () async throws -> Value
+    ) async throws -> Value {
+        let correlationID = UUID().uuidString
+        let startedAt = Date()
+        ProviderLog.network.debug("network start operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public))")
+
+        do {
+            let value = try await work()
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            ProviderLog.network.info("network success operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public))")
+            return value
+        } catch {
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            let statusCode = KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode
+            let nsError = error as NSError
+            ProviderLog.network.error("network failure operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public)) httpStatusCode(\(statusCode ?? 0, privacy: .public)) errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))")
+            throw error
+        }
     }
 
     private static func unixTimestamp(_ date: Date) -> Int {
