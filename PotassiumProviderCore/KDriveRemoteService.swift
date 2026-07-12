@@ -141,7 +141,7 @@ public enum KDriveUploadConflictStrategy: String, Sendable {
     case rename
 }
 
-public struct PotassiumKDriveService: KDriveFileProviding {
+public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemoteProviding {
     private let apiClient: InfomaniakAPIClient
     private let driveClient: InfomaniakAPIClient
     private let service: KDriveService
@@ -231,7 +231,7 @@ public struct PotassiumKDriveService: KDriveFileProviding {
 
             return KDriveAdvancedItemPage(
                 items: response.data.files.map(\.remoteItem),
-                actions: response.data.actions.map {
+                actions: response.data.actionsNewestFirst.map {
                     KDriveRemoteFileAction(action: $0.action, fileID: $0.fileId, parentID: $0.parentId)
                 },
                 actionItems: response.data.actionsFiles.map(\.remoteItem),
@@ -248,6 +248,58 @@ public struct PotassiumKDriveService: KDriveFileProviding {
                 options: ListKDriveTrashOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
             )
             return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
+        }
+    }
+
+    public func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
+        try await performNetworkOperation("listWorkingSetRelevantItems") {
+            let latest = try await service.listLastModifiedFiles(driveId: driveID, limit: latestLimit).data
+            let favorites = try await service.listFavoriteFiles(driveId: driveID, limit: latestLimit).data
+            let myShared = try await service.listMySharedFiles(driveId: driveID, limit: latestLimit).data
+            let sharedWithMe = try await service.listSharedWithMeFiles(driveId: driveID, limit: latestLimit).data
+            var itemsByID: [Int: KDriveRemoteItem] = [:]
+            for item in latest + favorites + myShared + sharedWithMe {
+                itemsByID[item.id] = item.remoteItem
+            }
+            return itemsByID.values.sorted {
+                if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+                return $0.id < $1.id
+            }
+        }
+    }
+
+    public func listPartialActivities(
+        driveID: Int,
+        fileIDs: [Int],
+        since: Date
+    ) async throws -> [KDrivePartialActivityResult] {
+        guard fileIDs.isEmpty == false else { return [] }
+        return try await performNetworkOperation("listPartialActivities") {
+            let response = try await service.listPartialFileActivities(
+                driveId: driveID,
+                options: ListKDrivePartialFileActivitiesOptions(
+                    actions: [
+                        "file_create", "file_delete", "file_trash", "file_restore",
+                        "file_update", "file_rename", "file_move", "file_move_out",
+                        "file_favorite_create", "file_favorite_remove",
+                        "file_share_create", "file_share_update", "file_share_delete",
+                    ],
+                    files: fileIDs.map {
+                        KDrivePartialFileActivityRequestFile(
+                            id: $0,
+                            fromDate: Int(since.timeIntervalSince1970)
+                        )
+                    }
+                )
+            )
+            return response.data.map {
+                KDrivePartialActivityResult(
+                    fileID: $0.fileId,
+                    lastAction: $0.lastAction,
+                    lastActionAt: $0.lastActionAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    item: $0.file?.remoteItem
+                )
+            }
         }
     }
 

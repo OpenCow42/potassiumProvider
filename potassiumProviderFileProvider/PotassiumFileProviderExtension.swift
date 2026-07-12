@@ -15,6 +15,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
     private let domain: NSFileProviderDomain
     private let manager: NSFileProviderManager
     private let temporaryDirectoryURL: URL
+    private var remotePollingTask: Task<Void, Never>?
 
     var fileProviderDomain: NSFileProviderDomain {
         domain
@@ -25,11 +26,50 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         self.manager = NSFileProviderManager(for: domain)!
         self.temporaryDirectoryURL = (try? manager.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
         super.init()
+        startRemotePolling()
         FileProviderLog.replicatedExtension.info("init replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public)) displayName(\(self.domain.displayName, privacy: .private)) temporaryDirectory(\(self.temporaryDirectoryURL.path, privacy: .private))")
     }
 
     public func invalidate() {
+        remotePollingTask?.cancel()
+        remotePollingTask = nil
         FileProviderLog.replicatedExtension.debug("invalidate replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public))")
+    }
+
+    public func materializedItemsDidChange(completionHandler: @escaping () -> Void) {
+        FileProviderLog.replicatedExtension.debug("materialized items changed for domain(\(self.domain.identifier.rawValue, privacy: .public))")
+        completionHandler()
+
+        Task {
+            do {
+                let runtime = try await FileProviderRuntime.load(domain: domain)
+                let systemItems = try await MaterializedSetReader.read(using: manager)
+                let materializedItems = systemItems.compactMap { item -> KDriveMaterializedItem? in
+                    let fileID: Int
+                    if item.itemIdentifier == .rootContainer {
+                        fileID = runtime.configuration.rootFileID
+                    } else {
+                        guard let parsed = try? KDriveItemIdentifier(rawValue: item.itemIdentifier.rawValue),
+                              let parsedFileID = parsed.fileID(rootFileID: runtime.configuration.rootFileID) else {
+                            return nil
+                        }
+                        fileID = parsedFileID
+                    }
+                    return KDriveMaterializedItem(
+                        fileID: fileID,
+                        isContainer: item.contentType?.conforms(to: .folder) == true
+                    )
+                }
+                try await runtime.workingSetStateStore.replaceMaterializedItems(
+                    materializedItems,
+                    domainIdentifier: runtime.configuration.domainIdentifier
+                )
+                _ = try await pollWorkingSet(runtime: runtime, minimumInterval: 0)
+                await signalWorkingSet(runtime: runtime)
+            } catch {
+                FileProviderLog.replicatedExtension.error("refresh materialized items failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     public func item(
@@ -706,8 +746,47 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 )
             }
 
-            await signalEnumerator(for: containerIdentifier, runtime: runtime)
         }
+        await signalWorkingSet(runtime: runtime)
+    }
+
+    private func startRemotePolling() {
+        remotePollingTask = Task { [weak self] in
+            while Task.isCancelled == false {
+                do {
+                    try await Task.sleep(for: .seconds(KDriveWorkingSetPollCoordinator.pollingInterval))
+                    guard let self, Task.isCancelled == false else { return }
+                    let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                    let outcome = try await self.pollWorkingSet(runtime: runtime)
+                    if outcome.didPoll, outcome.changes.isEmpty == false {
+                        await self.signalWorkingSet(runtime: runtime)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    FileProviderLog.replicatedExtension.error("working-set poll failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+    }
+
+    private func pollWorkingSet(
+        runtime: FileProviderRuntime,
+        minimumInterval: TimeInterval = KDriveWorkingSetPollCoordinator.pollingInterval
+    ) async throws -> KDriveWorkingSetPollOutcome {
+        try await KDriveWorkingSetPollCoordinator(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            driveID: runtime.configuration.driveID,
+            rootFileID: runtime.configuration.rootFileID,
+            remote: runtime.remote,
+            workingSetRemote: runtime.workingSetRemote,
+            snapshotStore: runtime.snapshotStore,
+            stateStore: runtime.workingSetStateStore
+        ).poll(minimumInterval: minimumInterval)
+    }
+
+    private func signalWorkingSet(runtime: FileProviderRuntime) async {
+        await signalEnumerator(for: .workingSet, runtime: runtime)
     }
 
     private func signalEnumerator(
@@ -907,6 +986,54 @@ private struct FetchedFileContents: Sendable {
     let temporaryURL: URL
     let item: KDriveRemoteItem
     let byteCount: Int
+}
+
+private enum MaterializedSetReader {
+    static func read(using manager: NSFileProviderManager) async throws -> [any NSFileProviderItemProtocol] {
+        try await withCheckedThrowingContinuation { continuation in
+            let enumerator = manager.enumeratorForMaterializedItems()
+            let observer = MaterializedSetObserver(enumerator: enumerator) { result in
+                continuation.resume(with: result)
+            }
+            observer.start()
+        }
+    }
+}
+
+private final class MaterializedSetObserver: NSObject, NSFileProviderEnumerationObserver {
+    private let enumerator: any NSFileProviderEnumerator
+    private var items: [any NSFileProviderItemProtocol] = []
+    private var completion: ((Result<[any NSFileProviderItemProtocol], Error>) -> Void)?
+
+    init(
+        enumerator: any NSFileProviderEnumerator,
+        completion: @escaping (Result<[any NSFileProviderItemProtocol], Error>) -> Void
+    ) {
+        self.enumerator = enumerator
+        self.completion = completion
+    }
+
+    func start() {
+        enumerator.enumerateItems(for: self, startingAt: NSFileProviderPage(Data()))
+    }
+
+    func didEnumerate(_ updatedItems: [any NSFileProviderItemProtocol]) {
+        items.append(contentsOf: updatedItems)
+    }
+
+    func finishEnumerating(upTo nextPage: NSFileProviderPage?) {
+        if let nextPage {
+            enumerator.enumerateItems(for: self, startingAt: nextPage)
+            return
+        }
+        completion?(.success(items))
+        completion = nil
+    }
+
+    func finishEnumeratingWithError(_ error: any Error) {
+        completion?(.failure(error))
+        completion = nil
+    }
 }
 
 private func logVersionDescription(_ version: NSFileProviderItemVersion?) -> String {

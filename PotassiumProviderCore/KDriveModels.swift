@@ -337,18 +337,18 @@ public enum KDriveAdvancedActionReducer {
         from actions: [KDriveRemoteFileAction],
         actionItems: [KDriveRemoteItem]
     ) throws -> KDriveSnapshotChangeSet {
-        try KDriveListingValidator.validateAdvancedActions(actions, actionItems: actionItems)
+        var selectedActions: [KDriveRemoteFileAction] = []
+        var selectedFileIDs = Set<Int>()
+        for action in actions where selectedFileIDs.insert(action.fileID).inserted {
+            selectedActions.append(action)
+        }
+        try KDriveListingValidator.validateAdvancedActions(selectedActions, actionItems: actionItems)
 
-        let actionItemsByID = Dictionary(uniqueKeysWithValues: actionItems.map { ($0.id, $0) })
-        var handledFileIDs = Set<Int>()
+        let actionItemsByID = Dictionary(actionItems.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
         var updatedItems: [KDriveRemoteItem] = []
         var deletedItemIDs = Set<Int>()
 
-        for action in actions {
-            guard handledFileIDs.insert(action.fileID).inserted else {
-                continue
-            }
-
+        for action in selectedActions {
             if KDriveListingValidator.actionKind(for: action.action) == .delete {
                 deletedItemIDs.insert(action.fileID)
                 continue

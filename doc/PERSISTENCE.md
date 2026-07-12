@@ -187,6 +187,10 @@ SQLite caches metadata needed to enumerate and diff containers:
 - conflict/audit metadata needed by the app's Activities tab
 - recent successful provider activity needed by the app's activity timeline
 - recent sanitized provider/app failures needed by the app's activity timeline
+- materialized file and directory identifiers
+- working-set membership and anchor
+- the last poll attempt and successful-poll watermark
+- up to 32 working-set change batches used to advance valid older anchors
 
 Fully enumerated normal-folder snapshots can be served directly from SQLite on a
 future initial enumeration.
@@ -244,7 +248,8 @@ If the stored row no longer matches the requested condition, the store throws
 
 When the app removes a domain, it calls
 `removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`.
-That deletes all snapshot, conflict, and activity rows for the domain.
+That deletes all snapshot, materialization, working-set poll/change, conflict,
+and activity rows for the domain.
 
 For local development resets, `scripts/uninstall-file-provider.sh` invokes the
 signed app's hidden uninstall command. That command removes registered File

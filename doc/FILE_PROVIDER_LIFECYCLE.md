@@ -134,6 +134,19 @@ Behavior:
 SQLite: enumeration uses SQLite for metadata snapshots and advanced-listing
 state. See [Listing And Versioning](LISTING_AND_VERSIONING.md).
 
+## Materialization And Remote Discovery
+
+`materializedItemsDidChange` acknowledges File Provider immediately and then
+enumerates the system-owned materialized set in the background. The identifiers
+and container flags are persisted in SQLite. The active extension performs a
+domain-throttled working-set poll every 60 seconds and signals only
+`.workingSet` when it finds remote changes. Local mutations also invalidate the
+affected cached snapshots and signal `.workingSet`, rather than signaling root,
+trash, or arbitrary folder enumerators.
+
+This release intentionally uses client polling only. File Provider can receive
+updates late when the containing app and extension are suspended.
+
 ## Error Mapping
 
 `providerError(...)` preserves existing `NSFileProviderError` values, maps URL

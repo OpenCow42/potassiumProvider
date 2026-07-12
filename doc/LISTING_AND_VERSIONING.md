@@ -23,9 +23,8 @@ Special containers:
 - `.workingSet`
 - `.trashContainer`
 
-These do not use advanced listing today. Root and working set call legacy
-directory listing for the configured root file ID. Trash calls kDrive trash
-listing. Changes are produced by local diffing against the last SQLite snapshot.
+Root and trash use legacy listing and local snapshot diffs. The working set has
+its own durable polling and change-log path described below.
 
 ## Normal Folder `enumerateItems`
 
@@ -63,8 +62,13 @@ the snapshot is marked fully enumerated.
 
 ## Special Container `enumerateItems`
 
-Root and working set call `listDirectory(...)` on the configured root file ID.
-Trash calls `listTrash(...)`.
+Root calls `listDirectory(...)` on the configured root file ID. Trash calls
+`listTrash(...)`.
+
+The working set is the union of children of materialized containers,
+materialized files, favorites, files shared by or with the user, and the latest
+200 modified items. It is read from the durable working-set state after a
+throttled remote poll.
 
 These paths do not reuse fully enumerated snapshots for display. They still save
 snapshots for later local diffing during `enumerateChanges`.
@@ -111,7 +115,7 @@ restart enumeration from a fresh baseline.
 
 ## Special Container `enumerateChanges`
 
-For root, working set, and trash, the enumerator:
+For root and trash, the enumerator:
 
 1. Reads the old SQLite snapshot.
 2. Checks whether the requested local anchor matches the snapshot anchor.
@@ -127,6 +131,32 @@ Legacy listing loops are also validated. A repeated cursor or `hasMore == true`
 without a continuation cursor fails the sync attempt with `.cannotSynchronize`
 instead of committing a partial listing.
 
+## Working Set And Remote Polling
+
+`materializedItemsDidChange` completes promptly, then enumerates
+`NSFileProviderManager.enumeratorForMaterializedItems()` in the background. The
+extension persists both materialized directories and individual files.
+
+While the extension is alive it polls at most once per domain every 60 seconds.
+Working-set enumeration also performs the same throttled check. A poll:
+
+1. Continues the advanced cursor for each materialized directory.
+2. Checks materialized and relevant files through `/files/listing/partial`.
+3. Refreshes latest, favorite, my-shared, and shared-with-me membership.
+4. Atomically saves the working-set view, change batch, anchor, and successful
+   poll watermark.
+5. Signals only `.workingSet` when remote changes were found.
+
+Advanced actions are mapped newest-first before reduction. A move is included
+when either the old or new parent is materialized. For `file_move_out`, the
+provider resolves current metadata so File Provider sees a reparenting update,
+not a false deletion.
+
+The durable change log retains 32 poll batches so several polls can be reduced
+from an older valid working-set anchor. Older anchors expire. Because this is a
+client-polling design, remote changes may remain undiscovered while the app and
+extension are suspended; push notifications are intentionally outside 0.2.0.
+
 ## Cursor And Action Validation
 
 `KDriveListingValidator` owns the fail-closed listing rules:
@@ -136,7 +166,8 @@ instead of committing a partial listing.
   seen in the same rebuild/list-all loop.
 - advanced actions must be known delete or update actions.
 - delete actions may omit `actions_files` metadata.
-- update actions must include matching item metadata.
+- the newest effective update action must include matching item metadata;
+  metadata is not required for an older action superseded by a newer delete.
 
 `KDriveAdvancedActionReducer` throws when those rules are violated. This keeps
 the stored server cursor tied to a completely understood snapshot state.

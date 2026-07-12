@@ -1547,6 +1547,7 @@ struct PotassiumProviderCoreTests {
         #expect(queryItems.contains(URLQueryItem(name: "order_for[type]", value: "asc")))
         #expect(page.items.first?.id == 43)
         #expect(page.actions.first?.action == "file_update")
+        #expect(page.actions.last?.action == "file_rename")
         #expect(page.actionItems.first?.id == 44)
         #expect(page.nextCursor == "next-cursor")
         #expect(page.hasMore == true)
@@ -2102,6 +2103,11 @@ struct PotassiumProviderCoreTests {
       "result": "success",
       "data": {
         "actions": [
+          {
+            "action": "file_rename",
+            "file_id": 44,
+            "parent_id": 42
+          },
           {
             "action": "file_update",
             "file_id": 44,

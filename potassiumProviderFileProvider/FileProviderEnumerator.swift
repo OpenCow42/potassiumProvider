@@ -60,6 +60,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 domainIdentifier = configuration.domainIdentifier
                 driveID = configuration.driveID
                 let snapshotStore = try FileProviderRuntime.makeSnapshotStore()
+                if self.containerItemIdentifier == .workingSet {
+                    let stateStore = try FileProviderRuntime.makeWorkingSetStateStore()
+                    let snapshot = try await stateStore.workingSetSnapshot(
+                        domainIdentifier: configuration.domainIdentifier
+                    )
+                    completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
+                    return
+                }
                 let snapshot = try await snapshotStore.snapshot(
                     domainIdentifier: configuration.domainIdentifier,
                     containerIdentifier: snapshotContainerIdentifier
@@ -107,6 +115,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if self.containerItemIdentifier == .workingSet {
+                    try await self.enumerateWorkingSetChanges(
+                        for: observer,
+                        runtime: loadedRuntime,
+                        requestedAnchor: requestedAnchor
+                    )
+                    return
+                }
                 if self.usesAdvancedListing {
                     try await self.enumerateAdvancedChanges(
                         for: observer,
@@ -222,6 +238,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     private func listItems(runtime: FileProviderRuntime, startingAt page: NSFileProviderPage) async throws -> KDriveItemPage {
+        if containerItemIdentifier == .workingSet {
+            _ = try await workingSetCoordinator(runtime: runtime).poll()
+            let snapshot = try await runtime.workingSetStateStore.workingSetSnapshot(
+                domainIdentifier: runtime.configuration.domainIdentifier
+            )
+            return KDriveItemPage(items: snapshot?.items ?? [], nextCursor: nil, hasMore: false)
+        }
         if usesAdvancedListing {
             return try await listAdvancedItems(runtime: runtime, startingAt: page)
         }
@@ -233,7 +256,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let cursor = FileProviderPageCodec.cursor(from: page)
         FileProviderLog.enumeration.debug("listItems container(\(self.containerItemIdentifier.rawValue, privacy: .public)) kind(\(self.snapshotContainerIdentifier, privacy: .public)) cursorPresent(\(cursor != nil, privacy: .public))")
         switch self.containerItemIdentifier {
-        case .workingSet, .rootContainer:
+        case .rootContainer:
             return try await runtime.remote.listDirectory(
                 driveID: runtime.configuration.driveID,
                 folderID: runtime.configuration.rootFileID,
@@ -461,6 +484,41 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             )
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: rebuiltSnapshot.anchor), moreComing: false)
         }
+    }
+
+    private func enumerateWorkingSetChanges(
+        for observer: NSFileProviderChangeObserver,
+        runtime: FileProviderRuntime,
+        requestedAnchor: String?
+    ) async throws {
+        guard let requestedAnchor else {
+            throw NSFileProviderError(.syncAnchorExpired)
+        }
+        _ = try await workingSetCoordinator(runtime: runtime).poll()
+        guard let result = try await runtime.workingSetStateStore.workingSetChanges(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            from: requestedAnchor
+        ) else {
+            throw NSFileProviderError(.syncAnchorExpired)
+        }
+        emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
+        FileProviderLog.enumeration.info("enumerateWorkingSetChanges success updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
+        observer.finishEnumeratingChanges(
+            upTo: FileProviderPageCodec.anchor(from: result.anchor),
+            moreComing: false
+        )
+    }
+
+    private func workingSetCoordinator(runtime: FileProviderRuntime) -> KDriveWorkingSetPollCoordinator {
+        KDriveWorkingSetPollCoordinator(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            driveID: runtime.configuration.driveID,
+            rootFileID: runtime.configuration.rootFileID,
+            remote: runtime.remote,
+            workingSetRemote: runtime.workingSetRemote,
+            snapshotStore: runtime.snapshotStore,
+            stateStore: runtime.workingSetStateStore
+        )
     }
 
     private func rebuildAdvancedSnapshot(runtime: FileProviderRuntime, folderID: Int) async throws -> KDriveSnapshot {

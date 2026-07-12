@@ -14,6 +14,10 @@ potassiumChannel's typed `KDriveService` and request builders.
 | Advanced folder listing | `listAdvancedDirectory(..., cursor: nil, ...)` | `listAdvancedDirectoryListing` | `GET /3/drive/{driveId}/files/{fileId}/listing` |
 | Advanced listing continuation | `listAdvancedDirectory(..., cursor: value, ...)` | `continueAdvancedDirectoryListing` | `GET /3/drive/{driveId}/files/{fileId}/listing/continue` |
 | Trash listing | `listTrash(...)` | `listTrashFiles` | `GET /3/drive/{driveId}/trash` |
+| Latest working-set items | `listWorkingSetRelevantItems(...)` | `listLastModifiedFiles` | `GET /3/drive/{driveId}/files/last_modified` |
+| Favorite working-set items | `listWorkingSetRelevantItems(...)` | `listFavoriteFiles` | `GET /3/drive/{driveId}/files/favorites` |
+| Shared working-set items | `listWorkingSetRelevantItems(...)` | `listMySharedFiles` and `listSharedWithMeFiles` | `GET /3/drive/{driveId}/files/my_shared`, `GET /3/drive/{driveId}/files/shared_with_me` |
+| Relevant item activity | `listPartialActivities(...)` | `listPartialFileActivities` | `POST /3/drive/{driveId}/files/listing/partial` |
 | Download | `downloadFileOperation(...)` | `downloadFile` operation | `GET /2/drive/{driveId}/files/{fileId}/download` |
 | Thumbnail | `thumbnail(...)` | `getFileThumbnail` | `GET /2/drive/{driveId}/files/{fileId}/thumbnail` |
 | Create/upload file | `uploadFileOperation(...)` | `uploadFile` operation | `POST /3/drive/{driveId}/upload` |
@@ -83,7 +87,8 @@ Directory create does not currently pass an explicit conflict policy.
 `KDriveAdvancedDirectoryListing` to `KDriveAdvancedItemPage`:
 
 - `data.files` becomes `items`
-- `data.actions` becomes `KDriveRemoteFileAction`
+- `data.actionsNewestFirst` becomes `KDriveRemoteFileAction`, so the newest
+  effective state wins when the reducer keeps its first action per item
 - `data.actionsFiles` becomes `actionItems`
 - response cursor becomes `nextCursor`
 - response `hasMore` becomes `hasMore`
@@ -92,7 +97,6 @@ Directory create does not currently pass an explicit conflict policy.
 listing cursors from `APIClientError.unacceptableStatusCode` bodies containing
 both "invalid" and "cursor".
 
-## Unused Available API
-
-potassiumChannel also exposes `/files/listing/partial`, but this app does not
-use it today.
+The partial-activity request is batched at 200 identifiers and uses the last
+durable successful-poll watermark. It includes create, delete, trash, restore,
+update, rename, move, favorite, and share actions relevant to working-set state.

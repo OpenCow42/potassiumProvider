@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import SQLite
 
-public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotStatisticsProviding {
+public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotStatisticsProviding, KDriveWorkingSetStateStoring {
     private let databaseURL: URL
     private let database: Connection
 
@@ -102,6 +102,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         try database.transaction {
             try database.run(Schema.snapshotItems.filter(Schema.domainIdentifier == domainIdentifier).delete())
             try database.run(Schema.containerSnapshots.filter(Schema.domainIdentifier == domainIdentifier).delete())
+            try database.run(WorkingSetSchema.materializedItems.filter(WorkingSetSchema.domainIdentifier == domainIdentifier).delete())
+            try database.run(WorkingSetSchema.changeBatches.filter(WorkingSetSchema.domainIdentifier == domainIdentifier).delete())
+            try database.run(WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier).delete())
         }
     }
 
@@ -150,6 +153,174 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             .compactMap { builders[$0]?.statistics }
     }
 
+    public func replaceMaterializedItems(
+        _ items: [KDriveMaterializedItem],
+        domainIdentifier: String
+    ) throws {
+        try database.transaction {
+            try database.run(
+                WorkingSetSchema.materializedItems
+                    .filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+                    .delete()
+            )
+            for item in items {
+                try database.run(WorkingSetSchema.materializedItems.insert(
+                    WorkingSetSchema.domainIdentifier <- domainIdentifier,
+                    WorkingSetSchema.fileID <- item.fileID,
+                    WorkingSetSchema.isContainer <- item.isContainer
+                ))
+            }
+        }
+    }
+
+    public func materializedItems(domainIdentifier: String) throws -> [KDriveMaterializedItem] {
+        try database.prepare(
+            WorkingSetSchema.materializedItems
+                .filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+                .order(WorkingSetSchema.fileID.asc)
+        ).map {
+            KDriveMaterializedItem(
+                fileID: $0[WorkingSetSchema.fileID],
+                isContainer: $0[WorkingSetSchema.isContainer]
+            )
+        }
+    }
+
+    public func workingSetSnapshot(domainIdentifier: String) throws -> KDriveWorkingSetSnapshot? {
+        guard let row = try database.pluck(
+            WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+        ) else {
+            return nil
+        }
+        return KDriveWorkingSetSnapshot(
+            anchor: row[WorkingSetSchema.workingSetAnchor],
+            items: try Self.decode([KDriveRemoteItem].self, from: row[WorkingSetSchema.workingSetItemsJSON])
+        )
+    }
+
+    public func workingSetChanges(
+        domainIdentifier: String,
+        from anchor: String
+    ) throws -> KDriveWorkingSetChanges? {
+        guard let snapshot = try workingSetSnapshot(domainIdentifier: domainIdentifier) else {
+            return nil
+        }
+        if snapshot.anchor == anchor {
+            return KDriveWorkingSetChanges(
+                changes: KDriveSnapshotChangeSet(updatedItems: [], deletedItemIDs: []),
+                anchor: anchor
+            )
+        }
+
+        let rows = try database.prepare(
+            WorkingSetSchema.changeBatches
+                .filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+                .order(WorkingSetSchema.changeSequence.asc)
+        )
+        var cursor = anchor
+        var updatesByID: [Int: KDriveRemoteItem] = [:]
+        var deletedIDs = Set<Int>()
+        var foundStart = false
+
+        for row in rows {
+            guard row[WorkingSetSchema.anchorBefore] == cursor else {
+                if foundStart { break }
+                continue
+            }
+            foundStart = true
+            let updates = try Self.decode([KDriveRemoteItem].self, from: row[WorkingSetSchema.updatedItemsJSON])
+            let deletions = try Self.decode([Int].self, from: row[WorkingSetSchema.deletedItemIDsJSON])
+            for item in updates {
+                deletedIDs.remove(item.id)
+                updatesByID[item.id] = item
+            }
+            for fileID in deletions {
+                updatesByID[fileID] = nil
+                deletedIDs.insert(fileID)
+            }
+            cursor = row[WorkingSetSchema.anchorAfter]
+            if cursor == snapshot.anchor { break }
+        }
+
+        guard foundStart, cursor == snapshot.anchor else { return nil }
+        return KDriveWorkingSetChanges(
+            changes: KDriveSnapshotChangeSet(
+                updatedItems: updatesByID.values.sorted { $0.id < $1.id },
+                deletedItemIDs: deletedIDs.sorted()
+            ),
+            anchor: snapshot.anchor
+        )
+    }
+
+    public func lastSuccessfulWorkingSetPoll(domainIdentifier: String) throws -> Date? {
+        try database.pluck(
+            WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+        )?[WorkingSetSchema.lastSuccessfulPollAt].map(Date.init(timeIntervalSince1970:))
+    }
+
+    public func claimWorkingSetPoll(
+        domainIdentifier: String,
+        now: Date,
+        minimumInterval: TimeInterval
+    ) throws -> Bool {
+        var claimed = false
+        try database.transaction {
+            let query = WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+            if let row = try database.pluck(query) {
+                if let lastAttempt = row[WorkingSetSchema.lastPollAttemptAt],
+                   now.timeIntervalSince1970 - lastAttempt < minimumInterval {
+                    return
+                }
+                try database.run(query.update(WorkingSetSchema.lastPollAttemptAt <- now.timeIntervalSince1970))
+            } else {
+                try database.run(WorkingSetSchema.pollState.insert(
+                    WorkingSetSchema.domainIdentifier <- domainIdentifier,
+                    WorkingSetSchema.workingSetAnchor <- UUID().uuidString,
+                    WorkingSetSchema.workingSetItemsJSON <- try Self.encode([KDriveRemoteItem]()),
+                    WorkingSetSchema.lastPollAttemptAt <- now.timeIntervalSince1970,
+                    WorkingSetSchema.lastSuccessfulPollAt <- nil
+                ))
+            }
+            claimed = true
+        }
+        return claimed
+    }
+
+    public func commitWorkingSetPoll(
+        domainIdentifier: String,
+        items: [KDriveRemoteItem],
+        changes: KDriveSnapshotChangeSet,
+        completedAt: Date
+    ) throws -> KDriveWorkingSetSnapshot {
+        var committedSnapshot: KDriveWorkingSetSnapshot?
+        try database.transaction {
+            let query = WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+            let oldAnchor = try database.pluck(query)?[WorkingSetSchema.workingSetAnchor] ?? UUID().uuidString
+            let newAnchor = changes.isEmpty ? oldAnchor : UUID().uuidString
+            if changes.isEmpty == false {
+                try database.run(WorkingSetSchema.changeBatches.insert(
+                    WorkingSetSchema.domainIdentifier <- domainIdentifier,
+                    WorkingSetSchema.anchorBefore <- oldAnchor,
+                    WorkingSetSchema.anchorAfter <- newAnchor,
+                    WorkingSetSchema.updatedItemsJSON <- try Self.encode(changes.updatedItems),
+                    WorkingSetSchema.deletedItemIDsJSON <- try Self.encode(changes.deletedItemIDs),
+                    WorkingSetSchema.changeCompletedAt <- completedAt.timeIntervalSince1970
+                ))
+            }
+
+            try database.run(WorkingSetSchema.pollState.insert(or: .replace,
+                WorkingSetSchema.domainIdentifier <- domainIdentifier,
+                WorkingSetSchema.workingSetAnchor <- newAnchor,
+                WorkingSetSchema.workingSetItemsJSON <- try Self.encode(items),
+                WorkingSetSchema.lastPollAttemptAt <- completedAt.timeIntervalSince1970,
+                WorkingSetSchema.lastSuccessfulPollAt <- completedAt.timeIntervalSince1970
+            ))
+            try trimWorkingSetChangeBatches(domainIdentifier: domainIdentifier, retaining: 32)
+            committedSnapshot = KDriveWorkingSetSnapshot(anchor: newAnchor, items: items)
+        }
+        return committedSnapshot!
+    }
+
     private func deleteSnapshot(domainIdentifier: String, containerIdentifier: String) throws {
         let filter = Schema.domainIdentifier == domainIdentifier && Schema.containerIdentifier == containerIdentifier
         try database.run(Schema.snapshotItems.filter(filter).delete())
@@ -193,6 +364,55 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             table.column(Schema.itemUpdatedAt)
             table.primaryKey(Schema.domainIdentifier, Schema.containerIdentifier, Schema.itemID)
         })
+
+        try database.run(WorkingSetSchema.materializedItems.create(ifNotExists: true) { table in
+            table.column(WorkingSetSchema.domainIdentifier)
+            table.column(WorkingSetSchema.fileID)
+            table.column(WorkingSetSchema.isContainer)
+            table.primaryKey(WorkingSetSchema.domainIdentifier, WorkingSetSchema.fileID)
+        })
+
+        try database.run(WorkingSetSchema.pollState.create(ifNotExists: true) { table in
+            table.column(WorkingSetSchema.domainIdentifier, primaryKey: true)
+            table.column(WorkingSetSchema.workingSetAnchor)
+            table.column(WorkingSetSchema.workingSetItemsJSON)
+            table.column(WorkingSetSchema.lastPollAttemptAt)
+            table.column(WorkingSetSchema.lastSuccessfulPollAt)
+        })
+
+        try database.run(WorkingSetSchema.changeBatches.create(ifNotExists: true) { table in
+            table.column(WorkingSetSchema.changeSequence, primaryKey: .autoincrement)
+            table.column(WorkingSetSchema.domainIdentifier)
+            table.column(WorkingSetSchema.anchorBefore)
+            table.column(WorkingSetSchema.anchorAfter)
+            table.column(WorkingSetSchema.updatedItemsJSON)
+            table.column(WorkingSetSchema.deletedItemIDsJSON)
+            table.column(WorkingSetSchema.changeCompletedAt)
+        })
+    }
+
+    private func trimWorkingSetChangeBatches(domainIdentifier: String, retaining count: Int) throws {
+        let staleRows = try database.prepare(
+            WorkingSetSchema.changeBatches
+                .filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+                .order(WorkingSetSchema.changeSequence.desc)
+                .limit(-1, offset: count)
+        )
+        for row in staleRows {
+            try database.run(
+                WorkingSetSchema.changeBatches
+                    .filter(WorkingSetSchema.changeSequence == row[WorkingSetSchema.changeSequence])
+                    .delete()
+            )
+        }
+    }
+
+    private static func encode<Value: Encodable>(_ value: Value) throws -> String {
+        String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+    }
+
+    private static func decode<Value: Decodable>(_ type: Value.Type, from string: String) throws -> Value {
+        try JSONDecoder().decode(type, from: Data(string.utf8))
     }
 
     private static func setters(
@@ -283,4 +503,24 @@ private enum Schema {
     static let createdAt = Expression<Double?>("createdAt")
     static let modifiedAt = Expression<Double>("modifiedAt")
     static let itemUpdatedAt = Expression<Double>("itemUpdatedAt")
+}
+
+private enum WorkingSetSchema {
+    static let materializedItems = Table("materialized_items")
+    static let pollState = Table("working_set_poll_state")
+    static let changeBatches = Table("working_set_change_batches")
+
+    static let domainIdentifier = Expression<String>("domainIdentifier")
+    static let fileID = Expression<Int>("fileID")
+    static let isContainer = Expression<Bool>("isContainer")
+    static let workingSetAnchor = Expression<String>("workingSetAnchor")
+    static let workingSetItemsJSON = Expression<String>("workingSetItemsJSON")
+    static let lastPollAttemptAt = Expression<Double?>("lastPollAttemptAt")
+    static let lastSuccessfulPollAt = Expression<Double?>("lastSuccessfulPollAt")
+    static let changeSequence = Expression<Int64>("changeSequence")
+    static let anchorBefore = Expression<String>("anchorBefore")
+    static let anchorAfter = Expression<String>("anchorAfter")
+    static let updatedItemsJSON = Expression<String>("updatedItemsJSON")
+    static let deletedItemIDsJSON = Expression<String>("deletedItemIDsJSON")
+    static let changeCompletedAt = Expression<Double>("completedAt")
 }
