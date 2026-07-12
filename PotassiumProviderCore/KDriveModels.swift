@@ -572,3 +572,22 @@ public enum KDriveItemIdentifierError: Error, Equatable, LocalizedError, Sendabl
         }
     }
 }
+
+public enum KDriveContainerValidationError: Error, Equatable, LocalizedError, Sendable {
+    case notAContainer(fileID: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notAContainer(let fileID):
+            return "kDrive item '\(fileID)' is not a container."
+        }
+    }
+}
+
+public enum KDriveContainerValidator {
+    public static func validate(_ item: KDriveRemoteItem, expectedFileID: Int) throws {
+        guard item.id == expectedFileID, item.isDirectory else {
+            throw KDriveContainerValidationError.notAContainer(fileID: expectedFileID)
+        }
+    }
+}

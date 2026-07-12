@@ -12,6 +12,9 @@ The enumerator chooses one of two strategies.
 Normal folders:
 
 - File Provider identifier is a positive kDrive item ID.
+- The identifier is accepted as a container only after cached or remote metadata
+  confirms that the item is a directory. Documents are rejected with the
+  supported File Provider `.noSuchItem` code and a not-a-container reason.
 - Uses kDrive advanced listing.
 - Can serve a fully enumerated folder from SQLite without a server call.
 - Uses the kDrive advanced listing cursor as sync anchor once the snapshot is
@@ -38,8 +41,8 @@ sequenceDiagram
     Apple->>Enum: enumerateItems(container, page)
     Enum->>DB: read snapshot when page is initial
     alt fully enumerated snapshot exists
-        DB-->>Enum: cached items
-        Enum-->>Apple: didEnumerate + finish(nil)
+        DB-->>Enum: generation-bound keyset page
+        Enum-->>Apple: didEnumerate + next local page token
     else cache missing or incomplete
         Enum->>API: /listing or /listing/continue
         API-->>Enum: files, actions, cursor, has_more
@@ -48,9 +51,11 @@ sequenceDiagram
     end
 ```
 
-For initial pages, the enumerator first checks SQLite. If a snapshot has
-`usesAdvancedListing == true` and `isFullyEnumerated == true`, it returns cached
-items and does not call kDrive.
+For initial pages, the enumerator first checks SQLite. If a snapshot is fully
+enumerated, it returns at most 200 cached items and a token containing the
+generation and final position. Later pages continue that immutable generation,
+even if a newer generation becomes active. A token older than the retained
+active-plus-two window fails with `.syncAnchorExpired` so File Provider restarts.
 
 When no complete cache exists, the enumerator calls:
 
@@ -121,8 +126,14 @@ For root and trash, the enumerator:
 2. Checks whether the requested local anchor matches the snapshot anchor.
 3. Lists all current items through the legacy listing path.
 4. Builds a new snapshot.
-5. Diffs old versus new with `KDriveSnapshotDiffer`.
-6. Saves the new snapshot with a conditional write and emits updates/deletes.
+5. Atomically commits the new immutable generation.
+6. Reads updates and deletions from SQLite in bounded pages of 200.
+
+Change-page anchors encode the retained source and target generations, the
+update/delete phase, and last scanned item ID. File Provider receives
+`moreComing == true` until the page token advances to the target anchor. Missing
+source or target generations fail with `.syncAnchorExpired` rather than silently
+treating an unknown anchor as an empty baseline.
 
 If the old anchor does not match, the baseline is treated as missing and the
 diff reports current items as updates.
