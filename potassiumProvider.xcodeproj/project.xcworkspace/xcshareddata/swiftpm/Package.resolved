@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "git@github.com:OpenCow42/potassiumChannel.git",
       "state" : {
-        "branch" : "codex/0.2.0-transfer-operations",
-        "revision" : "f8540c2a953b70d64a23fa95e241edf838e80c5a"
+        "revision" : "8a6d236d69c381c17f334b66dd4075ef2e0b7d89",
+        "version" : "0.2.0"
       }
     },
     {

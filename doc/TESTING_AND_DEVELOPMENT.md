@@ -30,9 +30,10 @@ Swift package dependencies are resolved by Xcode:
 The app imports split potassiumChannel modules directly. It should not import an
 old monolithic `potassiumChannel` module name.
 
-Until potassiumChannel 0.2.0 is tagged, the project intentionally follows
-branch `codex/0.2.0-transfer-operations`; `Package.resolved` must stay locked to
-revision `f8540c2a953b70d64a23fa95e241edf838e80c5a`.
+The project requires the published potassiumChannel 0.2 release line.
+`Package.resolved` must stay locked to the validated 0.2.0 release unless a
+later compatible package version is adopted and the full validation matrix is
+rerun.
 
 ## Commands
 

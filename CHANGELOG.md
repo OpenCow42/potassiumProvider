@@ -25,10 +25,10 @@ Release status: prepared on a dedicated dependency branch; not yet tagged.
 
 ### Dependency state
 
-- potassiumChannel branch: `codex/0.2.0-transfer-operations`
-- locked revision: `f8540c2a953b70d64a23fa95e241edf838e80c5a`
-- replace the branch requirement with the tagged potassiumChannel 0.2.0 release
-  before publishing potassiumProvider 0.2.0.
+- potassiumChannel release: `0.2.0`
+- release revision: `8a6d236d69c381c17f334b66dd4075ef2e0b7d89`
+- the Xcode project accepts compatible potassiumChannel `0.2.x` releases and
+  `Package.resolved` locks builds to the verified `0.2.0` release.
 
 ### Deferred
 
@@ -42,5 +42,5 @@ the extension's peak memory.
 - Complete the macOS Finder progress/cancellation and RSS checks in
   [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md).
 - Build and test macOS, iOS Simulator, and visionOS.
-- Tag potassiumChannel 0.2.0, update the package requirement to that release,
-  resolve dependencies, and only then tag potassiumProvider 0.2.0.
+- Verify the published potassiumChannel 0.2.0 dependency resolves cleanly, and
+  only then tag potassiumProvider 0.2.0.
