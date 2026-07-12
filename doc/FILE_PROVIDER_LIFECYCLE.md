@@ -46,7 +46,8 @@ Behavior:
 - Wait for the shared content-transfer limiter. The extension permits one
   whole-file download, create upload, or replacement upload at a time.
 - Fetch metadata and reject a requested content version that is no longer
-  available.
+  available. macOS receives `.versionNoLongerAvailable`; platforms where that
+  File Provider error is unavailable receive the retryable `.cannotSynchronize`.
 - Create `downloadFileOperation(...)`, attach its live URL session progress to
   the returned parent, and await its bytes.
 - Fetch metadata again and reject bytes whose content version changed during

@@ -30,6 +30,10 @@ Swift package dependencies are resolved by Xcode:
 The app imports split potassiumChannel modules directly. It should not import an
 old monolithic `potassiumChannel` module name.
 
+Until potassiumChannel 0.2.0 is tagged, the project intentionally follows
+branch `codex/0.2.0-transfer-operations`; `Package.resolved` must stay locked to
+revision `f8540c2a953b70d64a23fa95e241edf838e80c5a`.
+
 ## Commands
 
 List project information:
@@ -148,3 +152,23 @@ git diff --check
 ```
 
 Also verify that links from the root `README.md` point to existing files.
+
+## 0.2.0 Manual Release Gates
+
+Run these checks on macOS with a development File Provider domain and a test
+kDrive account. Do not use customer data.
+
+1. Upload and download a file large enough for Finder to display sustained
+   progress. Confirm the operation direction is correct, the byte count moves
+   monotonically, success clears the indicator, and cancelling from Finder
+   stops network activity without a later success callback or duplicate error.
+2. Record the File Provider extension's peak resident memory for one large
+   transfer, then request two large transfers together. Confirm the second waits
+   for the shared one-permit content limiter and the concurrent peak stays at or
+   below 125% of the single-transfer baseline.
+3. Repeat cancellation while the second transfer is waiting. Confirm it never
+   starts and the next transfer can acquire the released permit.
+
+Automated `AsyncOperationLimiter` tests cover the concurrency cap, cancellation
+while waiting, and permit release after errors. These manual checks cover the
+Finder presentation and process RSS behavior that unit tests cannot establish.

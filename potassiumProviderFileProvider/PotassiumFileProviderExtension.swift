@@ -159,7 +159,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                     if let requestedVersion,
                        requestedVersion.contentVersion != itemBeforeDownload.contentVersion {
-                        throw NSFileProviderError(.versionNoLongerAvailable)
+                        throw contentVersionUnavailableError()
                     }
 
                     progress.prepareForByteCount(itemBeforeDownload.size)
@@ -175,7 +175,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         fileID: fileID
                     )
                     guard itemAfterDownload.contentVersion == itemBeforeDownload.contentVersion else {
-                        throw NSFileProviderError(.versionNoLongerAvailable)
+                        throw contentVersionUnavailableError()
                     }
                     try Task.checkCancellation()
                     let temporaryURL = temporaryDirectoryURL
@@ -945,6 +945,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         ), runtime: runtime)
     }
 
+}
+
+private func contentVersionUnavailableError() -> Error {
+#if os(macOS)
+    NSFileProviderError(.versionNoLongerAvailable)
+#else
+    NSFileProviderError(.cannotSynchronize)
+#endif
 }
 
 private actor ConflictFailureMarker {

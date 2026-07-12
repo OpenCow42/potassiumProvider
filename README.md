@@ -21,6 +21,8 @@ data.
 
 ## Documentation Index
 
+- [0.2.0 Release Notes](CHANGELOG.md): shipped behavior, dependency state,
+  deferred transfer work, and remaining release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
