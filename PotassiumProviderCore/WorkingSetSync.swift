@@ -10,6 +10,24 @@ public struct KDriveMaterializedItem: Codable, Equatable, Sendable {
     }
 }
 
+/// A prepared materialized-container snapshot that must commit with the
+/// working-set change batch produced by the same remote poll.
+public struct KDriveWorkingSetContainerSnapshotUpdate: Equatable, Sendable {
+    public let containerIdentifier: String
+    public let snapshot: KDriveSnapshot
+    public let condition: KDriveSnapshotSaveCondition
+
+    public init(
+        containerIdentifier: String,
+        snapshot: KDriveSnapshot,
+        condition: KDriveSnapshotSaveCondition
+    ) {
+        self.containerIdentifier = containerIdentifier
+        self.snapshot = snapshot
+        self.condition = condition
+    }
+}
+
 public struct KDrivePartialActivityResult: Equatable, Sendable {
     public let fileID: Int
     public let lastAction: String?
@@ -65,6 +83,7 @@ public struct KDriveWorkingSetChanges: Equatable, Sendable {
 }
 
 public protocol KDriveWorkingSetStateStoring: Sendable {
+    func snapshot(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot?
     func replaceMaterializedItems(
         _ items: [KDriveMaterializedItem],
         domainIdentifier: String
@@ -83,6 +102,7 @@ public protocol KDriveWorkingSetStateStoring: Sendable {
     ) async throws -> Bool
     func commitWorkingSetPoll(
         domainIdentifier: String,
+        containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate],
         items: [KDriveRemoteItem],
         changes: KDriveSnapshotChangeSet,
         completedAt: Date
@@ -116,7 +136,6 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
     private let rootFileID: Int
     private let remote: any KDriveFileProviding
     private let workingSetRemote: any KDriveWorkingSetRemoteProviding
-    private let snapshotStore: any KDriveSnapshotStoring
     private let stateStore: any KDriveWorkingSetStateStoring
 
     public init(
@@ -125,7 +144,6 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         rootFileID: Int,
         remote: any KDriveFileProviding,
         workingSetRemote: any KDriveWorkingSetRemoteProviding,
-        snapshotStore: any KDriveSnapshotStoring,
         stateStore: any KDriveWorkingSetStateStoring
     ) {
         self.domainIdentifier = domainIdentifier
@@ -133,7 +151,6 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         self.rootFileID = rootFileID
         self.remote = remote
         self.workingSetRemote = workingSetRemote
-        self.snapshotStore = snapshotStore
         self.stateStore = stateStore
     }
 
@@ -166,12 +183,14 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         )
         var changedItems: [KDriveRemoteItem] = []
         var deletedItemIDs = Set<Int>()
+        var containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate] = []
 
         for folderID in materializedContainerIDs.sorted() {
             let result = try await pollMaterializedContainer(folderID: folderID)
             relevantItems.append(contentsOf: result.snapshot.items)
             changedItems.append(contentsOf: result.changes.updatedItems)
             deletedItemIDs.formUnion(result.changes.deletedItemIDs)
+            containerSnapshotUpdates.append(result.snapshotUpdate)
         }
         relevantItems.append(contentsOf: changedItems)
 
@@ -222,6 +241,7 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         )
         let snapshot = try await stateStore.commitWorkingSetPoll(
             domainIdentifier: domainIdentifier,
+            containerSnapshotUpdates: containerSnapshotUpdates,
             items: currentItems,
             changes: changes,
             completedAt: now
@@ -248,23 +268,38 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
 
     private func pollMaterializedContainer(
         folderID: Int
-    ) async throws -> (snapshot: KDriveSnapshot, changes: KDriveSnapshotChangeSet) {
+    ) async throws -> (
+        snapshot: KDriveSnapshot,
+        changes: KDriveSnapshotChangeSet,
+        snapshotUpdate: KDriveWorkingSetContainerSnapshotUpdate
+    ) {
         let containerIdentifier = folderID == rootFileID ? "root" : String(folderID)
-        guard let oldSnapshot = try await snapshotStore.snapshot(
+        let storedSnapshot = try await stateStore.snapshot(
             domainIdentifier: domainIdentifier,
             containerIdentifier: containerIdentifier
-        ), oldSnapshot.usesAdvancedListing, oldSnapshot.isFullyEnumerated,
+        )
+        let saveCondition: KDriveSnapshotSaveCondition
+        if let storedSnapshot {
+            saveCondition = .matching(
+                anchor: storedSnapshot.anchor,
+                serverCursor: storedSnapshot.serverCursor
+            )
+        } else {
+            saveCondition = .missing
+        }
+
+        guard let oldSnapshot = storedSnapshot,
+              oldSnapshot.usesAdvancedListing, oldSnapshot.isFullyEnumerated,
               let serverCursor = oldSnapshot.serverCursor else {
             let rebuilt = try await rebuildMaterializedContainer(folderID: folderID)
-            try await snapshotStore.save(
-                rebuilt,
-                domainIdentifier: domainIdentifier,
-                containerIdentifier: containerIdentifier,
-                condition: .unconditional
-            )
             return (
                 rebuilt,
-                KDriveSnapshotChangeSet(updatedItems: rebuilt.items, deletedItemIDs: [])
+                KDriveSnapshotChangeSet(updatedItems: rebuilt.items, deletedItemIDs: []),
+                KDriveWorkingSetContainerSnapshotUpdate(
+                    containerIdentifier: containerIdentifier,
+                    snapshot: rebuilt,
+                    condition: saveCondition
+                )
             )
         }
 
@@ -313,29 +348,30 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
                 if !response.hasMore { break }
             }
 
-            try await snapshotStore.save(
-                snapshot,
-                domainIdentifier: domainIdentifier,
-                containerIdentifier: containerIdentifier,
-                condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
-            )
             return (
                 snapshot,
                 KDriveSnapshotChangeSet(
                     updatedItems: Self.uniqueItems(allUpdatedItems),
                     deletedItemIDs: allDeletedIDs.sorted()
+                ),
+                KDriveWorkingSetContainerSnapshotUpdate(
+                    containerIdentifier: containerIdentifier,
+                    snapshot: snapshot,
+                    condition: saveCondition
                 )
             )
         } catch let error where KDriveRemoteErrorClassifier.isInvalidCursor(error) {
             let rebuilt = try await rebuildMaterializedContainer(folderID: folderID)
             let changes = KDriveSnapshotDiffer.changes(from: oldSnapshot, to: rebuilt)
-            try await snapshotStore.save(
+            return (
                 rebuilt,
-                domainIdentifier: domainIdentifier,
-                containerIdentifier: containerIdentifier,
-                condition: .matching(anchor: oldSnapshot.anchor, serverCursor: oldSnapshot.serverCursor)
+                changes,
+                KDriveWorkingSetContainerSnapshotUpdate(
+                    containerIdentifier: containerIdentifier,
+                    snapshot: rebuilt,
+                    condition: saveCondition
+                )
             )
-            return (rebuilt, changes)
         }
     }
 

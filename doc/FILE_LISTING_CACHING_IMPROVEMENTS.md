@@ -374,6 +374,8 @@ Status: partially addressed.
 
 - WAL and busy timeout are configured.
 - Expected-anchor/cursor checks guard enumeration and change snapshot saves.
+- Working-set polls atomically commit materialized-container cursors with the
+  working-set change batch and successful-poll watermark.
 - Schema versioning and indexes remain future work.
 - Add local paging from cached folders.
 - Split container state from item rows enough to avoid whole-folder rewrites for

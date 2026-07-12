@@ -84,48 +84,12 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         condition: KDriveSnapshotSaveCondition
     ) throws {
         try database.transaction {
-            let currentState = try activeSnapshotState(
-                domainIdentifier: domainIdentifier,
-                containerIdentifier: containerIdentifier
-            )
-            guard condition.accepts(currentState?.snapshotMetadata) else {
-                throw KDriveSnapshotStoreError.staleSnapshot(
-                    domainIdentifier: domainIdentifier,
-                    containerIdentifier: containerIdentifier
-                )
-            }
-
-            let generation = (currentState?.generation ?? 0) + 1
-            let committedAt = Date().timeIntervalSince1970
-            try database.run(GenerationSchema.generations.insert(
-                GenerationSchema.domainIdentifier <- domainIdentifier,
-                GenerationSchema.containerIdentifier <- containerIdentifier,
-                GenerationSchema.generation <- generation,
-                GenerationSchema.anchor <- snapshot.anchor,
-                GenerationSchema.serverCursor <- snapshot.serverCursor,
-                GenerationSchema.isFullyEnumerated <- snapshot.isFullyEnumerated,
-                GenerationSchema.usesAdvancedListing <- snapshot.usesAdvancedListing,
-                GenerationSchema.updatedAt <- committedAt
-            ))
-
-            for (position, item) in snapshot.items.enumerated() {
-                try database.run(GenerationSchema.items.insert(Self.generationSetters(
-                    for: item,
-                    domainIdentifier: domainIdentifier,
-                    containerIdentifier: containerIdentifier,
-                    generation: generation,
-                    position: position
-                )))
-            }
-            try database.run(GenerationSchema.heads.insert(or: .replace,
-                GenerationSchema.domainIdentifier <- domainIdentifier,
-                GenerationSchema.containerIdentifier <- containerIdentifier,
-                GenerationSchema.activeGeneration <- generation
-            ))
-            try trimSnapshotGenerations(
+            try saveSnapshot(
+                snapshot,
                 domainIdentifier: domainIdentifier,
                 containerIdentifier: containerIdentifier,
-                retaining: 3
+                condition: condition,
+                committedAt: Date()
             )
         }
     }
@@ -557,12 +521,23 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
 
     public func commitWorkingSetPoll(
         domainIdentifier: String,
+        containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate],
         items: [KDriveRemoteItem],
         changes: KDriveSnapshotChangeSet,
         completedAt: Date
     ) throws -> KDriveWorkingSetSnapshot {
         var committedSnapshot: KDriveWorkingSetSnapshot?
         try database.transaction {
+            for update in containerSnapshotUpdates {
+                try saveSnapshot(
+                    update.snapshot,
+                    domainIdentifier: domainIdentifier,
+                    containerIdentifier: update.containerIdentifier,
+                    condition: update.condition,
+                    committedAt: completedAt
+                )
+            }
+
             let query = WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
             let oldAnchor = try database.pluck(query)?[WorkingSetSchema.workingSetAnchor] ?? UUID().uuidString
             let newAnchor = changes.isEmpty ? oldAnchor : UUID().uuidString
@@ -588,6 +563,57 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             committedSnapshot = KDriveWorkingSetSnapshot(anchor: newAnchor, items: items)
         }
         return committedSnapshot!
+    }
+
+    private func saveSnapshot(
+        _ snapshot: KDriveSnapshot,
+        domainIdentifier: String,
+        containerIdentifier: String,
+        condition: KDriveSnapshotSaveCondition,
+        committedAt: Date
+    ) throws {
+        let currentState = try activeSnapshotState(
+            domainIdentifier: domainIdentifier,
+            containerIdentifier: containerIdentifier
+        )
+        guard condition.accepts(currentState?.snapshotMetadata) else {
+            throw KDriveSnapshotStoreError.staleSnapshot(
+                domainIdentifier: domainIdentifier,
+                containerIdentifier: containerIdentifier
+            )
+        }
+
+        let generation = (currentState?.generation ?? 0) + 1
+        try database.run(GenerationSchema.generations.insert(
+            GenerationSchema.domainIdentifier <- domainIdentifier,
+            GenerationSchema.containerIdentifier <- containerIdentifier,
+            GenerationSchema.generation <- generation,
+            GenerationSchema.anchor <- snapshot.anchor,
+            GenerationSchema.serverCursor <- snapshot.serverCursor,
+            GenerationSchema.isFullyEnumerated <- snapshot.isFullyEnumerated,
+            GenerationSchema.usesAdvancedListing <- snapshot.usesAdvancedListing,
+            GenerationSchema.updatedAt <- committedAt.timeIntervalSince1970
+        ))
+
+        for (position, item) in snapshot.items.enumerated() {
+            try database.run(GenerationSchema.items.insert(Self.generationSetters(
+                for: item,
+                domainIdentifier: domainIdentifier,
+                containerIdentifier: containerIdentifier,
+                generation: generation,
+                position: position
+            )))
+        }
+        try database.run(GenerationSchema.heads.insert(or: .replace,
+            GenerationSchema.domainIdentifier <- domainIdentifier,
+            GenerationSchema.containerIdentifier <- containerIdentifier,
+            GenerationSchema.activeGeneration <- generation
+        ))
+        try trimSnapshotGenerations(
+            domainIdentifier: domainIdentifier,
+            containerIdentifier: containerIdentifier,
+            retaining: 3
+        )
     }
 
     private func deleteSnapshot(domainIdentifier: String, containerIdentifier: String) throws {

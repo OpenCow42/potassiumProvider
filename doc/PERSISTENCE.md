@@ -270,6 +270,13 @@ one; a failed insert cannot expose partial membership or an advanced cursor.
 If the stored row no longer matches the requested condition, the store throws
 `KDriveSnapshotStoreError.staleSnapshot` and leaves the newer snapshot intact.
 
+Working-set polling extends that transaction boundary across all materialized
+containers involved in one poll. Their new snapshot generations and advanced
+cursors commit in the same SQLite transaction as the working-set membership,
+change batch, anchor, and successful-poll watermark. If partial activity,
+another remote request, or a guarded snapshot update fails, no container cursor
+from that poll is published.
+
 Change enumeration compares retained source and target generations in bounded
 keyset scans. Its token records both generations, update/delete phase, and final
 scanned item ID, avoiding whole-container dictionaries and sets.

@@ -616,7 +616,6 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             rootFileID: runtime.configuration.rootFileID,
             remote: runtime.remote,
             workingSetRemote: runtime.workingSetRemote,
-            snapshotStore: runtime.snapshotStore,
             stateStore: runtime.workingSetStateStore
         )
     }

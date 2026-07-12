@@ -780,7 +780,6 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             rootFileID: runtime.configuration.rootFileID,
             remote: runtime.remote,
             workingSetRemote: runtime.workingSetRemote,
-            snapshotStore: runtime.snapshotStore,
             stateStore: runtime.workingSetStateStore
         ).poll(minimumInterval: minimumInterval)
     }

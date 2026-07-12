@@ -154,8 +154,10 @@ Working-set enumeration also performs the same throttled check. A poll:
 1. Continues the advanced cursor for each materialized directory.
 2. Checks materialized and relevant files through `/files/listing/partial`.
 3. Refreshes latest, favorite, my-shared, and shared-with-me membership.
-4. Atomically saves the working-set view, change batch, anchor, and successful
-   poll watermark.
+4. Atomically saves every materialized-container snapshot and cursor together
+   with the working-set view, change batch, anchor, and successful poll
+   watermark. A later poll step failing cannot advance a container cursor past
+   changes that were never published to File Provider.
 5. Signals only `.workingSet` when remote changes were found.
 
 Advanced actions are mapped newest-first before reduction. A move is included

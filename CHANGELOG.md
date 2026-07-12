@@ -21,6 +21,8 @@ Release status: prepared on a dedicated dependency branch; not yet tagged.
 - Document identifiers are no longer treated as enumerable containers.
 - Cached listings and change enumeration avoid loading full snapshots into
   duplicate in-memory collections.
+- Working-set polls commit materialized-container cursors and published changes
+  atomically, preventing failed polls from skipping remote actions.
 - One shared transfer permit bounds concurrent whole-file buffers.
 
 ### Dependency state
