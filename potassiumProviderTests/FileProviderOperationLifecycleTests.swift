@@ -13,16 +13,16 @@ struct FileProviderOperationLifecycleTests {
         lifecycle.start { lifecycle in
             do {
                 try await Task.sleep(for: .seconds(30))
-                lifecycle.finish(markProgressComplete: true) {
+                await lifecycle.finish(markProgressComplete: true) {
                     recorder.record("success")
                 }
             } catch {
-                lifecycle.cancel()
+                await lifecycle.cancel()
             }
         }
 
         progress.cancel()
-        lifecycle.finish(markProgressComplete: true) {
+        await lifecycle.finish(markProgressComplete: true) {
             recorder.record("late-success")
         }
 
@@ -37,16 +37,35 @@ struct FileProviderOperationLifecycleTests {
             recorder.record("cancelled")
         }
 
-        lifecycle.finish(markProgressComplete: true) {
+        await lifecycle.finish(markProgressComplete: true) {
             recorder.record("success")
         }
         progress.cancel()
-        lifecycle.finish(markProgressComplete: false) {
+        await lifecycle.finish(markProgressComplete: false) {
             recorder.record("late-failure")
         }
 
         #expect(recorder.values == ["success"])
         #expect(progress.completedUnitCount == 25)
+    }
+
+    @Test func cancellationBeforeStartDoesNotLaunchOperation() async {
+        let recorder = CompletionRecorder()
+        let progress = Progress(totalUnitCount: 1)
+        let lifecycle = FileProviderOperationLifecycle(progress: progress) {
+            recorder.record("cancelled")
+        }
+
+        progress.cancel()
+        lifecycle.start { _ in
+            recorder.record("started")
+        }
+        await lifecycle.finish(markProgressComplete: true) {
+            recorder.record("late-success")
+        }
+
+        #expect(recorder.values == ["cancelled"])
+        #expect(progress.completedUnitCount == 0)
     }
 
     @Test func transferOperationExposesLiveProgressAndForwardsCancellation() async throws {

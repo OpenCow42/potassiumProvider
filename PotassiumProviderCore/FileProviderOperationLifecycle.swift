@@ -2,10 +2,9 @@ import Foundation
 
 /// Owns the task, cancellation, progress, and exactly-once completion of one
 /// callback-based File Provider operation.
-public final class FileProviderOperationLifecycle: @unchecked Sendable {
-    public let progress: Progress
+public actor FileProviderOperationLifecycle {
+    public nonisolated let progress: Progress
 
-    private let lock = NSLock()
     private let cancellationCompletion: @Sendable () -> Void
     private var task: Task<Void, Never>?
     private var isFinished = false
@@ -19,24 +18,30 @@ public final class FileProviderOperationLifecycle: @unchecked Sendable {
         progress.isCancellable = true
         progress.isPausable = false
         progress.cancellationHandler = { [weak self] in
-            self?.cancel()
+            Task {
+                await self?.cancel()
+            }
         }
     }
 
-    public func start(
+    public nonisolated func start(
         _ operation: @escaping @Sendable (FileProviderOperationLifecycle) async -> Void
     ) {
-        let task = Task {
-            await operation(self)
+        Task {
+            await begin(operation)
         }
+    }
 
-        lock.lock()
-        if isFinished {
-            lock.unlock()
-            task.cancel()
-        } else {
-            self.task = task
-            lock.unlock()
+    private func begin(
+        _ operation: @escaping @Sendable (FileProviderOperationLifecycle) async -> Void
+    ) {
+        guard isFinished == false else { return }
+        guard progress.isCancelled == false else {
+            cancel()
+            return
+        }
+        task = Task {
+            await operation(self)
         }
     }
 
@@ -50,14 +55,9 @@ public final class FileProviderOperationLifecycle: @unchecked Sendable {
             return false
         }
 
-        lock.lock()
-        guard isFinished == false else {
-            lock.unlock()
-            return false
-        }
+        guard isFinished == false else { return false }
         isFinished = true
         task = nil
-        lock.unlock()
 
         if markProgressComplete, progress.totalUnitCount > 0 {
             progress.completedUnitCount = progress.totalUnitCount
@@ -67,17 +67,10 @@ public final class FileProviderOperationLifecycle: @unchecked Sendable {
     }
 
     public func cancel() {
-        let task: Task<Void, Never>?
-
-        lock.lock()
-        guard isFinished == false else {
-            lock.unlock()
-            return
-        }
+        guard isFinished == false else { return }
         isFinished = true
-        task = self.task
+        let task = task
         self.task = nil
-        lock.unlock()
 
         if progress.isCancelled == false {
             progress.cancel()

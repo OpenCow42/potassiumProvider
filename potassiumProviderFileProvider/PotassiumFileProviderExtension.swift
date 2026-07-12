@@ -89,7 +89,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 runtime = loadedRuntime
                 if identifier == .rootContainer {
                     FileProviderLog.replicatedExtension.debug("resolved root item for domain(\(loadedRuntime.configuration.domainIdentifier, privacy: .public)) driveID(\(loadedRuntime.configuration.driveID, privacy: .public))")
-                    lifecycle.finish(markProgressComplete: true) {
+                    await lifecycle.finish(markProgressComplete: true) {
                         completionHandler(FileProviderItem(configuration: loadedRuntime.configuration), nil)
                     }
                     return
@@ -102,11 +102,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
                 let item = try await loadedRuntime.remote.item(driveID: loadedRuntime.configuration.driveID, fileID: fileID)
                 FileProviderLog.replicatedExtension.debug("resolved item identifier(\(identifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) type(\(item.type ?? "unknown", privacy: .public))")
-                lifecycle.finish(markProgressComplete: true) {
+                await lifecycle.finish(markProgressComplete: true) {
                     completionHandler(FileProviderItem(remoteItem: item, rootFileID: loadedRuntime.configuration.rootFileID), nil)
                 }
             } catch is CancellationError {
-                lifecycle.cancel()
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -118,7 +118,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "resolve item metadata."
                 )
                 FileProviderLog.replicatedExtension.error("item(forIdentifier:\(identifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(markProgressComplete: false) {
                     completionHandler(nil, mappedError)
                 }
             }
@@ -198,7 +198,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     itemPath: fetchedContents.item.path,
                     summary: "Fetched file contents."
                 )
-                let delivered = lifecycle.finish(markProgressComplete: true) {
+                let delivered = await lifecycle.finish(markProgressComplete: true) {
                     completionHandler(
                         fetchedContents.temporaryURL,
                         FileProviderItem(remoteItem: fetchedContents.item, rootFileID: loadedRuntime.configuration.rootFileID),
@@ -210,7 +210,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
             } catch is CancellationError {
                 FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) cancelled")
-                lifecycle.cancel()
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -222,7 +222,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "fetch file contents."
                 )
                 FileProviderLog.replicatedExtension.error("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(markProgressComplete: false) {
                     completionHandler(nil, nil, mappedError)
                 }
             }
@@ -297,11 +297,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         rootFileID: loadedRuntime.configuration.rootFileID
                     )
                 )
-                lifecycle.finish(markProgressComplete: true) {
+                await lifecycle.finish(markProgressComplete: true) {
                     completionHandler(FileProviderItem(remoteItem: createdItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
                 }
             } catch is CancellationError {
-                lifecycle.cancel()
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -313,7 +313,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "create \(kind)."
                 )
                 FileProviderLog.replicatedExtension.error("createItem(parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(markProgressComplete: false) {
                     completionHandler(nil, [], false, mappedError)
                 }
             }
@@ -400,7 +400,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         runtime: loadedRuntime,
                         containerIdentifiers: affectedContainerIdentifiers
                     )
-                    lifecycle.finish(markProgressComplete: true) {
+                    await lifecycle.finish(markProgressComplete: true) {
                         completionHandler(nil, [], false, nil)
                     }
                     return
@@ -434,7 +434,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                                 rootFileID: loadedRuntime.configuration.rootFileID
                             )
                         )
-                        lifecycle.finish(markProgressComplete: true) {
+                        await lifecycle.finish(markProgressComplete: true) {
                             completionHandler(FileProviderItem(remoteItem: conflictItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
                         }
                         return
@@ -520,11 +520,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     runtime: loadedRuntime,
                     containerIdentifiers: affectedContainerIdentifiers
                 )
-                lifecycle.finish(markProgressComplete: true) {
+                await lifecycle.finish(markProgressComplete: true) {
                     completionHandler(FileProviderItem(remoteItem: updatedItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
                 }
             } catch is CancellationError {
-                lifecycle.cancel()
+                await lifecycle.cancel()
             } catch {
                 let conflictFailureAlreadyRecorded = await conflictFailureMarker.didRecordFailure()
                 let mappedError = await self.recordProviderFailure(
@@ -538,7 +538,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     shouldRecord: conflictFailureAlreadyRecorded == false
                 )
                 FileProviderLog.replicatedExtension.error("modifyItem(\(item.itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(markProgressComplete: false) {
                     completionHandler(nil, [], false, mappedError)
                 }
             }
@@ -601,11 +601,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     runtime: loadedRuntime,
                     containerIdentifiers: [.trashContainer]
                 )
-                lifecycle.finish(markProgressComplete: true) {
+                await lifecycle.finish(markProgressComplete: true) {
                     completionHandler(nil)
                 }
             } catch is CancellationError {
-                lifecycle.cancel()
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -617,7 +617,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "delete item."
                 )
                 FileProviderLog.replicatedExtension.error("deleteItem(\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(markProgressComplete: false) {
                     completionHandler(mappedError)
                 }
             }
