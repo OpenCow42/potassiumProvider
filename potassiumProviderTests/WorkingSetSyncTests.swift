@@ -154,6 +154,38 @@ struct WorkingSetSyncTests {
         #expect(result.snapshot?.items == [movedItem])
     }
 
+    @Test func partialMoveOutOfMaterializedFileIsReportedAsUpdateNotDeletion() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("working-set-partial-move-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let movedItem = makeWorkingSetItem(id: 5, name: "Moved.txt", parentID: 11, updatedAt: 5_000)
+        try await store.replaceMaterializedItems(
+            [KDriveMaterializedItem(fileID: 5, isContainer: false)],
+            domainIdentifier: "domain-1"
+        )
+        let remote = WorkingSetRemoteMock(
+            relevantItems: [],
+            advancedResponses: [:],
+            itemByID: [5: movedItem],
+            partialResults: [
+                KDrivePartialActivityResult(
+                    fileID: 5,
+                    lastAction: "file_move_out",
+                    lastActionAt: Date(timeIntervalSince1970: 5_000),
+                    item: nil
+                )
+            ]
+        )
+
+        let result = try await makeCoordinator(remote: remote, store: store)
+            .poll(now: Date(timeIntervalSince1970: 6_000))
+
+        #expect(result.changes.updatedItems == [movedItem])
+        #expect(result.changes.deletedItemIDs.isEmpty)
+        #expect(result.snapshot?.items == [movedItem])
+    }
+
     @Test func newestDeleteDoesNotRequireMetadataForSupersededUpdate() throws {
         let changes = try KDriveAdvancedActionReducer.changes(
             from: [

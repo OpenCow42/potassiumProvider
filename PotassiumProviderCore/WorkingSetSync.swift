@@ -24,8 +24,14 @@ public struct KDrivePartialActivityResult: Equatable, Sendable {
     }
 
     public var isDeletion: Bool {
-        guard let lastAction else { return false }
+        guard let lastAction, !isMoveOut else { return false }
         return KDriveListingValidator.actionKind(for: lastAction) == .delete
+    }
+
+    /// A move-out removes an item from one container listing, but partial
+    /// activity follows the item itself and must resolve its current parent.
+    var isMoveOut: Bool {
+        lastAction == "file_move_out"
     }
 }
 
@@ -179,7 +185,15 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
                 since: partialSince
             )
             for activity in activities {
-                if activity.isDeletion {
+                if activity.isMoveOut {
+                    if let movedItem = try await currentItem(forMoveOut: activity) {
+                        deletedItemIDs.remove(activity.fileID)
+                        changedItems.append(movedItem)
+                        relevantItems.append(movedItem)
+                    } else {
+                        deletedItemIDs.insert(activity.fileID)
+                    }
+                } else if activity.isDeletion {
                     deletedItemIDs.insert(activity.fileID)
                 } else if let item = activity.item {
                     changedItems.append(item)
@@ -213,6 +227,23 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
             completedAt: now
         )
         return KDriveWorkingSetPollOutcome(didPoll: true, changes: changes, snapshot: snapshot)
+    }
+
+    private func currentItem(
+        forMoveOut activity: KDrivePartialActivityResult
+    ) async throws -> KDriveRemoteItem? {
+        if let item = activity.item {
+            return item
+        }
+
+        do {
+            return try await remote.item(driveID: driveID, fileID: activity.fileID)
+        } catch {
+            guard KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode == 404 else {
+                throw error
+            }
+            return nil
+        }
     }
 
     private func pollMaterializedContainer(
