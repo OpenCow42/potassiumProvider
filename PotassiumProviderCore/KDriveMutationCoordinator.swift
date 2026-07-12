@@ -128,9 +128,10 @@ public struct KDriveMutationCoordinator: Sendable {
         parentID: Int,
         fileName: String,
         contents: Data,
-        lastModifiedAt: Date?
+        lastModifiedAt: Date?,
+        transferProgress: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> KDriveRemoteItem {
-        try await remote.uploadFile(
+        let operation = try remote.uploadFileOperation(
             driveID: configuration.driveID,
             parentID: parentID,
             fileName: fileName,
@@ -138,6 +139,8 @@ public struct KDriveMutationCoordinator: Sendable {
             lastModifiedAt: lastModifiedAt,
             conflictStrategy: .version
         )
+        transferProgress?(operation.progress)
+        return try await operation.value
     }
 
     public func createDirectory(parentID: Int, name: String) async throws -> KDriveRemoteItem {
@@ -154,7 +157,8 @@ public struct KDriveMutationCoordinator: Sendable {
         localFilename: String,
         baseContentVersion: Data,
         contents: Data,
-        lastModifiedAt: Date?
+        lastModifiedAt: Date?,
+        transferProgress: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> KDriveContentMutationResult {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
         guard KDriveVersionConflictResolver.contentMatches(baseVersion: baseContentVersion, remoteItem: latestItem) else {
@@ -163,17 +167,20 @@ public struct KDriveMutationCoordinator: Sendable {
                 localFilename: localFilename,
                 latestItem: latestItem,
                 contents: contents,
-                lastModifiedAt: lastModifiedAt
+                lastModifiedAt: lastModifiedAt,
+                transferProgress: transferProgress
             )
         }
 
-        let replacedItem = try await remote.replaceFile(
+        let operation = try remote.replaceFileOperation(
             driveID: configuration.driveID,
             parentID: latestItem.parentID,
             fileName: latestItem.name,
             contents: contents,
             lastModifiedAt: lastModifiedAt
         )
+        transferProgress?(operation.progress)
+        let replacedItem = try await operation.value
         return .replaced(replacedItem)
     }
 
@@ -264,7 +271,8 @@ public struct KDriveMutationCoordinator: Sendable {
         localFilename: String,
         latestItem: KDriveRemoteItem,
         contents: Data,
-        lastModifiedAt: Date?
+        lastModifiedAt: Date?,
+        transferProgress: (@Sendable (Progress) -> Void)?
     ) async throws -> KDriveContentMutationResult {
         let stagedURL = try await conflictStager.stageConflictContents(contents, itemIdentifier: itemIdentifier)
         let detectedAt = conflictDate()
@@ -285,7 +293,7 @@ public struct KDriveMutationCoordinator: Sendable {
         )
 
         do {
-            let conflictItem = try await remote.uploadFile(
+            let operation = try remote.uploadFileOperation(
                 driveID: configuration.driveID,
                 parentID: latestItem.parentID,
                 fileName: conflictFilename,
@@ -293,6 +301,8 @@ public struct KDriveMutationCoordinator: Sendable {
                 lastModifiedAt: lastModifiedAt,
                 conflictStrategy: .rename
             )
+            transferProgress?(operation.progress)
+            let conflictItem = try await operation.value
             await contentConflictObserver?(.resolved(context, conflictItem: conflictItem, resolvedAt: conflictDate()))
             await conflictStager.removeStagedConflictContents(at: stagedURL)
             return .conflictCopy(conflictItem)

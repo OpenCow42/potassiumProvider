@@ -10,6 +10,7 @@ public protocol KDriveFileProviding: Sendable {
     func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage
     func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
     func downloadFile(driveID: Int, fileID: Int) async throws -> Data
+    func downloadFileOperation(driveID: Int, fileID: Int) throws -> KDriveTransferOperation<Data>
     func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data
     func uploadFile(
         driveID: Int,
@@ -19,6 +20,14 @@ public protocol KDriveFileProviding: Sendable {
         lastModifiedAt: Date?,
         conflictStrategy: KDriveUploadConflictStrategy
     ) async throws -> KDriveRemoteItem
+    func uploadFileOperation(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) throws -> KDriveTransferOperation<KDriveRemoteItem>
     func replaceFile(
         driveID: Int,
         parentID: Int,
@@ -26,11 +35,105 @@ public protocol KDriveFileProviding: Sendable {
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem
+    func replaceFileOperation(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) throws -> KDriveTransferOperation<KDriveRemoteItem>
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem
     func renameItem(driveID: Int, fileID: Int, name: String) async throws
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws
     func trashItem(driveID: Int, fileID: Int) async throws
     func deleteTrashedItem(driveID: Int, fileID: Int) async throws
+}
+
+/// Provider-facing view of one observable, cancellable content transfer.
+public final class KDriveTransferOperation<Output: Sendable>: @unchecked Sendable {
+    public let progress: Progress
+
+    private let valueProvider: @Sendable () async throws -> Output
+    private let cancellation: @Sendable () -> Void
+
+    public init(
+        progress: Progress,
+        value: @escaping @Sendable () async throws -> Output,
+        cancellation: @escaping @Sendable () -> Void = {}
+    ) {
+        self.progress = progress
+        self.valueProvider = value
+        self.cancellation = cancellation
+    }
+
+    public var value: Output {
+        get async throws {
+            try await valueProvider()
+        }
+    }
+
+    public func cancel() {
+        if progress.isCancelled == false {
+            progress.cancel()
+        }
+        cancellation()
+    }
+}
+
+public extension KDriveFileProviding {
+    func downloadFileOperation(driveID: Int, fileID: Int) throws -> KDriveTransferOperation<Data> {
+        let progress = Progress(totalUnitCount: -1)
+        return KDriveTransferOperation(progress: progress) {
+            let data = try await downloadFile(driveID: driveID, fileID: fileID)
+            progress.totalUnitCount = Int64(max(data.count, 1))
+            progress.completedUnitCount = progress.totalUnitCount
+            return data
+        }
+    }
+
+    func uploadFileOperation(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
+        let progress = Progress(totalUnitCount: Int64(max(contents.count, 1)))
+        return KDriveTransferOperation(progress: progress) {
+            let item = try await uploadFile(
+                driveID: driveID,
+                parentID: parentID,
+                fileName: fileName,
+                contents: contents,
+                lastModifiedAt: lastModifiedAt,
+                conflictStrategy: conflictStrategy
+            )
+            progress.completedUnitCount = progress.totalUnitCount
+            return item
+        }
+    }
+
+    func replaceFileOperation(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
+        let progress = Progress(totalUnitCount: Int64(max(contents.count, 1)))
+        return KDriveTransferOperation(progress: progress) {
+            let item = try await replaceFile(
+                driveID: driveID,
+                parentID: parentID,
+                fileName: fileName,
+                contents: contents,
+                lastModifiedAt: lastModifiedAt
+            )
+            progress.completedUnitCount = progress.totalUnitCount
+            return item
+        }
+    }
 }
 
 public enum KDriveUploadConflictStrategy: String, Sendable {
@@ -149,9 +252,20 @@ public struct PotassiumKDriveService: KDriveFileProviding {
     }
 
     public func downloadFile(driveID: Int, fileID: Int) async throws -> Data {
-        try await performNetworkOperation("downloadFile") {
-            try await service.downloadFile(driveId: driveID, fileId: fileID)
-        }
+        try await downloadFileOperation(driveID: driveID, fileID: fileID).value
+    }
+
+    public func downloadFileOperation(driveID: Int, fileID: Int) throws -> KDriveTransferOperation<Data> {
+        let operation = try service.downloadFile(driveId: driveID, fileId: fileID)
+        return KDriveTransferOperation(
+            progress: operation.progress,
+            value: {
+                try await performNetworkOperation("downloadFile") {
+                    try await operation.value
+                }
+            },
+            cancellation: operation.cancel
+        )
     }
 
     public func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
@@ -160,7 +274,7 @@ public struct PotassiumKDriveService: KDriveFileProviding {
                 driveId: driveID,
                 fileId: fileID,
                 options: GetKDriveFileThumbnailOptions(height: height, width: width)
-            )
+            ).value
         }
     }
 
@@ -172,19 +286,43 @@ public struct PotassiumKDriveService: KDriveFileProviding {
         lastModifiedAt: Date?,
         conflictStrategy: KDriveUploadConflictStrategy
     ) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("uploadFile") {
-            let response = try await service.uploadFile(
-                driveId: driveID,
-                data: contents,
-                options: UploadKDriveFileOptions(
-                    conflict: conflictStrategy.rawValue,
-                    directoryId: parentID,
-                    fileName: fileName,
-                    lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
-                )
+        try await uploadFileOperation(
+            driveID: driveID,
+            parentID: parentID,
+            fileName: fileName,
+            contents: contents,
+            lastModifiedAt: lastModifiedAt,
+            conflictStrategy: conflictStrategy
+        ).value
+    }
+
+    public func uploadFileOperation(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?,
+        conflictStrategy: KDriveUploadConflictStrategy
+    ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
+        let operation = try service.uploadFile(
+            driveId: driveID,
+            data: contents,
+            options: UploadKDriveFileOptions(
+                conflict: conflictStrategy.rawValue,
+                directoryId: parentID,
+                fileName: fileName,
+                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
             )
-            return response.data.remoteItem
-        }
+        )
+        return KDriveTransferOperation(
+            progress: operation.progress,
+            value: {
+                try await performNetworkOperation("uploadFile") {
+                    try await operation.value.data.remoteItem
+                }
+            },
+            cancellation: operation.cancel
+        )
     }
 
     public func replaceFile(
@@ -194,19 +332,41 @@ public struct PotassiumKDriveService: KDriveFileProviding {
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("replaceFile") {
-            let response = try await service.uploadFile(
-                driveId: driveID,
-                data: contents,
-                options: UploadKDriveFileOptions(
-                    conflict: KDriveUploadConflictStrategy.version.rawValue,
-                    directoryId: parentID,
-                    fileName: fileName,
-                    lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
-                )
+        try await replaceFileOperation(
+            driveID: driveID,
+            parentID: parentID,
+            fileName: fileName,
+            contents: contents,
+            lastModifiedAt: lastModifiedAt
+        ).value
+    }
+
+    public func replaceFileOperation(
+        driveID: Int,
+        parentID: Int,
+        fileName: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
+        let operation = try service.uploadFile(
+            driveId: driveID,
+            data: contents,
+            options: UploadKDriveFileOptions(
+                conflict: KDriveUploadConflictStrategy.version.rawValue,
+                directoryId: parentID,
+                fileName: fileName,
+                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
             )
-            return response.data.remoteItem
-        }
+        )
+        return KDriveTransferOperation(
+            progress: operation.progress,
+            value: {
+                try await performNetworkOperation("replaceFile") {
+                    try await operation.value.data.remoteItem
+                }
+            },
+            cancellation: operation.cancel
+        )
     }
 
     public func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem {

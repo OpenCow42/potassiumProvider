@@ -41,13 +41,20 @@ Purpose: materialize file bytes for a file the system wants to open or download.
 Behavior:
 
 - Parse the File Provider item identifier into a kDrive file ID.
-- Wait for the shared content-fetch limiter. The extension allows up to 4
-  concurrent full-file materializations per extension process.
-- Call `downloadFile(...)`.
-- Fetch fresh metadata through `item(...)`.
+- Return a cancellable file-kind `Progress` immediately so Finder can present a
+  download operation before runtime or network setup finishes.
+- Wait for the shared content-transfer limiter. The extension permits one
+  whole-file download, create upload, or replacement upload at a time.
+- Fetch metadata and reject a requested content version that is no longer
+  available.
+- Create `downloadFileOperation(...)`, attach its live URL session progress to
+  the returned parent, and await its bytes.
+- Fetch metadata again and reject bytes whose content version changed during
+  the download.
 - Write bytes to `manager.temporaryDirectoryURL()` using a unique temporary
-  filename, then release the limiter permit.
-- Return the temporary URL and updated `FileProviderItem`.
+  filename, then release the limiter permit. Remove the file if cancellation
+  wins the completion race.
+- Return the temporary URL and matching `FileProviderItem`.
 
 SQLite: not touched. SQLite stores listing metadata only, not file contents.
 
@@ -59,7 +66,9 @@ Behavior:
 
 - Resolve the parent File Provider identifier to a kDrive parent ID.
 - For folders, call `createDirectory(...)`.
-- For files, read the provided local contents URL and call `uploadFile(...)`.
+- For files, expose upload byte progress, read the provided contents with mapped
+  storage where available, and call `uploadFileOperation(...)` under the shared
+  transfer permit.
 - Return the server-created `KDriveRemoteItem` as a `FileProviderItem`.
 
 SQLite: not updated directly. Listing/change enumeration later reconciles the
@@ -72,8 +81,9 @@ Purpose: update contents, parent, name, or metadata for an existing item.
 Behavior:
 
 - If the item is moved to `.trashContainer`, call `trashItem(...)` and return.
-- If `.contents` changed, read the local contents URL and call
-  `replaceFile(...)`.
+- If `.contents` changed, expose upload byte progress, read the local contents
+  URL with mapped storage where available, and call `replaceFileOperation(...)`
+  under the shared transfer permit.
 - If parent changed, call `moveItem(...)`; if the filename also changed, pass
   the new name in the move options.
 - If only the filename changed, call `renameItem(...)`.
@@ -94,6 +104,22 @@ Behavior:
 
 SQLite: not updated directly. Later trash/root/folder enumeration reconciles the
 missing item.
+
+## Progress and Cancellation
+
+Every replicated-extension callback returns a parent `Progress` synchronously
+and retains its Swift task until one terminal callback wins. Metadata-only work
+uses one discrete unit. File work uses byte units, `.file` kind, the appropriate
+upload/download operation kind, and the local URL when available.
+
+The parent adopts potassiumChannel's live `URLSessionTask.progress` as a child.
+Cancelling it cancels the retained Swift task and then the underlying request.
+Success, failure, and cancellation are gated so File Provider completion
+handlers run exactly once. Failed and cancelled progress remains incomplete.
+
+Whole-file `Data` remains the transfer representation in 0.2.0. The shared
+single-transfer permit bounds concurrent buffers, but one large file can still
+determine peak memory. Streaming and upload sessions remain deferred.
 
 ## `enumerator(for:)`
 

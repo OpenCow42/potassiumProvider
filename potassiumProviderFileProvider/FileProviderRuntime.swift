@@ -359,11 +359,3 @@ private func staleMutationVersionError() -> Error {
         ]
     )
 }
-
-extension Progress {
-    static func cancellable(_ cancellation: @escaping () -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 100)
-        progress.cancellationHandler = cancellation
-        return progress
-    }
-}
