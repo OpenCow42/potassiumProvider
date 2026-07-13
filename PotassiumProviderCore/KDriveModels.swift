@@ -337,18 +337,18 @@ public enum KDriveAdvancedActionReducer {
         from actions: [KDriveRemoteFileAction],
         actionItems: [KDriveRemoteItem]
     ) throws -> KDriveSnapshotChangeSet {
-        try KDriveListingValidator.validateAdvancedActions(actions, actionItems: actionItems)
+        var selectedActions: [KDriveRemoteFileAction] = []
+        var selectedFileIDs = Set<Int>()
+        for action in actions where selectedFileIDs.insert(action.fileID).inserted {
+            selectedActions.append(action)
+        }
+        try KDriveListingValidator.validateAdvancedActions(selectedActions, actionItems: actionItems)
 
-        let actionItemsByID = Dictionary(uniqueKeysWithValues: actionItems.map { ($0.id, $0) })
-        var handledFileIDs = Set<Int>()
+        let actionItemsByID = Dictionary(actionItems.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
         var updatedItems: [KDriveRemoteItem] = []
         var deletedItemIDs = Set<Int>()
 
-        for action in actions {
-            guard handledFileIDs.insert(action.fileID).inserted else {
-                continue
-            }
-
+        for action in selectedActions {
             if KDriveListingValidator.actionKind(for: action.action) == .delete {
                 deletedItemIDs.insert(action.fileID)
                 continue
@@ -569,6 +569,25 @@ public enum KDriveItemIdentifierError: Error, Equatable, LocalizedError, Sendabl
         switch self {
         case .invalid(let value):
             return "'\(value)' is not a valid kDrive item identifier."
+        }
+    }
+}
+
+public enum KDriveContainerValidationError: Error, Equatable, LocalizedError, Sendable {
+    case notAContainer(fileID: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notAContainer(let fileID):
+            return "kDrive item '\(fileID)' is not a container."
+        }
+    }
+}
+
+public enum KDriveContainerValidator {
+    public static func validate(_ item: KDriveRemoteItem, expectedFileID: Int) throws {
+        guard item.id == expectedFileID, item.isDirectory else {
+            throw KDriveContainerValidationError.notAContainer(fileID: expectedFileID)
         }
     }
 }

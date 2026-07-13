@@ -2,6 +2,7 @@ import Foundation
 
 public protocol KDriveSnapshotStoring: Sendable {
     func snapshot(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot?
+    func snapshotMetadata(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot?
     func item(domainIdentifier: String, fileID: Int) async throws -> KDriveRemoteItem?
     func save(
         _ snapshot: KDriveSnapshot,
@@ -11,6 +12,51 @@ public protocol KDriveSnapshotStoring: Sendable {
     ) async throws
     func removeSnapshot(domainIdentifier: String, containerIdentifier: String) async throws
     func removeSnapshots(domainIdentifier: String) async throws
+    func snapshotPage(
+        domainIdentifier: String,
+        containerIdentifier: String,
+        after token: String?,
+        limit: Int
+    ) async throws -> KDriveSnapshotItemPage?
+    func snapshotChangePage(
+        domainIdentifier: String,
+        containerIdentifier: String,
+        from anchor: String,
+        after token: String?,
+        limit: Int
+    ) async throws -> KDriveSnapshotChangePage?
+}
+
+public struct KDriveSnapshotItemPage: Equatable, Sendable {
+    public let items: [KDriveRemoteItem]
+    public let nextToken: String?
+    public let generation: Int64
+
+    public init(items: [KDriveRemoteItem], nextToken: String?, generation: Int64) {
+        self.items = items
+        self.nextToken = nextToken
+        self.generation = generation
+    }
+}
+
+public struct KDriveSnapshotChangePage: Equatable, Sendable {
+    public let changes: KDriveSnapshotChangeSet
+    public let nextToken: String?
+    public let targetAnchor: String
+
+    public init(changes: KDriveSnapshotChangeSet, nextToken: String?, targetAnchor: String) {
+        self.changes = changes
+        self.nextToken = nextToken
+        self.targetAnchor = targetAnchor
+    }
+}
+
+public enum KDriveSnapshotPagingToken {
+    public static let prefix = "kdrive-snapshot-v1:"
+
+    public static func isSnapshotToken(_ value: String?) -> Bool {
+        value?.hasPrefix(prefix) == true
+    }
 }
 
 public struct KDriveSnapshotDomainStatistics: Equatable, Sendable {
@@ -43,6 +89,20 @@ public protocol KDriveSnapshotStatisticsProviding: Sendable {
 }
 
 public extension KDriveSnapshotStoring {
+    func snapshotMetadata(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot? {
+        guard let snapshot = try await snapshot(
+            domainIdentifier: domainIdentifier,
+            containerIdentifier: containerIdentifier
+        ) else { return nil }
+        return KDriveSnapshot(
+            anchor: snapshot.anchor,
+            serverCursor: snapshot.serverCursor,
+            isFullyEnumerated: snapshot.isFullyEnumerated,
+            usesAdvancedListing: snapshot.usesAdvancedListing,
+            items: []
+        )
+    }
+
     func save(_ snapshot: KDriveSnapshot, domainIdentifier: String, containerIdentifier: String) async throws {
         try await save(
             snapshot,
@@ -50,6 +110,41 @@ public extension KDriveSnapshotStoring {
             containerIdentifier: containerIdentifier,
             condition: .unconditional
         )
+    }
+
+    func snapshotPage(
+        domainIdentifier: String,
+        containerIdentifier: String,
+        after token: String?,
+        limit: Int
+    ) async throws -> KDriveSnapshotItemPage? {
+        guard token == nil,
+              let snapshot = try await snapshot(
+                domainIdentifier: domainIdentifier,
+                containerIdentifier: containerIdentifier
+              ) else {
+            return nil
+        }
+        return KDriveSnapshotItemPage(items: snapshot.items, nextToken: nil, generation: 0)
+    }
+
+    func snapshotChangePage(
+        domainIdentifier: String,
+        containerIdentifier: String,
+        from anchor: String,
+        after token: String?,
+        limit: Int
+    ) async throws -> KDriveSnapshotChangePage? {
+        guard token == nil,
+              let snapshot = try await snapshot(
+                domainIdentifier: domainIdentifier,
+                containerIdentifier: containerIdentifier
+              ) else {
+            return nil
+        }
+        let baseline = snapshot.anchor == anchor ? snapshot : nil
+        let changes = KDriveSnapshotDiffer.changes(from: baseline, to: snapshot)
+        return KDriveSnapshotChangePage(changes: changes, nextToken: nil, targetAnchor: snapshot.anchor)
     }
 }
 
@@ -174,6 +269,8 @@ public actor KDriveSnapshotFileStore: KDriveSnapshotStoring {
 public enum KDriveSnapshotStoreError: Error, Equatable, LocalizedError, Sendable {
     case missingAppGroupContainer(String)
     case staleSnapshot(domainIdentifier: String, containerIdentifier: String)
+    case expiredGeneration(domainIdentifier: String, containerIdentifier: String)
+    case invalidPageToken
 
     public var errorDescription: String? {
         switch self {
@@ -181,6 +278,10 @@ public enum KDriveSnapshotStoreError: Error, Equatable, LocalizedError, Sendable
             return "The shared app group container '\(identifier)' is not available."
         case .staleSnapshot(let domainIdentifier, let containerIdentifier):
             return "The cached snapshot for domain '\(domainIdentifier)' and container '\(containerIdentifier)' changed before it could be saved."
+        case .expiredGeneration(let domainIdentifier, let containerIdentifier):
+            return "The cached snapshot generation for domain '\(domainIdentifier)' and container '\(containerIdentifier)' has expired."
+        case .invalidPageToken:
+            return "The cached snapshot page token is invalid."
         }
     }
 }

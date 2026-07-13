@@ -13,19 +13,26 @@ struct FileProviderRuntime: Sendable {
     let configuration: ProviderDomainConfiguration
     let token: KDriveOAuthToken
     let remote: any KDriveFileProviding
+    let workingSetRemote: any KDriveWorkingSetRemoteProviding
     let snapshotStore: any KDriveSnapshotStoring
+    let workingSetStateStore: any KDriveWorkingSetStateStoring
     let eventStore: (any KDriveProviderEventStoring)?
 
     private init(
         configuration: ProviderDomainConfiguration,
         token: KDriveOAuthToken,
+        remote: any KDriveFileProviding,
+        workingSetRemote: any KDriveWorkingSetRemoteProviding,
         snapshotStore: any KDriveSnapshotStoring,
+        workingSetStateStore: any KDriveWorkingSetStateStoring,
         eventStore: (any KDriveProviderEventStoring)?
     ) {
         self.configuration = configuration
         self.token = token
-        self.remote = PotassiumKDriveService(bearerToken: token.accessToken)
+        self.remote = remote
+        self.workingSetRemote = workingSetRemote
         self.snapshotStore = snapshotStore
+        self.workingSetStateStore = workingSetStateStore
         self.eventStore = eventStore
     }
 
@@ -49,12 +56,16 @@ struct FileProviderRuntime: Sendable {
             FileProviderLog.runtime.info("refreshed OAuth token for domain(\(domain.identifier.rawValue, privacy: .public))")
         }
 
-        let snapshotStore = try makeSnapshotStore()
+        let sqliteStore = try makeSQLiteStore()
+        let remote = PotassiumKDriveService(bearerToken: token.accessToken)
         FileProviderLog.runtime.debug("loaded runtime for domain(\(domain.identifier.rawValue, privacy: .public)) driveID(\(configuration.driveID, privacy: .public)) rootFileID(\(configuration.rootFileID, privacy: .public))")
         return FileProviderRuntime(
             configuration: configuration,
             token: token,
-            snapshotStore: snapshotStore,
+            remote: remote,
+            workingSetRemote: remote,
+            snapshotStore: sqliteStore,
+            workingSetStateStore: sqliteStore,
             eventStore: makeEventStore()
         )
     }
@@ -78,6 +89,14 @@ struct FileProviderRuntime: Sendable {
     }
 
     static func makeSnapshotStore() throws -> any KDriveSnapshotStoring {
+        try makeSQLiteStore()
+    }
+
+    static func makeWorkingSetStateStore() throws -> any KDriveWorkingSetStateStoring {
+        try makeSQLiteStore()
+    }
+
+    private static func makeSQLiteStore() throws -> KDriveSnapshotSQLiteStore {
         do {
             return try KDriveSnapshotSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
         } catch {
@@ -358,12 +377,4 @@ private func staleMutationVersionError() -> Error {
             NSLocalizedRecoverySuggestionErrorKey: "Refresh the folder and retry the change."
         ]
     )
-}
-
-extension Progress {
-    static func cancellable(_ cancellation: @escaping () -> Void) -> Progress {
-        let progress = Progress(totalUnitCount: 100)
-        progress.cancellationHandler = cancellation
-        return progress
-    }
 }

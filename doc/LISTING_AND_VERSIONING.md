@@ -12,6 +12,9 @@ The enumerator chooses one of two strategies.
 Normal folders:
 
 - File Provider identifier is a positive kDrive item ID.
+- The identifier is accepted as a container only after cached or remote metadata
+  confirms that the item is a directory. Documents are rejected with the
+  supported File Provider `.noSuchItem` code and a not-a-container reason.
 - Uses kDrive advanced listing.
 - Can serve a fully enumerated folder from SQLite without a server call.
 - Uses the kDrive advanced listing cursor as sync anchor once the snapshot is
@@ -23,9 +26,8 @@ Special containers:
 - `.workingSet`
 - `.trashContainer`
 
-These do not use advanced listing today. Root and working set call legacy
-directory listing for the configured root file ID. Trash calls kDrive trash
-listing. Changes are produced by local diffing against the last SQLite snapshot.
+Root and trash use legacy listing and local snapshot diffs. The working set has
+its own durable polling and change-log path described below.
 
 ## Normal Folder `enumerateItems`
 
@@ -39,8 +41,8 @@ sequenceDiagram
     Apple->>Enum: enumerateItems(container, page)
     Enum->>DB: read snapshot when page is initial
     alt fully enumerated snapshot exists
-        DB-->>Enum: cached items
-        Enum-->>Apple: didEnumerate + finish(nil)
+        DB-->>Enum: generation-bound keyset page
+        Enum-->>Apple: didEnumerate + next local page token
     else cache missing or incomplete
         Enum->>API: /listing or /listing/continue
         API-->>Enum: files, actions, cursor, has_more
@@ -49,9 +51,11 @@ sequenceDiagram
     end
 ```
 
-For initial pages, the enumerator first checks SQLite. If a snapshot has
-`usesAdvancedListing == true` and `isFullyEnumerated == true`, it returns cached
-items and does not call kDrive.
+For initial pages, the enumerator first checks SQLite. If a snapshot is fully
+enumerated, it returns at most 200 cached items and a token containing the
+generation and final position. Later pages continue that immutable generation,
+even if a newer generation becomes active. A token older than the retained
+active-plus-two window fails with `.syncAnchorExpired` so File Provider restarts.
 
 When no complete cache exists, the enumerator calls:
 
@@ -63,8 +67,13 @@ the snapshot is marked fully enumerated.
 
 ## Special Container `enumerateItems`
 
-Root and working set call `listDirectory(...)` on the configured root file ID.
-Trash calls `listTrash(...)`.
+Root calls `listDirectory(...)` on the configured root file ID. Trash calls
+`listTrash(...)`.
+
+The working set is the union of children of materialized containers,
+materialized files, favorites, files shared by or with the user, and the latest
+200 modified items. It is read from the durable working-set state after a
+throttled remote poll.
 
 These paths do not reuse fully enumerated snapshots for display. They still save
 snapshots for later local diffing during `enumerateChanges`.
@@ -111,14 +120,20 @@ restart enumeration from a fresh baseline.
 
 ## Special Container `enumerateChanges`
 
-For root, working set, and trash, the enumerator:
+For root and trash, the enumerator:
 
 1. Reads the old SQLite snapshot.
 2. Checks whether the requested local anchor matches the snapshot anchor.
 3. Lists all current items through the legacy listing path.
 4. Builds a new snapshot.
-5. Diffs old versus new with `KDriveSnapshotDiffer`.
-6. Saves the new snapshot with a conditional write and emits updates/deletes.
+5. Atomically commits the new immutable generation.
+6. Reads updates and deletions from SQLite in bounded pages of 200.
+
+Change-page anchors encode the retained source and target generations, the
+update/delete phase, and last scanned item ID. File Provider receives
+`moreComing == true` until the page token advances to the target anchor. Missing
+source or target generations fail with `.syncAnchorExpired` rather than silently
+treating an unknown anchor as an empty baseline.
 
 If the old anchor does not match, the baseline is treated as missing and the
 diff reports current items as updates.
@@ -126,6 +141,34 @@ diff reports current items as updates.
 Legacy listing loops are also validated. A repeated cursor or `hasMore == true`
 without a continuation cursor fails the sync attempt with `.cannotSynchronize`
 instead of committing a partial listing.
+
+## Working Set And Remote Polling
+
+`materializedItemsDidChange` completes promptly, then enumerates
+`NSFileProviderManager.enumeratorForMaterializedItems()` in the background. The
+extension persists both materialized directories and individual files.
+
+While the extension is alive it polls at most once per domain every 60 seconds.
+Working-set enumeration also performs the same throttled check. A poll:
+
+1. Continues the advanced cursor for each materialized directory.
+2. Checks materialized and relevant files through `/files/listing/partial`.
+3. Refreshes latest, favorite, my-shared, and shared-with-me membership.
+4. Atomically saves every materialized-container snapshot and cursor together
+   with the working-set view, change batch, anchor, and successful poll
+   watermark. A later poll step failing cannot advance a container cursor past
+   changes that were never published to File Provider.
+5. Signals only `.workingSet` when remote changes were found.
+
+Advanced actions are mapped newest-first before reduction. A move is included
+when either the old or new parent is materialized. For `file_move_out`, the
+provider resolves current metadata so File Provider sees a reparenting update,
+not a false deletion.
+
+The durable change log retains 32 poll batches so several polls can be reduced
+from an older valid working-set anchor. Older anchors expire. Because this is a
+client-polling design, remote changes may remain undiscovered while the app and
+extension are suspended; push notifications are intentionally outside 0.2.0.
 
 ## Cursor And Action Validation
 
@@ -136,7 +179,8 @@ instead of committing a partial listing.
   seen in the same rebuild/list-all loop.
 - advanced actions must be known delete or update actions.
 - delete actions may omit `actions_files` metadata.
-- update actions must include matching item metadata.
+- the newest effective update action must include matching item metadata;
+  metadata is not required for an older action superseded by a newer delete.
 
 `KDriveAdvancedActionReducer` throws when those rules are violated. This keeps
 the stored server cursor tied to a completely understood snapshot state.

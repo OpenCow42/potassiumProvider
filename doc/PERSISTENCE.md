@@ -65,7 +65,29 @@ On initialization, the store configures SQLite with:
 - a 5 second busy timeout, so short-lived concurrent writers can wait instead of
   failing immediately
 
-The database has four tables.
+Listing snapshots use three active tables:
+
+`snapshot_heads` identifies the active generation for each domain/container.
+
+`snapshot_generations` stores immutable metadata for each generation:
+
+- domain and container identifiers
+- monotonically increasing generation number
+- local anchor and optional server cursor
+- fully-enumerated and advanced-listing flags
+- commit timestamp
+
+`snapshot_generation_items` stores the ordered item metadata for a particular
+generation. Its primary key is domain, container, generation, and item ID.
+
+The active generation and its two predecessors are retained. That keeps item
+and change page tokens stable while a newer snapshot commits, while deliberately
+expiring tokens and anchors older than the retained window.
+
+The following legacy tables remain present solely for safe in-place migration.
+Initialization transactionally moves each legacy container into generation 1
+and deletes the migrated legacy rows without changing the working-set, conflict,
+or activity tables:
 
 `container_snapshots`:
 
@@ -95,8 +117,8 @@ The database has four tables.
 - `modifiedAt`
 - `itemUpdatedAt`
 
-The primary key for `container_snapshots` is domain plus container. The primary
-key for `snapshot_items` is domain plus container plus item ID.
+New writes use only the generation tables. Domain cleanup removes both legacy
+and generation rows.
 
 After successful local mutations, the extension removes affected container
 snapshots and signals their File Provider enumerators so stale cached base
@@ -187,9 +209,15 @@ SQLite caches metadata needed to enumerate and diff containers:
 - conflict/audit metadata needed by the app's Activities tab
 - recent successful provider activity needed by the app's activity timeline
 - recent sanitized provider/app failures needed by the app's activity timeline
+- materialized file and directory identifiers
+- working-set membership and anchor
+- the last poll attempt and successful-poll watermark
+- up to 32 working-set change batches used to advance valid older anchors
 
-Fully enumerated normal-folder snapshots can be served directly from SQLite on a
-future initial enumeration.
+Fully enumerated normal-folder snapshots are served from SQLite in stable
+keyset pages of at most 200 items. Page tokens bind the domain, container,
+generation, and last item position. Snapshot metadata and individual item
+lookups do not materialize the full container.
 
 ## What Is Not Cached
 
@@ -229,22 +257,36 @@ Saving a snapshot can be unconditional or guarded by `KDriveSnapshotSaveConditio
 The default legacy `save(...)` remains unconditional, while enumeration and
 change paths use `.missing` or `.matching(anchor:serverCursor:)`.
 
-When the condition is accepted, the store replaces the previous rows for that
-domain/container in one SQLite transaction:
+When the condition is accepted, the store commits a new immutable generation in
+one SQLite transaction:
 
-1. Delete existing item rows and container row.
-2. Insert the new container snapshot row.
-3. Insert item rows in snapshot order.
+1. Insert generation metadata, including the anchor and server cursor.
+2. Insert item membership rows in snapshot order.
+3. Point the container head at the completed generation.
+4. Remove generations outside the active-plus-two retention window.
 
-This keeps reads simple and avoids partial per-item update logic in the provider.
+Readers therefore see either the complete old generation or the complete new
+one; a failed insert cannot expose partial membership or an advanced cursor.
 If the stored row no longer matches the requested condition, the store throws
 `KDriveSnapshotStoreError.staleSnapshot` and leaves the newer snapshot intact.
+
+Working-set polling extends that transaction boundary across all materialized
+containers involved in one poll. Their new snapshot generations and advanced
+cursors commit in the same SQLite transaction as the working-set membership,
+change batch, anchor, and successful-poll watermark. If partial activity,
+another remote request, or a guarded snapshot update fails, no container cursor
+from that poll is published.
+
+Change enumeration compares retained source and target generations in bounded
+keyset scans. Its token records both generations, update/delete phase, and final
+scanned item ID, avoiding whole-container dictionaries and sets.
 
 ## Domain Removal Cleanup
 
 When the app removes a domain, it calls
 `removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`.
-That deletes all snapshot, conflict, and activity rows for the domain.
+That deletes all snapshot, materialization, working-set poll/change, conflict,
+and activity rows for the domain.
 
 For local development resets, `scripts/uninstall-file-provider.sh` invokes the
 signed app's hidden uninstall command. That command removes registered File

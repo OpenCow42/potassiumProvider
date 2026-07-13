@@ -10,13 +10,12 @@ import UniformTypeIdentifiers
 
 public final class PotassiumFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     static let maximumConcurrentContentFetches = 4
-    private static let contentFetchLimiter = AsyncOperationLimiter(
-        maxConcurrentOperations: maximumConcurrentContentFetches
-    )
+    private static let contentTransferLimiter = AsyncOperationLimiter(maxConcurrentOperations: 1)
 
     private let domain: NSFileProviderDomain
     private let manager: NSFileProviderManager
     private let temporaryDirectoryURL: URL
+    private var remotePollingTask: Task<Void, Never>?
 
     var fileProviderDomain: NSFileProviderDomain {
         domain
@@ -27,11 +26,50 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         self.manager = NSFileProviderManager(for: domain)!
         self.temporaryDirectoryURL = (try? manager.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
         super.init()
+        startRemotePolling()
         FileProviderLog.replicatedExtension.info("init replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public)) displayName(\(self.domain.displayName, privacy: .private)) temporaryDirectory(\(self.temporaryDirectoryURL.path, privacy: .private))")
     }
 
     public func invalidate() {
+        remotePollingTask?.cancel()
+        remotePollingTask = nil
         FileProviderLog.replicatedExtension.debug("invalidate replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public))")
+    }
+
+    public func materializedItemsDidChange(completionHandler: @escaping () -> Void) {
+        FileProviderLog.replicatedExtension.debug("materialized items changed for domain(\(self.domain.identifier.rawValue, privacy: .public))")
+        completionHandler()
+
+        Task {
+            do {
+                let runtime = try await FileProviderRuntime.load(domain: domain)
+                let systemItems = try await MaterializedSetReader.read(using: manager)
+                let materializedItems = systemItems.compactMap { item -> KDriveMaterializedItem? in
+                    let fileID: Int
+                    if item.itemIdentifier == .rootContainer {
+                        fileID = runtime.configuration.rootFileID
+                    } else {
+                        guard let parsed = try? KDriveItemIdentifier(rawValue: item.itemIdentifier.rawValue),
+                              let parsedFileID = parsed.fileID(rootFileID: runtime.configuration.rootFileID) else {
+                            return nil
+                        }
+                        fileID = parsedFileID
+                    }
+                    return KDriveMaterializedItem(
+                        fileID: fileID,
+                        isContainer: item.contentType?.conforms(to: .folder) == true
+                    )
+                }
+                try await runtime.workingSetStateStore.replaceMaterializedItems(
+                    materializedItems,
+                    domainIdentifier: runtime.configuration.domainIdentifier
+                )
+                _ = try await pollWorkingSet(runtime: runtime, minimumInterval: 0)
+                await signalWorkingSet(runtime: runtime)
+            } catch {
+                FileProviderLog.replicatedExtension.error("refresh materialized items failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     public func item(
@@ -40,17 +78,20 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         FileProviderLog.replicatedExtension.debug("item(forIdentifier:\(identifier.rawValue, privacy: .public)) domain(\(self.domain.identifier.rawValue, privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
-        return Progress.cancellable {
+        let lifecycle = FileProviderOperationLifecycle(progress: .discreteOperation()) {
             FileProviderLog.replicatedExtension.debug("cancel item(forIdentifier:\(identifier.rawValue, privacy: .public))")
             completionHandler(nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-        }.performTask {
+        }
+        lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
                 if identifier == .rootContainer {
                     FileProviderLog.replicatedExtension.debug("resolved root item for domain(\(loadedRuntime.configuration.domainIdentifier, privacy: .public)) driveID(\(loadedRuntime.configuration.driveID, privacy: .public))")
-                    completionHandler(FileProviderItem(configuration: loadedRuntime.configuration), nil)
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(FileProviderItem(configuration: loadedRuntime.configuration), nil)
+                    }
                     return
                 }
 
@@ -61,7 +102,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
                 let item = try await loadedRuntime.remote.item(driveID: loadedRuntime.configuration.driveID, fileID: fileID)
                 FileProviderLog.replicatedExtension.debug("resolved item identifier(\(identifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) type(\(item.type ?? "unknown", privacy: .public))")
-                completionHandler(FileProviderItem(remoteItem: item, rootFileID: loadedRuntime.configuration.rootFileID), nil)
+                await lifecycle.finish(markProgressComplete: true) {
+                    completionHandler(FileProviderItem(remoteItem: item, rootFileID: loadedRuntime.configuration.rootFileID), nil)
+                }
+            } catch is CancellationError {
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -73,9 +118,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "resolve item metadata."
                 )
                 FileProviderLog.replicatedExtension.error("item(forIdentifier:\(identifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                completionHandler(nil, mappedError)
+                await lifecycle.finish(markProgressComplete: false) {
+                    completionHandler(nil, mappedError)
+                }
             }
         }
+        return lifecycle.progress
     }
 
     public func fetchContents(
@@ -85,11 +133,15 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) requestedVersion(\(logVersionDescription(requestedVersion), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
-        let progress = Progress(totalUnitCount: 100)
+        let progress = Progress.fileTransfer(operationKind: .downloading)
         let domain = self.domain
         let temporaryDirectoryURL = self.temporaryDirectoryURL
+        let lifecycle = FileProviderOperationLifecycle(progress: progress) {
+            FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
+            completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        }
 
-        let task = Task {
+        lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: domain)
@@ -99,30 +151,44 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     throw NSFileProviderError(.noSuchItem)
                 }
 
-                let fetchedContents = try await Self.contentFetchLimiter.withPermit {
+                let fetchedContents = try await Self.contentTransferLimiter.withPermit {
                     try Task.checkCancellation()
-                    let data = try await loadedRuntime.remote.downloadFile(
+                    let itemBeforeDownload = try await loadedRuntime.remote.item(
                         driveID: loadedRuntime.configuration.driveID,
                         fileID: fileID
                     )
-                    try Task.checkCancellation()
-                    let item = try await loadedRuntime.remote.item(
+                    if let requestedVersion,
+                       requestedVersion.contentVersion != itemBeforeDownload.contentVersion {
+                        throw contentVersionUnavailableError()
+                    }
+
+                    progress.prepareForByteCount(itemBeforeDownload.size)
+                    let transfer = try loadedRuntime.remote.downloadFileOperation(
                         driveID: loadedRuntime.configuration.driveID,
                         fileID: fileID
                     )
+                    progress.attachTransfer(transfer.progress)
+                    let data = try await transfer.value
+                    try Task.checkCancellation()
+                    let itemAfterDownload = try await loadedRuntime.remote.item(
+                        driveID: loadedRuntime.configuration.driveID,
+                        fileID: fileID
+                    )
+                    guard itemAfterDownload.contentVersion == itemBeforeDownload.contentVersion else {
+                        throw contentVersionUnavailableError()
+                    }
                     try Task.checkCancellation()
                     let temporaryURL = temporaryDirectoryURL
                         .appendingPathComponent("download-\(UUID().uuidString)")
-                        .appendingPathExtension((item.name as NSString).pathExtension)
+                        .appendingPathExtension((itemAfterDownload.name as NSString).pathExtension)
                     try data.write(to: temporaryURL, options: [.atomic])
                     return FetchedFileContents(
                         temporaryURL: temporaryURL,
-                        item: item,
+                        item: itemAfterDownload,
                         byteCount: data.count
                     )
                 }
 
-                progress.completedUnitCount = 100
                 FileProviderLog.replicatedExtension.info("fetched contents for item(\(itemIdentifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) bytes(\(fetchedContents.byteCount, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
                     kind: .fetchContents,
@@ -132,14 +198,19 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     itemPath: fetchedContents.item.path,
                     summary: "Fetched file contents."
                 )
-                completionHandler(
-                    fetchedContents.temporaryURL,
-                    FileProviderItem(remoteItem: fetchedContents.item, rootFileID: loadedRuntime.configuration.rootFileID),
-                    nil
-                )
+                let delivered = await lifecycle.finish(markProgressComplete: true) {
+                    completionHandler(
+                        fetchedContents.temporaryURL,
+                        FileProviderItem(remoteItem: fetchedContents.item, rootFileID: loadedRuntime.configuration.rootFileID),
+                        nil
+                    )
+                }
+                if delivered == false {
+                    try? FileManager.default.removeItem(at: fetchedContents.temporaryURL)
+                }
             } catch is CancellationError {
                 FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) cancelled")
-                completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -151,13 +222,10 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "fetch file contents."
                 )
                 FileProviderLog.replicatedExtension.error("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                completionHandler(nil, nil, mappedError)
+                await lifecycle.finish(markProgressComplete: false) {
+                    completionHandler(nil, nil, mappedError)
+                }
             }
-        }
-
-        progress.cancellationHandler = {
-            FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
-            task.cancel()
         }
         return progress
     }
@@ -173,10 +241,18 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         let fieldsDescription = String(describing: fields)
         let kind = itemTemplate.contentType?.conforms(to: .folder) == true ? "folder" : "file"
         FileProviderLog.replicatedExtension.debug("createItem(kind:\(kind, privacy: .public) parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public)) filename(\(itemTemplate.filename, privacy: .private)) fields(\(fieldsDescription, privacy: .public)) hasContents(\(url != nil, privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
-        return Progress.cancellable {
+        let isDirectory = itemTemplate.contentType?.conforms(to: .folder) == true
+        let progress = isDirectory
+            ? Progress.discreteOperation()
+            : Progress.fileTransfer(operationKind: .uploading, fileURL: url)
+        if isDirectory == false {
+            progress.prepareForByteCount(url?.fileSize)
+        }
+        let lifecycle = FileProviderOperationLifecycle(progress: progress) {
             FileProviderLog.replicatedExtension.debug("cancel createItem(parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public))")
             completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-        }.performTask {
+        }
+        lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
@@ -185,20 +261,24 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 let parentID = try self.fileID(forParentIdentifier: itemTemplate.parentItemIdentifier, runtime: loadedRuntime)
                 let createdItem: KDriveRemoteItem
 
-                if itemTemplate.contentType?.conforms(to: .folder) == true {
+                if isDirectory {
                     createdItem = try await coordinator.createDirectory(
                         parentID: parentID,
                         name: itemTemplate.filename
                     )
                 } else {
-                    let contents = try url.map { try Data(contentsOf: $0) } ?? Data()
-                    FileProviderLog.replicatedExtension.debug("upload new file parentFileID(\(parentID, privacy: .public)) bytes(\(contents.count, privacy: .public))")
-                    createdItem = try await coordinator.createFile(
-                        parentID: parentID,
-                        fileName: itemTemplate.filename,
-                        contents: contents,
-                        lastModifiedAt: itemTemplate.contentModificationDate ?? nil
-                    )
+                    createdItem = try await Self.contentTransferLimiter.withPermit {
+                        let contents = try url.map { try Data(contentsOf: $0, options: .mappedIfSafe) } ?? Data()
+                        progress.prepareForByteCount(contents.count)
+                        FileProviderLog.replicatedExtension.debug("upload new file parentFileID(\(parentID, privacy: .public)) bytes(\(contents.count, privacy: .public))")
+                        return try await coordinator.createFile(
+                            parentID: parentID,
+                            fileName: itemTemplate.filename,
+                            contents: contents,
+                            lastModifiedAt: itemTemplate.contentModificationDate ?? nil,
+                            transferProgress: progress.attachTransfer
+                        )
+                    }
                 }
 
                 FileProviderLog.replicatedExtension.info("created \(kind, privacy: .public) item(\(createdItem.id, privacy: .public)) parentFileID(\(createdItem.parentID, privacy: .public)) driveID(\(loadedRuntime.configuration.driveID, privacy: .public))")
@@ -217,7 +297,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         rootFileID: loadedRuntime.configuration.rootFileID
                     )
                 )
-                completionHandler(FileProviderItem(remoteItem: createdItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
+                await lifecycle.finish(markProgressComplete: true) {
+                    completionHandler(FileProviderItem(remoteItem: createdItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
+                }
+            } catch is CancellationError {
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -229,9 +313,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "create \(kind)."
                 )
                 FileProviderLog.replicatedExtension.error("createItem(parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                completionHandler(nil, [], false, mappedError)
+                await lifecycle.finish(markProgressComplete: false) {
+                    completionHandler(nil, [], false, mappedError)
+                }
             }
         }
+        return progress
     }
 
     public func modifyItem(
@@ -246,10 +333,18 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         let fieldsDescription = String(describing: changedFields)
         let optionsDescription = String(describing: options)
         FileProviderLog.replicatedExtension.debug("modifyItem(\(item.itemIdentifier.rawValue, privacy: .public)) fields(\(fieldsDescription, privacy: .public)) options(\(optionsDescription, privacy: .public)) baseVersion(\(logVersionDescription(version), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
-        return Progress.cancellable {
+        let changesContents = changedFields.contains(.contents) && newContents != nil
+        let progress = changesContents
+            ? Progress.fileTransfer(operationKind: .uploading, fileURL: newContents)
+            : Progress.discreteOperation()
+        if changesContents {
+            progress.prepareForByteCount(newContents?.fileSize)
+        }
+        let lifecycle = FileProviderOperationLifecycle(progress: progress) {
             FileProviderLog.replicatedExtension.debug("cancel modifyItem(\(item.itemIdentifier.rawValue, privacy: .public))")
             completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-        }.performTask {
+        }
+        lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             let conflictFailureMarker = ConflictFailureMarker()
             do {
@@ -305,22 +400,28 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                         runtime: loadedRuntime,
                         containerIdentifiers: affectedContainerIdentifiers
                     )
-                    completionHandler(nil, [], false, nil)
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(nil, [], false, nil)
+                    }
                     return
                 }
 
                 let updatedItem: KDriveRemoteItem
                 if let newContents, changedFields.contains(.contents) {
-                    let data = try Data(contentsOf: newContents)
-                    FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
-                    let result = try await coordinator.replaceContents(
-                        itemIdentifier: item.itemIdentifier.rawValue,
-                        fileID: fileID,
-                        localFilename: item.filename,
-                        baseContentVersion: version.contentVersion,
-                        contents: data,
-                        lastModifiedAt: item.contentModificationDate ?? nil
-                    )
+                    let result = try await Self.contentTransferLimiter.withPermit {
+                        let data = try Data(contentsOf: newContents, options: .mappedIfSafe)
+                        progress.prepareForByteCount(data.count)
+                        FileProviderLog.replicatedExtension.debug("replace contents for item(\(item.itemIdentifier.rawValue, privacy: .public)) bytes(\(data.count, privacy: .public))")
+                        return try await coordinator.replaceContents(
+                            itemIdentifier: item.itemIdentifier.rawValue,
+                            fileID: fileID,
+                            localFilename: item.filename,
+                            baseContentVersion: version.contentVersion,
+                            contents: data,
+                            lastModifiedAt: item.contentModificationDate ?? nil,
+                            transferProgress: progress.attachTransfer
+                        )
+                    }
                     switch result {
                     case .replaced(let replacedItem):
                         updatedItem = replacedItem
@@ -333,7 +434,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                                 rootFileID: loadedRuntime.configuration.rootFileID
                             )
                         )
-                        completionHandler(FileProviderItem(remoteItem: conflictItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
+                        await lifecycle.finish(markProgressComplete: true) {
+                            completionHandler(FileProviderItem(remoteItem: conflictItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
+                        }
                         return
                     }
                     affectedContainerIdentifiers.append(contentsOf: self.containerIdentifiers(
@@ -417,7 +520,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     runtime: loadedRuntime,
                     containerIdentifiers: affectedContainerIdentifiers
                 )
-                completionHandler(FileProviderItem(remoteItem: updatedItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
+                await lifecycle.finish(markProgressComplete: true) {
+                    completionHandler(FileProviderItem(remoteItem: updatedItem, rootFileID: loadedRuntime.configuration.rootFileID), [], false, nil)
+                }
+            } catch is CancellationError {
+                await lifecycle.cancel()
             } catch {
                 let conflictFailureAlreadyRecorded = await conflictFailureMarker.didRecordFailure()
                 let mappedError = await self.recordProviderFailure(
@@ -431,9 +538,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     shouldRecord: conflictFailureAlreadyRecorded == false
                 )
                 FileProviderLog.replicatedExtension.error("modifyItem(\(item.itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                completionHandler(nil, [], false, mappedError)
+                await lifecycle.finish(markProgressComplete: false) {
+                    completionHandler(nil, [], false, mappedError)
+                }
             }
         }
+        return progress
     }
 
     public func deleteItem(
@@ -445,10 +555,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
     ) -> Progress {
         let optionsDescription = String(describing: options)
         FileProviderLog.replicatedExtension.debug("deleteItem(\(itemIdentifier.rawValue, privacy: .public)) options(\(optionsDescription, privacy: .public)) baseVersion(\(logVersionDescription(version), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
-        return Progress.cancellable {
+        let lifecycle = FileProviderOperationLifecycle(progress: .discreteOperation()) {
             FileProviderLog.replicatedExtension.debug("cancel deleteItem(\(itemIdentifier.rawValue, privacy: .public))")
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
-        }.performTask {
+        }
+        lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
@@ -490,7 +601,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     runtime: loadedRuntime,
                     containerIdentifiers: [.trashContainer]
                 )
-                completionHandler(nil)
+                await lifecycle.finish(markProgressComplete: true) {
+                    completionHandler(nil)
+                }
+            } catch is CancellationError {
+                await lifecycle.cancel()
             } catch {
                 let mappedError = await self.recordProviderFailure(
                     error,
@@ -502,9 +617,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: "delete item."
                 )
                 FileProviderLog.replicatedExtension.error("deleteItem(\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
-                completionHandler(mappedError)
+                await lifecycle.finish(markProgressComplete: false) {
+                    completionHandler(mappedError)
+                }
             }
         }
+        return lifecycle.progress
     }
 
     public func enumerator(
@@ -628,8 +746,46 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 )
             }
 
-            await signalEnumerator(for: containerIdentifier, runtime: runtime)
         }
+        await signalWorkingSet(runtime: runtime)
+    }
+
+    private func startRemotePolling() {
+        remotePollingTask = Task { [weak self] in
+            while Task.isCancelled == false {
+                do {
+                    try await Task.sleep(for: .seconds(KDriveWorkingSetPollCoordinator.pollingInterval))
+                    guard let self, Task.isCancelled == false else { return }
+                    let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                    let outcome = try await self.pollWorkingSet(runtime: runtime)
+                    if outcome.didPoll, outcome.changes.isEmpty == false {
+                        await self.signalWorkingSet(runtime: runtime)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    FileProviderLog.replicatedExtension.error("working-set poll failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+    }
+
+    private func pollWorkingSet(
+        runtime: FileProviderRuntime,
+        minimumInterval: TimeInterval = KDriveWorkingSetPollCoordinator.pollingInterval
+    ) async throws -> KDriveWorkingSetPollOutcome {
+        try await KDriveWorkingSetPollCoordinator(
+            domainIdentifier: runtime.configuration.domainIdentifier,
+            driveID: runtime.configuration.driveID,
+            rootFileID: runtime.configuration.rootFileID,
+            remote: runtime.remote,
+            workingSetRemote: runtime.workingSetRemote,
+            stateStore: runtime.workingSetStateStore
+        ).poll(minimumInterval: minimumInterval)
+    }
+
+    private func signalWorkingSet(runtime: FileProviderRuntime) async {
+        await signalEnumerator(for: .workingSet, runtime: runtime)
     }
 
     private func signalEnumerator(
@@ -790,6 +946,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
 }
 
+private func contentVersionUnavailableError() -> Error {
+#if os(macOS)
+    NSFileProviderError(.versionNoLongerAvailable)
+#else
+    NSFileProviderError(.cannotSynchronize)
+#endif
+}
+
 private actor ConflictFailureMarker {
     private var didFail = false
 
@@ -831,6 +995,54 @@ private struct FetchedFileContents: Sendable {
     let byteCount: Int
 }
 
+private enum MaterializedSetReader {
+    static func read(using manager: NSFileProviderManager) async throws -> [any NSFileProviderItemProtocol] {
+        try await withCheckedThrowingContinuation { continuation in
+            let enumerator = manager.enumeratorForMaterializedItems()
+            let observer = MaterializedSetObserver(enumerator: enumerator) { result in
+                continuation.resume(with: result)
+            }
+            observer.start()
+        }
+    }
+}
+
+private final class MaterializedSetObserver: NSObject, NSFileProviderEnumerationObserver {
+    private let enumerator: any NSFileProviderEnumerator
+    private var items: [any NSFileProviderItemProtocol] = []
+    private var completion: ((Result<[any NSFileProviderItemProtocol], Error>) -> Void)?
+
+    init(
+        enumerator: any NSFileProviderEnumerator,
+        completion: @escaping (Result<[any NSFileProviderItemProtocol], Error>) -> Void
+    ) {
+        self.enumerator = enumerator
+        self.completion = completion
+    }
+
+    func start() {
+        enumerator.enumerateItems(for: self, startingAt: NSFileProviderPage(Data()))
+    }
+
+    func didEnumerate(_ updatedItems: [any NSFileProviderItemProtocol]) {
+        items.append(contentsOf: updatedItems)
+    }
+
+    func finishEnumerating(upTo nextPage: NSFileProviderPage?) {
+        if let nextPage {
+            enumerator.enumerateItems(for: self, startingAt: nextPage)
+            return
+        }
+        completion?(.success(items))
+        completion = nil
+    }
+
+    func finishEnumeratingWithError(_ error: any Error) {
+        completion?(.failure(error))
+        completion = nil
+    }
+}
+
 private func logVersionDescription(_ version: NSFileProviderItemVersion?) -> String {
     guard let version else { return "<nil>" }
     return "content:\(version.contentVersion.count)b metadata:\(version.metadataVersion.count)b"
@@ -843,8 +1055,43 @@ private extension NSFileProviderRequest {
 }
 
 private extension Progress {
-    func performTask(_ operation: @escaping @Sendable () async -> Void) -> Progress {
-        Task { await operation() }
-        return self
+    static func discreteOperation() -> Progress {
+        Progress(totalUnitCount: 1)
+    }
+
+    static func fileTransfer(
+        operationKind: Progress.FileOperationKind,
+        fileURL: URL? = nil
+    ) -> Progress {
+        let progress = Progress(totalUnitCount: -1)
+        progress.kind = .file
+        progress.fileOperationKind = operationKind
+        progress.fileURL = fileURL
+        return progress
+    }
+
+    func prepareForByteCount(_ byteCount: Int?) {
+        guard let byteCount else {
+            if totalUnitCount == 0 {
+                totalUnitCount = -1
+            }
+            return
+        }
+        totalUnitCount = Int64(max(byteCount, 1))
+        completedUnitCount = 0
+    }
+
+    func attachTransfer(_ child: Progress) {
+        if totalUnitCount < 0, child.totalUnitCount >= 0 {
+            totalUnitCount = max(child.totalUnitCount, 1)
+        }
+        let pendingUnits = max(totalUnitCount, 1)
+        addChild(child, withPendingUnitCount: pendingUnits)
+    }
+}
+
+private extension URL {
+    var fileSize: Int? {
+        try? resourceValues(forKeys: [.fileSizeKey]).fileSize
     }
 }

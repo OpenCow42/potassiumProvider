@@ -56,19 +56,19 @@ Partially addressed:
 - stale destructive/metadata mutations return a platform-compatible
   `.cannotSynchronize` error with recovery text on this target, rather than a
   more specific version-unavailable error
-- conditional saves still replace whole snapshots; the item/membership schema is
-  not yet split into the proposed sync database
+- snapshot saves now publish immutable generations atomically and retain the
+  active generation plus two predecessors for stable item/change paging
 
 ## Current Risk Areas
 
-### Whole-Snapshot Replacement
+### Generation Construction Cost
 
-`KDriveSnapshotSQLiteStore.save(...)` deletes and reinserts all rows for a
-domain/container in one transaction. Conditional saves now prevent stale writers
-from replacing a newer row, but the storage model is still coarse:
+`KDriveSnapshotSQLiteStore.save(...)` inserts a complete immutable generation in
+one transaction. Readers and diffs are bounded, but building a replacement still
+scales with the number of items:
 
-- small advanced-listing changes rewrite the entire folder snapshot
-- there is no per-item update path or child-membership table yet
+- small advanced-listing changes create another full generation
+- there is no incremental per-item generation builder yet
 - callers that intentionally use `.unconditional` can still replace a snapshot
   without a compare-and-swap guard
 
@@ -374,6 +374,8 @@ Status: partially addressed.
 
 - WAL and busy timeout are configured.
 - Expected-anchor/cursor checks guard enumeration and change snapshot saves.
+- Working-set polls atomically commit materialized-container cursors with the
+  working-set change batch and successful-poll watermark.
 - Schema versioning and indexes remain future work.
 - Add local paging from cached folders.
 - Split container state from item rows enough to avoid whole-folder rewrites for

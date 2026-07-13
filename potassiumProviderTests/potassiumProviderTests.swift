@@ -1432,7 +1432,7 @@ struct PotassiumProviderCoreTests {
         )
         let contents = Data("new picture bytes".utf8)
 
-        let item = try await service.uploadFile(
+        let operation = try service.uploadFileOperation(
             driveID: 100,
             parentID: 7,
             fileName: "Edited.jpg",
@@ -1440,6 +1440,10 @@ struct PotassiumProviderCoreTests {
             lastModifiedAt: Date(timeIntervalSince1970: 1_700_000_002),
             conflictStrategy: .version
         )
+        #expect(operation.progress.totalUnitCount >= -1)
+        #expect(await KDriveJSONRequestCapturingURLProtocol.lastRequest() == nil)
+
+        let item = try await operation.value
         let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
         let body = try #require(await KDriveJSONRequestCapturingURLProtocol.lastBody())
         let requestURL = try #require(request.url)
@@ -1459,6 +1463,30 @@ struct PotassiumProviderCoreTests {
         #expect(query["last_modified_at"] == "1700000002")
         #expect(query["conflict"] == "version")
         #expect(query["file_id"] == nil)
+    }
+
+    @Test func kdriveServiceExposesLazyObservableDownloadOperation() async throws {
+        await KDriveDataRequestCapturingURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveDataRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        let operation = try service.downloadFileOperation(driveID: 100, fileID: 42)
+        #expect(operation.progress.totalUnitCount >= -1)
+        #expect(await KDriveDataRequestCapturingURLProtocol.lastRequest() == nil)
+
+        let data = try await operation.value
+        let request = try #require(await KDriveDataRequestCapturingURLProtocol.lastRequest())
+
+        #expect(data == KDriveDataRequestCapturingURLProtocol.responseData)
+        #expect(request.url?.path == "/2/drive/100/files/42/download")
     }
 
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
@@ -1519,6 +1547,7 @@ struct PotassiumProviderCoreTests {
         #expect(queryItems.contains(URLQueryItem(name: "order_for[type]", value: "asc")))
         #expect(page.items.first?.id == 43)
         #expect(page.actions.first?.action == "file_update")
+        #expect(page.actions.last?.action == "file_rename")
         #expect(page.actionItems.first?.id == 44)
         #expect(page.nextCursor == "next-cursor")
         #expect(page.hasMore == true)
@@ -2074,6 +2103,11 @@ struct PotassiumProviderCoreTests {
       "result": "success",
       "data": {
         "actions": [
+          {
+            "action": "file_rename",
+            "file_id": 44,
+            "parent_id": 42
+          },
           {
             "action": "file_update",
             "file_id": 44,

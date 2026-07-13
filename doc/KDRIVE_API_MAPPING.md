@@ -14,10 +14,14 @@ potassiumChannel's typed `KDriveService` and request builders.
 | Advanced folder listing | `listAdvancedDirectory(..., cursor: nil, ...)` | `listAdvancedDirectoryListing` | `GET /3/drive/{driveId}/files/{fileId}/listing` |
 | Advanced listing continuation | `listAdvancedDirectory(..., cursor: value, ...)` | `continueAdvancedDirectoryListing` | `GET /3/drive/{driveId}/files/{fileId}/listing/continue` |
 | Trash listing | `listTrash(...)` | `listTrashFiles` | `GET /3/drive/{driveId}/trash` |
-| Download | `downloadFile(...)` | `downloadFile` | `GET /2/drive/{driveId}/files/{fileId}/download` |
+| Latest working-set items | `listWorkingSetRelevantItems(...)` | `listLastModifiedFiles` | `GET /3/drive/{driveId}/files/last_modified` |
+| Favorite working-set items | `listWorkingSetRelevantItems(...)` | `listFavoriteFiles` | `GET /3/drive/{driveId}/files/favorites` |
+| Shared working-set items | `listWorkingSetRelevantItems(...)` | `listMySharedFiles` and `listSharedWithMeFiles` | `GET /3/drive/{driveId}/files/my_shared`, `GET /3/drive/{driveId}/files/shared_with_me` |
+| Relevant item activity | `listPartialActivities(...)` | `listPartialFileActivities` | `POST /3/drive/{driveId}/files/listing/partial` |
+| Download | `downloadFileOperation(...)` | `downloadFile` operation | `GET /2/drive/{driveId}/files/{fileId}/download` |
 | Thumbnail | `thumbnail(...)` | `getFileThumbnail` | `GET /2/drive/{driveId}/files/{fileId}/thumbnail` |
-| Create/upload file | `uploadFile(...)` | `uploadFile` | `POST /3/drive/{driveId}/upload` |
-| Replace file contents | `replaceFile(...)` | `uploadFile` | `POST /3/drive/{driveId}/upload` |
+| Create/upload file | `uploadFileOperation(...)` | `uploadFile` operation | `POST /3/drive/{driveId}/upload` |
+| Replace file contents | `replaceFileOperation(...)` | `uploadFile` operation | `POST /3/drive/{driveId}/upload` |
 | Create directory | `createDirectory(...)` | `createDirectory` | `POST /3/drive/{driveId}/files/{fileId}/directory` |
 | Rename | `renameItem(...)` | `renameFile` | `POST /2/drive/{driveId}/files/{fileId}/rename` |
 | Move | `moveItem(...)` | `moveFile` | `POST /3/drive/{driveId}/files/{fileId}/move/{destinationDirectoryId}` |
@@ -28,6 +32,11 @@ Some mutation endpoint paths are abstracted behind potassiumChannel service
 methods in this app. The table names the local operation and service call so the
 implementation can be followed even when the request body is built by the
 library.
+
+Binary operations are exposed to File Provider as `KDriveTransferOperation`.
+It preserves potassiumChannel's live Foundation progress, shared async result,
+and cancellation of the underlying URL session task. Async convenience methods
+remain available for callers that do not need to observe the transfer.
 
 ## Listing Options
 
@@ -78,7 +87,8 @@ Directory create does not currently pass an explicit conflict policy.
 `KDriveAdvancedDirectoryListing` to `KDriveAdvancedItemPage`:
 
 - `data.files` becomes `items`
-- `data.actions` becomes `KDriveRemoteFileAction`
+- `data.actionsNewestFirst` becomes `KDriveRemoteFileAction`, so the newest
+  effective state wins when the reducer keeps its first action per item
 - `data.actionsFiles` becomes `actionItems`
 - response cursor becomes `nextCursor`
 - response `hasMore` becomes `hasMore`
@@ -87,7 +97,6 @@ Directory create does not currently pass an explicit conflict policy.
 listing cursors from `APIClientError.unacceptableStatusCode` bodies containing
 both "invalid" and "cursor".
 
-## Unused Available API
-
-potassiumChannel also exposes `/files/listing/partial`, but this app does not
-use it today.
+The partial-activity request is batched at 200 identifiers and uses the last
+durable successful-poll watermark. It includes create, delete, trash, restore,
+update, rename, move, favorite, and share actions relevant to working-set state.
