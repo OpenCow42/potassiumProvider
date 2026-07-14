@@ -1,0 +1,27 @@
+name: Xcode build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build for macOS
+        run: |
+          xcodebuild build \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO

@@ -4,7 +4,7 @@
     {
       "identity" : "potassiumchannel",
       "kind" : "remoteSourceControl",
-      "location" : "git@github.com:OpenCow42/potassiumChannel.git",
+      "location" : "https://github.com/OpenCow42/potassiumChannel.git",
       "state" : {
         "revision" : "8a6d236d69c381c17f334b66dd4075ef2e0b7d89",
         "version" : "0.2.0"
@@ -22,7 +22,7 @@
     {
       "identity" : "swift-concurrency",
       "kind" : "remoteSourceControl",
-      "location" : "git@github.com:OpenCow42/swift-concurrency.git",
+      "location" : "https://github.com/OpenCow42/swift-concurrency.git",
       "state" : {
         "revision" : "696ea95ad5974bd04f63d353f317cf5ecd9235e8",
         "version" : "1.0.1"
