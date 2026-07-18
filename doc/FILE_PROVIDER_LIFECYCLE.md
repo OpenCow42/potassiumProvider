@@ -19,6 +19,27 @@ If configuration or credentials are missing, the callback fails with a mapped
 File Provider error. Runtime-loading and authentication failures are also
 recorded as sanitized failure activity when the activity database can be opened.
 
+## Desktop & Documents Known Folders
+
+On macOS 15 or later, registered domains advertise support for Desktop and
+Documents together. The app owns explicit claim/release controls and reads
+`NSFileProviderDomain.replicatedKnownFolders` for live state; this state is not
+stored in app-group JSON or SQLite.
+
+The extension adopts `NSFileProviderKnownFolderSupporting` on macOS.
+`getKnownFolderLocations` resolves the existing root-level kDrive directory
+named `Private`, then returns `Desktop` and `Documents` locations with that
+directory as their shared parent. It returns locations only for the folders
+requested by macOS. A missing or non-directory `Private` item fails closed.
+
+Apple's [`NSFileProviderKnownFolderSupporting`](https://developer.apple.com/documentation/fileprovider/nsfileproviderknownfoldersupporting)
+documentation is the source of truth for this callback and transition behavior.
+
+File Provider reuses existing directory children or creates them at those
+locations, keeps its default binary-compatibility symlink behavior, and manages
+the local known-folder transition. Ordinary enumeration and mutation callbacks
+then synchronize their contents like other provider items.
+
 ## `item(for:)`
 
 Purpose: resolve metadata for one item identifier.

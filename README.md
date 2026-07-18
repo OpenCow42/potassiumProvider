@@ -26,11 +26,11 @@ data.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
-  File Provider domain registration, and domain storage.
+  File Provider domain registration, and macOS Desktop & Documents controls.
 - [Authentication](doc/AUTHENTICATION.md): OAuth PKCE, manual token entry,
   keychain storage, refresh behavior, and secret-handling rules.
 - [File Provider Lifecycle](doc/FILE_PROVIDER_LIFECYCLE.md): Apple callbacks,
-  downloads, mutations, enumeration entrypoints, and SQLite touch points.
+  known-folder locations, mutations, enumeration, and SQLite touch points.
 - [Listing And Versioning](doc/LISTING_AND_VERSIONING.md): how Apple
   enumeration, sync anchors, kDrive listing APIs, SQLite caching, and item
   versions fit together.
@@ -147,6 +147,9 @@ local Xcode requires a more specific variant.
   [Conflicts](doc/CONFLICTS.md) before relying on it for important files.
 - SQLite snapshots cache metadata only. File contents and thumbnails are not
   stored there.
+- On macOS 15 or later, Desktop & Documents sync is an explicit, experimental
+  opt-in that always handles both folders together under the selected kDrive's
+  existing root-level `Private` directory.
 
 ## License
 

@@ -23,10 +23,11 @@ flowchart LR
 
 - `potassiumProvider`: SwiftUI app used to connect multiple local accounts,
   load kDrives per account, register File Provider domains, remove configured
-  domains, and log out accounts independently.
+  domains, control macOS Desktop & Documents sync, and log out accounts
+  independently.
 - `potassiumProviderFileProvider`: `NSFileProviderReplicatedExtension`
   implementation used by the system to enumerate, fetch, create, modify, trash,
-  and delete items.
+  and delete items, and to provide macOS known-folder locations.
 - `PotassiumProviderCore`: shared framework with domain configuration storage,
   OAuth/keychain storage, kDrive models, kDrive service adapter, snapshot diffing,
   SQLite snapshot storage, unified-log categories, durable activity retention,
@@ -37,10 +38,11 @@ flowchart LR
 
 ## Ownership Boundaries
 
-- The app owns account setup, domain registration, domain removal, and
-  independent account logout.
+- The app owns account setup, domain registration, live known-folder state,
+  user-triggered claim/release, domain removal, and independent account logout.
 - The File Provider extension owns Apple's runtime callbacks and maps those
-  callbacks to `KDriveFileProviding` operations.
+  callbacks to `KDriveFileProviding` operations. On macOS it also maps Desktop
+  and Documents to the selected drive's root-level `Private` directory.
 - `PotassiumProviderCore` owns typed provider models, persistence protocols,
   OAuth utilities, and the `PotassiumKDriveService` adapter.
 - `potassiumChannel` owns the typed request builders and service calls for

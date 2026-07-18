@@ -128,6 +128,13 @@ Xcode requires a more specific macOS variant.
   part of the root project.
 - Build products, DerivedData, local caches, `.DS_Store`, and private fixtures
   should not be committed.
+- Desktop & Documents known-folder testing requires macOS 15 or later and a test
+  drive with an existing root-level directory named `Private`.
+
+Manually verify that Apple presents consent, both folders appear under
+`Private`, changes synchronize in both directions, live state survives relaunch
+and external domain changes, stopping sync releases both folders, and domain
+removal or logout cannot continue after a release failure.
 
 ## File Provider Dev Uninstall
 

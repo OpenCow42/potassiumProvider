@@ -47,6 +47,9 @@ These files are used by:
 Filenames are sanitized from domain identifiers. Removing a domain deletes its
 configuration JSON after the File Provider domain is removed.
 
+macOS Desktop & Documents activation is not persisted here or in SQLite. The app
+derives it from each registered `NSFileProviderDomain.replicatedKnownFolders`.
+
 Legacy domain JSON that does not contain `accountIdentifier` decodes to the fixed
 `legacy-account` local account. The app rewrites those configurations during
 reload so future extension loads can use explicit account-scoped token lookup.
@@ -283,7 +286,9 @@ scanned item ID, avoiding whole-container dictionaries and sets.
 
 ## Domain Removal Cleanup
 
-When the app removes a domain, it calls
+On macOS, the app releases Desktop and Documents first when the domain currently
+replicates them; a release failure leaves the domain and local records intact.
+After File Provider removes the domain, the app calls
 `removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`.
 That deletes all snapshot, materialization, working-set poll/change, conflict,
 and activity rows for the domain.
