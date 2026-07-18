@@ -192,7 +192,9 @@ struct ContentView: View {
                     driveID: drive.id,
                     driveName: drive.name,
                     detail: "Drive \(drive.id) · \(drive.role)",
-                    configuration: configuredDomainsByDriveID[drive.id]
+                    configuration: configuredDomainsByDriveID[drive.id],
+                    knownFolderSyncState: configuredDomainsByDriveID[drive.id].map(model.knownFolderSyncState(for:)) ?? .unavailable,
+                    isChangingKnownFolderSync: configuredDomainsByDriveID[drive.id].map(model.isChangingKnownFolderSync(for:)) ?? false
                 ) {
                     Task {
                         await model.addDomain(
@@ -202,6 +204,10 @@ struct ContentView: View {
                     }
                 } remove: { configuration in
                     Task { await model.removeDomain(configuration) }
+                } enableKnownFolderSync: { configuration in
+                    Task { await model.enableKnownFolderSync(for: configuration) }
+                } disableKnownFolderSync: { configuration in
+                    Task { await model.disableKnownFolderSync(for: configuration) }
                 }
             }
 
@@ -210,11 +216,17 @@ struct ContentView: View {
                     driveID: domain.driveID,
                     driveName: domain.driveName,
                     detail: "Drive \(domain.driveID)",
-                    configuration: domain
+                    configuration: domain,
+                    knownFolderSyncState: model.knownFolderSyncState(for: domain),
+                    isChangingKnownFolderSync: model.isChangingKnownFolderSync(for: domain)
                 ) {
                     Task { await model.addDomain(accountIdentifier: account.accountIdentifier) }
                 } remove: { configuration in
                     Task { await model.removeDomain(configuration) }
+                } enableKnownFolderSync: { configuration in
+                    Task { await model.enableKnownFolderSync(for: configuration) }
+                } disableKnownFolderSync: { configuration in
+                    Task { await model.disableKnownFolderSync(for: configuration) }
                 }
             }
         }
@@ -260,36 +272,114 @@ private struct DriveConfigurationRow: View {
     let driveName: String
     let detail: String
     let configuration: ProviderDomainConfiguration?
+    let knownFolderSyncState: ProviderKnownFolderSyncState
+    let isChangingKnownFolderSync: Bool
     let add: () -> Void
     let remove: (ProviderDomainConfiguration) -> Void
+    let enableKnownFolderSync: (ProviderDomainConfiguration) -> Void
+    let disableKnownFolderSync: (ProviderDomainConfiguration) -> Void
+    @State private var isStopSyncConfirmationPresented = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "externaldrive.fill")
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(driveName)
-                    .font(.headline)
-                Text(configuration == nil ? detail : "\(detail) · In Files")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "externaldrive.fill")
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(driveName)
+                        .font(.headline)
+                    Text(configuration == nil ? detail : "\(detail) · In Files")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let configuration {
+                    Button(role: .destructive) {
+                        remove(configuration)
+                    } label: {
+                        Label("Remove from Files", systemImage: "trash")
+                    }
+                    .labelStyle(.iconOnly)
+                } else {
+                    Button(action: add) {
+                        Label("Use in Files", systemImage: "folder.badge.plus")
+                    }
+                    .labelStyle(.iconOnly)
+                }
             }
-            Spacer()
+
+            #if os(macOS)
             if let configuration {
-                Button(role: .destructive) {
-                    remove(configuration)
-                } label: {
-                    Label("Remove from Files", systemImage: "trash")
+                Divider()
+                HStack(spacing: 12) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Desktop & Documents")
+                            .font(.subheadline.weight(.medium))
+                        Text(knownFolderDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if isChangingKnownFolderSync {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        knownFolderAction(for: configuration)
+                    }
                 }
-                .labelStyle(.iconOnly)
-            } else {
-                Button(action: add) {
-                    Label("Use in Files", systemImage: "folder.badge.plus")
+                .confirmationDialog(
+                    "Stop syncing Desktop and Documents?",
+                    isPresented: $isStopSyncConfirmationPresented,
+                    titleVisibility: .visible
+                ) {
+                    Button("Stop Syncing", role: .destructive) {
+                        disableKnownFolderSync(configuration)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("macOS will stop replicating both folders with kDrive. Remote files in /private are not deleted.")
                 }
-                .labelStyle(.iconOnly)
             }
+            #endif
         }
     }
+
+    #if os(macOS)
+    private var knownFolderDetail: String {
+        switch knownFolderSyncState {
+        case .active:
+            return "Syncing with /private/Desktop and /private/Documents"
+        case .partial:
+            return "Partially enabled · stop and enable again to repair"
+        case .inactive:
+            return "Sync both folders with kDrive /private"
+        case .unavailable:
+            return "File Provider status unavailable"
+        }
+    }
+
+    @ViewBuilder
+    private func knownFolderAction(for configuration: ProviderDomainConfiguration) -> some View {
+        switch knownFolderSyncState {
+        case .active, .partial:
+            Button("Stop Syncing") {
+                isStopSyncConfirmationPresented = true
+            }
+            .buttonStyle(.bordered)
+        case .inactive:
+            Button("Sync") {
+                enableKnownFolderSync(configuration)
+            }
+            .buttonStyle(.borderedProminent)
+        case .unavailable:
+            Text("Unavailable")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+    #endif
 }
 
 #Preview {

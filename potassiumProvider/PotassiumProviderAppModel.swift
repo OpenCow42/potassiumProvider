@@ -1,4 +1,7 @@
 import Combine
+#if os(macOS)
+import FileProvider
+#endif
 import Foundation
 import OSLog
 import PotassiumProviderCore
@@ -12,6 +15,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var domains: [ProviderDomainConfiguration] = []
     @Published private(set) var isConnecting = false
     @Published private(set) var loadingDriveAccountIdentifiers: Set<String> = []
+    @Published private(set) var knownFolderSyncStatesByDomainIdentifier: [String: ProviderKnownFolderSyncState] = [:]
+    @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -28,6 +33,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let eventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
+    private var fileProviderDomainChangeCancellable: AnyCancellable?
 
     init(
         accountStore: (any ProviderAccountStoring)? = nil,
@@ -49,6 +55,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
         statusMessage = "No accounts connected."
+        observeFileProviderDomainChanges()
         if automaticallyReloadStoredState {
             Task { await reloadStoredState() }
         }
@@ -104,6 +111,14 @@ final class PotassiumProviderAppModel: ObservableObject {
         domains.contains { $0.accountIdentifier == accountIdentifier && $0.driveID == driveID }
     }
 
+    func knownFolderSyncState(for configuration: ProviderDomainConfiguration) -> ProviderKnownFolderSyncState {
+        knownFolderSyncStatesByDomainIdentifier[configuration.domainIdentifier] ?? .unavailable
+    }
+
+    func isChangingKnownFolderSync(for configuration: ProviderDomainConfiguration) -> Bool {
+        knownFolderTransitionDomainIdentifiers.contains(configuration.domainIdentifier)
+    }
+
     func selectedDriveID(for accountIdentifier: String) -> Int? {
         selectedDriveIDs[accountIdentifier]
     }
@@ -135,6 +150,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
+            try await refreshKnownFolderSyncStates()
             seedDraftState()
 
             if let synchronizationError = synchronizedState.registrationError {
@@ -292,6 +308,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             if let registrationError = synchronizedState.registrationError {
                 throw registrationError
             }
+            try await refreshKnownFolderSyncStates()
             statusMessage = "Added \(configuration.driveName) to Files."
             errorMessage = nil
         } catch {
@@ -321,6 +338,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             try await removeDomainAndLocalState(configuration)
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
+            try await refreshKnownFolderSyncStates()
             statusMessage = "Removed \(configuration.displayName) from Files."
             errorMessage = nil
         } catch {
@@ -333,6 +351,62 @@ final class PotassiumProviderAppModel: ObservableObject {
             errorMessage = "Could not remove the provider domain: \(error.localizedDescription)"
             statusMessage = nil
         }
+    }
+
+    func enableKnownFolderSync(for configuration: ProviderDomainConfiguration) async {
+        #if os(macOS)
+        guard beginKnownFolderTransition(for: configuration) else { return }
+        defer { knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier) }
+
+        do {
+            let token = try await usableToken(accountIdentifier: configuration.accountIdentifier)
+            let remote = fileProviderFactory(token.accessToken)
+            let parentFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
+                driveID: configuration.driveID,
+                rootFileID: configuration.rootFileID,
+                remote: remote
+            )
+            try await domainRegistrar.claimKnownFolders(for: configuration, parentFileID: parentFileID)
+            try await refreshKnownFolderSyncStates()
+            statusMessage = "Desktop and Documents now sync with \(configuration.displayName) in kDrive /private."
+            errorMessage = nil
+        } catch {
+            try? await refreshKnownFolderSyncStates()
+            guard isUserCancellation(error) == false else { return }
+            await recordAppFailure(
+                kind: .domainManagement,
+                summary: "Could not enable Desktop and Documents synchronization.",
+                error: error,
+                category: .fileProvider
+            )
+            errorMessage = "Could not sync Desktop and Documents with kDrive /private: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+        #endif
+    }
+
+    func disableKnownFolderSync(for configuration: ProviderDomainConfiguration) async {
+        #if os(macOS)
+        guard beginKnownFolderTransition(for: configuration) else { return }
+        defer { knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier) }
+
+        do {
+            try await domainRegistrar.releaseKnownFolders(for: configuration)
+            try await refreshKnownFolderSyncStates()
+            statusMessage = "Stopped syncing Desktop and Documents with \(configuration.displayName)."
+            errorMessage = nil
+        } catch {
+            try? await refreshKnownFolderSyncStates()
+            await recordAppFailure(
+                kind: .domainManagement,
+                summary: "Could not stop Desktop and Documents synchronization.",
+                error: error,
+                category: .fileProvider
+            )
+            errorMessage = "Could not stop syncing Desktop and Documents: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+        #endif
     }
 
     func logoutAccount(_ account: ProviderAccount) async {
@@ -353,6 +427,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
+            try await refreshKnownFolderSyncStates()
             statusMessage = "Logged out \(account.displayName)."
             errorMessage = nil
         } catch {
@@ -376,6 +451,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
+            try await refreshKnownFolderSyncStates()
             errorMessage = nil
         } catch {
             await recordAppFailure(
@@ -501,10 +577,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private func removeDomainAndLocalState(_ configuration: ProviderDomainConfiguration) async throws {
+        try await releaseKnownFoldersBeforeRemovingDomain(configuration)
         try await domainRegistrar.removeDomain(for: configuration)
         try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
         try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
         try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+        knownFolderSyncStatesByDomainIdentifier[configuration.domainIdentifier] = nil
     }
 
     private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) async {
@@ -537,6 +615,50 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
 
         return token
+    }
+
+    private func beginKnownFolderTransition(for configuration: ProviderDomainConfiguration) -> Bool {
+        knownFolderTransitionDomainIdentifiers.insert(configuration.domainIdentifier).inserted
+    }
+
+    private func refreshKnownFolderSyncStates() async throws {
+        let systemStates = try await domainRegistrar.knownFolderSyncStates()
+        knownFolderSyncStatesByDomainIdentifier = Dictionary(uniqueKeysWithValues: domains.map { configuration in
+            (
+                configuration.domainIdentifier,
+                systemStates[configuration.domainIdentifier] ?? .unavailable
+            )
+        })
+    }
+
+    private func releaseKnownFoldersBeforeRemovingDomain(_ configuration: ProviderDomainConfiguration) async throws {
+        #if os(macOS)
+        try await refreshKnownFolderSyncStates()
+        switch knownFolderSyncState(for: configuration) {
+        case .active, .partial:
+            try await domainRegistrar.releaseKnownFolders(for: configuration)
+            try await refreshKnownFolderSyncStates()
+        case .inactive, .unavailable:
+            break
+        }
+        #endif
+    }
+
+    private func observeFileProviderDomainChanges() {
+        #if os(macOS)
+        fileProviderDomainChangeCancellable = NotificationCenter.default
+            .publisher(for: .fileProviderDomainDidChange)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    try? await self?.refreshKnownFolderSyncStates()
+                }
+            }
+        #endif
+    }
+
+    private func isUserCancellation(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError
     }
 
     private func refreshDraftFromSelectedDrive(accountIdentifier: String) {
