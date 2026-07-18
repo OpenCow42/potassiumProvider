@@ -9,61 +9,58 @@ import Testing
 struct KnownFolderLifecycleTests {
     @Test func enablingSyncClaimsDesktopAndDocumentsUnderPrivateDirectory() async throws {
         let registrar = RecordingKnownFolderRegistrar(state: .inactive)
-        let context = try await makeContext(registrar: registrar)
-        defer { try? FileManager.default.removeItem(at: context.directory) }
+        try await withContext(registrar: registrar) { context in
+            registrar.resetEvents()
 
-        registrar.resetEvents()
+            await context.model.enableKnownFolderSync(for: context.configuration)
 
-        await context.model.enableKnownFolderSync(for: context.configuration)
-
-        #expect(registrar.events == [
-            .claim(domainIdentifier: context.configuration.domainIdentifier, parentFileID: 77),
-            .refreshStates,
-        ])
-        #expect(context.model.knownFolderSyncState(for: context.configuration) == .active)
-        #expect(context.model.isChangingKnownFolderSync(for: context.configuration) == false)
-        #expect(context.model.errorMessage == nil)
-        #expect(context.model.statusMessage?.contains("kDrive /private") == true)
+            #expect(registrar.events == [
+                .claim(domainIdentifier: context.configuration.domainIdentifier, parentFileID: 77),
+                .refreshStates,
+            ])
+            #expect(context.model.knownFolderSyncState(for: context.configuration) == .active)
+            #expect(context.model.isChangingKnownFolderSync(for: context.configuration) == false)
+            #expect(context.model.errorMessage == nil)
+            #expect(context.model.statusMessage?.contains("kDrive /private") == true)
+        }
     }
 
     @Test func disablingSyncReleasesKnownFoldersAndRefreshesState() async throws {
         let registrar = RecordingKnownFolderRegistrar(state: .active)
-        let context = try await makeContext(registrar: registrar)
-        defer { try? FileManager.default.removeItem(at: context.directory) }
+        try await withContext(registrar: registrar) { context in
+            registrar.resetEvents()
 
-        registrar.resetEvents()
+            await context.model.disableKnownFolderSync(for: context.configuration)
 
-        await context.model.disableKnownFolderSync(for: context.configuration)
-
-        #expect(registrar.events == [
-            .release(domainIdentifier: context.configuration.domainIdentifier),
-            .refreshStates,
-        ])
-        #expect(context.model.knownFolderSyncState(for: context.configuration) == .inactive)
-        #expect(context.model.isChangingKnownFolderSync(for: context.configuration) == false)
-        #expect(context.model.errorMessage == nil)
+            #expect(registrar.events == [
+                .release(domainIdentifier: context.configuration.domainIdentifier),
+                .refreshStates,
+            ])
+            #expect(context.model.knownFolderSyncState(for: context.configuration) == .inactive)
+            #expect(context.model.isChangingKnownFolderSync(for: context.configuration) == false)
+            #expect(context.model.errorMessage == nil)
+        }
     }
 
     @Test func removingActiveDomainReleasesKnownFoldersBeforeRemovingDomain() async throws {
         let registrar = RecordingKnownFolderRegistrar(state: .active)
-        let context = try await makeContext(registrar: registrar)
-        defer { try? FileManager.default.removeItem(at: context.directory) }
+        try await withContext(registrar: registrar) { context in
+            registrar.resetEvents()
 
-        registrar.resetEvents()
+            await context.model.removeDomain(context.configuration)
 
-        await context.model.removeDomain(context.configuration)
-
-        let releaseIndex = try #require(registrar.events.firstIndex(of: .release(
-            domainIdentifier: context.configuration.domainIdentifier
-        )))
-        let removalIndex = try #require(registrar.events.firstIndex(of: .remove(
-            domainIdentifier: context.configuration.domainIdentifier
-        )))
-        #expect(releaseIndex < removalIndex)
-        #expect(context.model.domains.isEmpty)
-        #expect(try await context.domainStore.configuration(
-            domainIdentifier: context.configuration.domainIdentifier
-        ) == nil)
+            let releaseIndex = try #require(registrar.events.firstIndex(of: .release(
+                domainIdentifier: context.configuration.domainIdentifier
+            )))
+            let removalIndex = try #require(registrar.events.firstIndex(of: .remove(
+                domainIdentifier: context.configuration.domainIdentifier
+            )))
+            #expect(releaseIndex < removalIndex)
+            #expect(context.model.domains.isEmpty)
+            #expect(try await context.domainStore.configuration(
+                domainIdentifier: context.configuration.domainIdentifier
+            ) == nil)
+        }
     }
 
     @Test func releaseFailureAbortsDomainRemovalAndPreservesConfiguration() async throws {
@@ -71,29 +68,28 @@ struct KnownFolderLifecycleTests {
             state: .active,
             releaseError: KnownFolderLifecycleTestError.releaseFailed
         )
-        let context = try await makeContext(registrar: registrar)
-        defer { try? FileManager.default.removeItem(at: context.directory) }
+        try await withContext(registrar: registrar) { context in
+            registrar.resetEvents()
 
-        registrar.resetEvents()
+            await context.model.removeDomain(context.configuration)
 
-        await context.model.removeDomain(context.configuration)
-
-        #expect(registrar.events.contains(.release(
-            domainIdentifier: context.configuration.domainIdentifier
-        )))
-        #expect(registrar.events.contains(.remove(
-            domainIdentifier: context.configuration.domainIdentifier
-        )) == false)
-        #expect(context.model.domains.map(\.domainIdentifier) == [
-            context.configuration.domainIdentifier,
-        ])
-        let storedConfiguration = try #require(try await context.domainStore.configuration(
-            domainIdentifier: context.configuration.domainIdentifier
-        ))
-        #expect(storedConfiguration.domainIdentifier == context.configuration.domainIdentifier)
-        #expect(storedConfiguration.driveID == context.configuration.driveID)
-        #expect(context.model.knownFolderSyncState(for: context.configuration) == .active)
-        #expect(context.model.errorMessage?.contains("Could not remove the provider domain") == true)
+            #expect(registrar.events.contains(.release(
+                domainIdentifier: context.configuration.domainIdentifier
+            )))
+            #expect(registrar.events.contains(.remove(
+                domainIdentifier: context.configuration.domainIdentifier
+            )) == false)
+            #expect(context.model.domains.map(\.domainIdentifier) == [
+                context.configuration.domainIdentifier,
+            ])
+            let storedConfiguration = try #require(try await context.domainStore.configuration(
+                domainIdentifier: context.configuration.domainIdentifier
+            ))
+            #expect(storedConfiguration.domainIdentifier == context.configuration.domainIdentifier)
+            #expect(storedConfiguration.driveID == context.configuration.driveID)
+            #expect(context.model.knownFolderSyncState(for: context.configuration) == .active)
+            #expect(context.model.errorMessage?.contains("Could not remove the provider domain") == true)
+        }
     }
 
     @Test func releaseFailureAbortsLogoutAndPreservesAccountTokenAndDomain() async throws {
@@ -101,37 +97,56 @@ struct KnownFolderLifecycleTests {
             state: .active,
             releaseError: KnownFolderLifecycleTestError.releaseFailed
         )
+        try await withContext(registrar: registrar) { context in
+            registrar.resetEvents()
+
+            await context.model.logoutAccount(context.account)
+
+            #expect(registrar.events.contains(.release(
+                domainIdentifier: context.configuration.domainIdentifier
+            )))
+            #expect(registrar.events.contains(.remove(
+                domainIdentifier: context.configuration.domainIdentifier
+            )) == false)
+            let storedAccount = try #require(try await context.accountStore.account(
+                accountIdentifier: context.account.accountIdentifier
+            ))
+            #expect(storedAccount.accountIdentifier == context.account.accountIdentifier)
+            #expect(storedAccount.displayName == context.account.displayName)
+            #expect(await context.tokenStore.loadToken(
+                accountIdentifier: context.account.accountIdentifier
+            )?.accessToken == "test-token")
+            let storedConfiguration = try #require(try await context.domainStore.configuration(
+                domainIdentifier: context.configuration.domainIdentifier
+            ))
+            #expect(storedConfiguration.domainIdentifier == context.configuration.domainIdentifier)
+            #expect(storedConfiguration.driveID == context.configuration.driveID)
+            #expect(context.model.accounts.map(\.accountIdentifier) == [context.account.accountIdentifier])
+            #expect(context.model.domains.map(\.domainIdentifier) == [
+                context.configuration.domainIdentifier,
+            ])
+            #expect(context.model.errorMessage?.contains("Could not log out") == true)
+        }
+    }
+
+    private func withContext(
+        registrar: RecordingKnownFolderRegistrar,
+        operation: @MainActor (KnownFolderLifecycleContext) async throws -> Void
+    ) async throws {
+        let directory = try await performWithContext(
+            registrar: registrar,
+            operation: operation
+        )
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func performWithContext(
+        registrar: RecordingKnownFolderRegistrar,
+        operation: @MainActor (KnownFolderLifecycleContext) async throws -> Void
+    ) async throws -> URL {
         let context = try await makeContext(registrar: registrar)
-        defer { try? FileManager.default.removeItem(at: context.directory) }
-
-        registrar.resetEvents()
-
-        await context.model.logoutAccount(context.account)
-
-        #expect(registrar.events.contains(.release(
-            domainIdentifier: context.configuration.domainIdentifier
-        )))
-        #expect(registrar.events.contains(.remove(
-            domainIdentifier: context.configuration.domainIdentifier
-        )) == false)
-        let storedAccount = try #require(try await context.accountStore.account(
-            accountIdentifier: context.account.accountIdentifier
-        ))
-        #expect(storedAccount.accountIdentifier == context.account.accountIdentifier)
-        #expect(storedAccount.displayName == context.account.displayName)
-        #expect(await context.tokenStore.loadToken(
-            accountIdentifier: context.account.accountIdentifier
-        )?.accessToken == "test-token")
-        let storedConfiguration = try #require(try await context.domainStore.configuration(
-            domainIdentifier: context.configuration.domainIdentifier
-        ))
-        #expect(storedConfiguration.domainIdentifier == context.configuration.domainIdentifier)
-        #expect(storedConfiguration.driveID == context.configuration.driveID)
-        #expect(context.model.accounts.map(\.accountIdentifier) == [context.account.accountIdentifier])
-        #expect(context.model.domains.map(\.domainIdentifier) == [
-            context.configuration.domainIdentifier,
-        ])
-        #expect(context.model.errorMessage?.contains("Could not log out") == true)
+        try await operation(context)
+        return context.directory
     }
 
     private func makeContext(
