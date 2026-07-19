@@ -189,10 +189,20 @@ public enum ProviderAccountStoreError: Error, Equatable, LocalizedError, Sendabl
     }
 }
 
-public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sendable {
-    public var id: String { domainIdentifier }
+public enum ProviderDomainStorageLocation: Codable, Equatable, Sendable {
+    case onThisMac
+    case externalVolume(uuid: UUID, displayName: String)
 
-    public let domainIdentifier: String
+    public static func externalVolume(volumeUUID: UUID, displayName: String) -> Self {
+        .externalVolume(uuid: volumeUUID, displayName: displayName)
+    }
+}
+
+public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { configurationIdentifier }
+
+    public let configurationIdentifier: String
+    public var domainIdentifier: String
     public var accountIdentifier: String
     public var displayName: String
     public var driveID: Int
@@ -201,11 +211,13 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     public var knownFolderLayout: ProviderKnownFolderLayout
     public var encryptionMode: ProviderEncryptionMode
     public var vault: ProviderVaultConfiguration?
+    public var storageLocation: ProviderDomainStorageLocation
     public var createdAt: Date
     public var updatedAt: Date
 
     public init(
         domainIdentifier: String = UUID().uuidString,
+        configurationIdentifier: String? = nil,
         accountIdentifier: String = ProviderConstants.legacyAccountIdentifier,
         displayName: String,
         driveID: Int,
@@ -214,9 +226,11 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         knownFolderLayout: ProviderKnownFolderLayout = .machineNamespace,
         encryptionMode: ProviderEncryptionMode = .legacyPlaintext,
         vault: ProviderVaultConfiguration? = nil,
+        storageLocation: ProviderDomainStorageLocation = .onThisMac,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
+        self.configurationIdentifier = configurationIdentifier ?? domainIdentifier
         self.domainIdentifier = domainIdentifier
         self.accountIdentifier = accountIdentifier
         self.displayName = displayName
@@ -226,8 +240,41 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         self.knownFolderLayout = knownFolderLayout
         self.encryptionMode = encryptionMode
         self.vault = vault
+        self.storageLocation = storageLocation
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public init(
+        configurationIdentifier: String,
+        domainIdentifier: String,
+        accountIdentifier: String = ProviderConstants.legacyAccountIdentifier,
+        displayName: String,
+        driveID: Int,
+        driveName: String,
+        rootFileID: Int = ProviderConstants.defaultRootFileID,
+        knownFolderLayout: ProviderKnownFolderLayout = .machineNamespace,
+        encryptionMode: ProviderEncryptionMode = .legacyPlaintext,
+        vault: ProviderVaultConfiguration? = nil,
+        storageLocation: ProviderDomainStorageLocation = .onThisMac,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.init(
+            domainIdentifier: domainIdentifier,
+            configurationIdentifier: configurationIdentifier,
+            accountIdentifier: accountIdentifier,
+            displayName: displayName,
+            driveID: driveID,
+            driveName: driveName,
+            rootFileID: rootFileID,
+            knownFolderLayout: knownFolderLayout,
+            encryptionMode: encryptionMode,
+            vault: vault,
+            storageLocation: storageLocation,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
     }
 
     public static func finderDisplayName(forDriveName driveName: String) -> String {
@@ -248,6 +295,7 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     }
 
     private enum CodingKeys: String, CodingKey {
+        case configurationIdentifier
         case domainIdentifier
         case accountIdentifier
         case displayName
@@ -257,6 +305,7 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         case knownFolderLayout
         case encryptionMode
         case vault
+        case storageLocation
         case createdAt
         case updatedAt
     }
@@ -264,6 +313,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         domainIdentifier = try container.decode(String.self, forKey: .domainIdentifier)
+        configurationIdentifier = try container.decodeIfPresent(String.self, forKey: .configurationIdentifier)
+            ?? domainIdentifier
         accountIdentifier = try container.decodeIfPresent(String.self, forKey: .accountIdentifier)
             ?? ProviderConstants.legacyAccountIdentifier
         displayName = try container.decode(String.self, forKey: .displayName)
@@ -283,6 +334,10 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
             ProviderVaultConfiguration.self,
             forKey: .vault
         )
+        storageLocation = try container.decodeIfPresent(
+            ProviderDomainStorageLocation.self,
+            forKey: .storageLocation
+        ) ?? .onThisMac
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
@@ -290,9 +345,28 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
 
 public protocol DomainConfigurationStoring: Sendable {
     func allConfigurations() async throws -> [ProviderDomainConfiguration]
+    func configuration(configurationIdentifier: String) async throws -> ProviderDomainConfiguration?
     func configuration(domainIdentifier: String) async throws -> ProviderDomainConfiguration?
     func save(_ configuration: ProviderDomainConfiguration) async throws
+    func remove(configurationIdentifier: String) async throws
     func remove(domainIdentifier: String) async throws
+}
+
+public extension DomainConfigurationStoring {
+    func configuration(configurationIdentifier: String) async throws -> ProviderDomainConfiguration? {
+        try await allConfigurations().first {
+            $0.configurationIdentifier == configurationIdentifier
+        }
+    }
+
+    func remove(configurationIdentifier: String) async throws {
+        guard let configuration = try await configuration(
+            configurationIdentifier: configurationIdentifier
+        ) else {
+            return
+        }
+        try await remove(domainIdentifier: configuration.domainIdentifier)
+    }
 }
 
 public actor DomainConfigurationFileStore: DomainConfigurationStoring {
@@ -330,30 +404,39 @@ public actor DomainConfigurationFileStore: DomainConfigurationStoring {
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 
-    public func configuration(domainIdentifier: String) throws -> ProviderDomainConfiguration? {
-        let url = fileURL(for: domainIdentifier)
+    public func configuration(configurationIdentifier: String) throws -> ProviderDomainConfiguration? {
+        let url = fileURL(for: configurationIdentifier)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try decoder.decode(ProviderDomainConfiguration.self, from: Data(contentsOf: url))
+    }
+
+    public func configuration(domainIdentifier: String) throws -> ProviderDomainConfiguration? {
+        try allConfigurations().first { $0.domainIdentifier == domainIdentifier }
     }
 
     public func save(_ configuration: ProviderDomainConfiguration) throws {
         try ensureDirectoryExists()
         let data = try encoder.encode(configuration)
-        try data.write(to: fileURL(for: configuration.domainIdentifier), options: [.atomic])
+        try data.write(to: fileURL(for: configuration.configurationIdentifier), options: [.atomic])
+    }
+
+    public func remove(configurationIdentifier: String) throws {
+        let url = fileURL(for: configurationIdentifier)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     public func remove(domainIdentifier: String) throws {
-        let url = fileURL(for: domainIdentifier)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        try FileManager.default.removeItem(at: url)
+        guard let configuration = try configuration(domainIdentifier: domainIdentifier) else { return }
+        try remove(configurationIdentifier: configuration.configurationIdentifier)
     }
 
     private func ensureDirectoryExists() throws {
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
     }
 
-    private func fileURL(for domainIdentifier: String) -> URL {
-        directoryURL.appendingPathComponent(Self.safeFileName(for: domainIdentifier)).appendingPathExtension("json")
+    private func fileURL(for configurationIdentifier: String) -> URL {
+        directoryURL.appendingPathComponent(Self.safeFileName(for: configurationIdentifier)).appendingPathExtension("json")
     }
 
     private static func safeFileName(for value: String) -> String {
