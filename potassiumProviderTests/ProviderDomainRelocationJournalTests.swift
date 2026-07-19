@@ -11,13 +11,16 @@ struct ProviderDomainRelocationJournalTests {
         defer { try? FileManager.default.removeItem(at: directoryURL) }
 
         let store = ProviderDomainRelocationFileStore(directoryURL: directoryURL)
+        let timestamp = Date(timeIntervalSince1970: 1_000)
         let source = ProviderDomainConfiguration(
             configurationIdentifier: "configuration-1",
             domainIdentifier: "domain-old",
             displayName: "Team",
             driveID: 42,
             driveName: "Team",
-            storageLocation: .onThisMac
+            storageLocation: .onThisMac,
+            createdAt: timestamp,
+            updatedAt: timestamp
         )
         var journal = ProviderDomainRelocationJournal(
             configurationIdentifier: source.configurationIdentifier,
@@ -26,7 +29,9 @@ struct ProviderDomainRelocationJournalTests {
                 volumeUUID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
                 displayName: "Portable"
             ),
-            knownFoldersWereActive: true
+            knownFoldersWereActive: true,
+            createdAt: timestamp,
+            updatedAt: timestamp
         )
 
         try await store.save(journal)
