@@ -1,10 +1,18 @@
 import PotassiumProviderCore
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 struct ContentView: View {
     @ObservedObject var model: PotassiumProviderAppModel
     @State private var accountPendingLogout: ProviderAccount?
     @State private var selectedTab: ProviderAppTab
+    #if os(macOS)
+    @State private var drivePendingStorageSelection: ProviderDriveStorageRequest?
+    @State private var domainPendingStorageChange: ProviderDomainConfiguration?
+    #endif
 
     init(model: PotassiumProviderAppModel) {
         _model = ObservedObject(wrappedValue: model)
@@ -42,6 +50,7 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
     private var setupView: some View {
         NavigationStack {
             List {
@@ -99,6 +108,62 @@ struct ContentView: View {
                 )
             }
         }
+        #if os(macOS)
+        .sheet(item: $drivePendingStorageSelection) { request in
+            ProviderStorageSelectionSheet(
+                purpose: .add(driveName: request.drive.name),
+                selectExternalVolume: model.selectExternalVolume
+            ) { externalVolume in
+                Task {
+                    if let externalVolume {
+                        await model.addDomain(
+                            accountIdentifier: request.accountIdentifier,
+                            drive: request.drive,
+                            externalVolume: externalVolume
+                        )
+                    } else {
+                        await model.addDomain(
+                            accountIdentifier: request.accountIdentifier,
+                            drive: request.drive
+                        )
+                    }
+                }
+            }
+        }
+        .sheet(item: $domainPendingStorageChange) { configuration in
+            ProviderStorageSelectionSheet(
+                purpose: .move(
+                    driveName: configuration.driveName,
+                    currentStorageLocation: configuration.storageLocation
+                ),
+                selectExternalVolume: model.selectExternalVolume
+            ) { externalVolume in
+                Task {
+                    await model.moveDomain(
+                        configuration,
+                        toExternalVolume: externalVolume
+                    )
+                }
+            }
+        }
+        .alert(
+            "Local Data Preserved",
+            isPresented: preservedDataAlertBinding,
+            presenting: model.preservedDataLocation
+        ) { location in
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([location.url])
+                model.preservedDataLocation = nil
+            }
+            .accessibilityIdentifier("preserved-data-reveal-in-finder")
+            Button("Dismiss", role: .cancel) {
+                model.preservedDataLocation = nil
+            }
+            .accessibilityIdentifier("preserved-data-dismiss")
+        } message: { location in
+            Text("macOS preserved local data from \(location.driveName) at \(location.url.path). Review it before deleting it.")
+        }
+        #endif
     }
 
     private var addAccountSection: some View {
@@ -194,16 +259,18 @@ struct ContentView: View {
                     detail: "Drive \(drive.id) · \(drive.role)",
                     configuration: configuredDomainsByDriveID[drive.id],
                     knownFolderSyncState: configuredDomainsByDriveID[drive.id].map(model.knownFolderSyncState(for:)) ?? .unavailable,
-                    isChangingKnownFolderSync: configuredDomainsByDriveID[drive.id].map(model.isChangingKnownFolderSync(for:)) ?? false
+                    isChangingKnownFolderSync: configuredDomainsByDriveID[drive.id].map(model.isChangingKnownFolderSync(for:)) ?? false,
+                    placementState: configuredDomainsByDriveID[drive.id].map(model.placementState(for:)),
+                    canMutate: configuredDomainsByDriveID[drive.id].map(model.canMutate) ?? true,
+                    isTransitioning: configuredDomainsByDriveID[drive.id].map(model.isTransitioning) ?? false
                 ) {
-                    Task {
-                        await model.addDomain(
-                            accountIdentifier: account.accountIdentifier,
-                            drive: drive
-                        )
-                    }
+                    addDomain(accountIdentifier: account.accountIdentifier, drive: drive)
                 } remove: { configuration in
                     Task { await model.removeDomain(configuration) }
+                } changeStorage: { configuration in
+                    beginStorageChange(for: configuration)
+                } repair: { configuration in
+                    Task { await model.repairDomain(configuration) }
                 } enableKnownFolderSync: { configuration in
                     Task { await model.enableKnownFolderSync(for: configuration) }
                 } disableKnownFolderSync: { configuration in
@@ -218,11 +285,18 @@ struct ContentView: View {
                     detail: "Drive \(domain.driveID)",
                     configuration: domain,
                     knownFolderSyncState: model.knownFolderSyncState(for: domain),
-                    isChangingKnownFolderSync: model.isChangingKnownFolderSync(for: domain)
+                    isChangingKnownFolderSync: model.isChangingKnownFolderSync(for: domain),
+                    placementState: model.placementState(for: domain),
+                    canMutate: model.canMutate(domain),
+                    isTransitioning: model.isTransitioning(domain)
                 ) {
                     Task { await model.addDomain(accountIdentifier: account.accountIdentifier) }
                 } remove: { configuration in
                     Task { await model.removeDomain(configuration) }
+                } changeStorage: { configuration in
+                    beginStorageChange(for: configuration)
+                } repair: { configuration in
+                    Task { await model.repairDomain(configuration) }
                 } enableKnownFolderSync: { configuration in
                     Task { await model.enableKnownFolderSync(for: configuration) }
                 } disableKnownFolderSync: { configuration in
@@ -231,6 +305,43 @@ struct ContentView: View {
             }
         }
     }
+
+    private func addDomain(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary
+    ) {
+        #if os(macOS)
+        drivePendingStorageSelection = ProviderDriveStorageRequest(
+            accountIdentifier: accountIdentifier,
+            drive: drive
+        )
+        #else
+        Task {
+            await model.addDomain(
+                accountIdentifier: accountIdentifier,
+                drive: drive
+            )
+        }
+        #endif
+    }
+
+    private func beginStorageChange(for configuration: ProviderDomainConfiguration) {
+        #if os(macOS)
+        domainPendingStorageChange = configuration
+        #endif
+    }
+
+    #if os(macOS)
+    private var preservedDataAlertBinding: Binding<Bool> {
+        Binding {
+            model.preservedDataLocation != nil
+        } set: { isPresented in
+            if isPresented == false {
+                model.preservedDataLocation = nil
+            }
+        }
+    }
+    #endif
 
     private var errorBinding: Binding<Bool> {
         Binding {
@@ -255,6 +366,14 @@ struct ContentView: View {
     }
 }
 
+#if os(macOS)
+private struct ProviderDriveStorageRequest: Identifiable {
+    let id = UUID()
+    let accountIdentifier: String
+    let drive: KDriveDriveSummary
+}
+#endif
+
 enum ProviderAppTab: Hashable {
     case status
     case setup
@@ -274,8 +393,13 @@ private struct DriveConfigurationRow: View {
     let configuration: ProviderDomainConfiguration?
     let knownFolderSyncState: ProviderKnownFolderSyncState
     let isChangingKnownFolderSync: Bool
+    let placementState: ProviderDomainPlacementState?
+    let canMutate: Bool
+    let isTransitioning: Bool
     let add: () -> Void
     let remove: (ProviderDomainConfiguration) -> Void
+    let changeStorage: (ProviderDomainConfiguration) -> Void
+    let repair: (ProviderDomainConfiguration) -> Void
     let enableKnownFolderSync: (ProviderDomainConfiguration) -> Void
     let disableKnownFolderSync: (ProviderDomainConfiguration) -> Void
     @State private var isStopSyncConfirmationPresented = false
@@ -300,16 +424,22 @@ private struct DriveConfigurationRow: View {
                         Label("Remove from Files", systemImage: "trash")
                     }
                     .labelStyle(.iconOnly)
+                    .disabled(mutationControlsDisabled)
+                    .accessibilityIdentifier("domain-remove-\(configuration.configurationIdentifier)")
                 } else {
                     Button(action: add) {
                         Label("Use in Files", systemImage: "folder.badge.plus")
                     }
                     .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("drive-use-in-files-\(driveID)")
                 }
             }
 
             #if os(macOS)
             if let configuration {
+                Divider()
+                storageView(for: configuration)
+
                 Divider()
                 HStack(spacing: 12) {
                     Image(systemName: "desktopcomputer")
@@ -329,6 +459,7 @@ private struct DriveConfigurationRow: View {
                         knownFolderAction(for: configuration)
                     }
                 }
+                .accessibilityIdentifier("domain-known-folders-\(configuration.configurationIdentifier)")
                 .confirmationDialog(
                     "Stop syncing Desktop and Documents?",
                     isPresented: $isStopSyncConfirmationPresented,
@@ -347,6 +478,66 @@ private struct DriveConfigurationRow: View {
     }
 
     #if os(macOS)
+    @ViewBuilder
+    private func storageView(for configuration: ProviderDomainConfiguration) -> some View {
+        let state = placementState ?? .registering
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: configuration.storageLocation.isExternal ? "externaldrive.fill" : "internaldrive.fill")
+                .foregroundStyle(state.isAttentionRequired ? .orange : .secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Storage")
+                    .font(.subheadline.weight(.medium))
+                Text(configuration.storageLocation.userFacingTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Label(state.title, systemImage: placementStateSystemImage(state))
+                    .font(.caption)
+                    .foregroundStyle(state.isAttentionRequired ? .orange : .secondary)
+                    .accessibilityIdentifier("domain-storage-state-\(configuration.configurationIdentifier)")
+                if let detail = state.detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if isTransitioning {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(state.title)
+            } else if state.isAttentionRequired {
+                Button("Repair") {
+                    repair(configuration)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("domain-storage-repair-\(configuration.configurationIdentifier)")
+            } else {
+                Button("Change Storage") {
+                    changeStorage(configuration)
+                }
+                .buttonStyle(.bordered)
+                .disabled(mutationControlsDisabled)
+                .accessibilityIdentifier("domain-storage-change-\(configuration.configurationIdentifier)")
+            }
+        }
+        .accessibilityIdentifier("domain-storage-\(configuration.configurationIdentifier)")
+    }
+
+    private func placementStateSystemImage(_ state: ProviderDomainPlacementState) -> String {
+        switch state {
+        case .connected:
+            "checkmark.circle.fill"
+        case .authenticationRequired:
+            "person.crop.circle.badge.exclamationmark"
+        case .volumeUnavailable:
+            "externaldrive.badge.exclamationmark"
+        case .registering, .moving:
+            "arrow.triangle.2.circlepath"
+        case .needsRepair:
+            "wrench.and.screwdriver.fill"
+        }
+    }
+
     private var knownFolderDetail: String {
         switch knownFolderSyncState {
         case .active:
@@ -368,11 +559,15 @@ private struct DriveConfigurationRow: View {
                 isStopSyncConfirmationPresented = true
             }
             .buttonStyle(.bordered)
+            .disabled(mutationControlsDisabled)
+            .accessibilityIdentifier("domain-known-folders-stop-\(configuration.configurationIdentifier)")
         case .inactive:
             Button("Sync") {
                 enableKnownFolderSync(configuration)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(mutationControlsDisabled)
+            .accessibilityIdentifier("domain-known-folders-enable-\(configuration.configurationIdentifier)")
         case .unavailable:
             Text("Unavailable")
                 .font(.caption)
@@ -380,6 +575,14 @@ private struct DriveConfigurationRow: View {
         }
     }
     #endif
+
+    private var mutationControlsDisabled: Bool {
+        #if os(macOS)
+        canMutate == false || isTransitioning
+        #else
+        false
+        #endif
+    }
 }
 
 #Preview {
