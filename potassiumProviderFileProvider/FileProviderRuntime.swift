@@ -132,16 +132,97 @@ struct FileProviderRuntime: Sendable {
         FileProviderLog.runtime.debug("load configuration for domain(\(domain.identifier.rawValue, privacy: .public)) from app group")
         let configurationStore = try makeConfigurationStore(domain: domain)
 
-        guard let configuration = try await configurationStore.configuration(domainIdentifier: domain.identifier.rawValue) else {
-            FileProviderLog.runtime.error("missing configuration for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
+        do {
+            let configuration = try await resolveConfiguration(
+                domain: domain,
+                configurationStore: configurationStore
+            )
+            try validateSupportedConfiguration(configuration, domain: domain)
+            FileProviderLog.runtime.debug("loaded configuration for domain(\(configuration.domainIdentifier, privacy: .public)) driveID(\(configuration.driveID, privacy: .public)) displayName(\(configuration.displayName, privacy: .private))")
+            return configuration
+        } catch let error as ExternalDomainBindingError {
+            FileProviderLog.runtime.error("invalid local binding for domain(\(domain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public); returning notAuthenticated")
             throw NSFileProviderError(.notAuthenticated)
         }
+    }
+
+    #if os(macOS)
+    static func approveExternalDomainConnection(domain: NSFileProviderDomain) async throws {
+        guard domain.volumeUUID != nil else {
+            throw ExternalDomainBindingError.storageLocationMismatch
+        }
+
+        let configurationStore = try DomainConfigurationFileStore(
+            appGroupIdentifier: ProviderConstants.appGroupIdentifier
+        )
+        let configuration = try await resolveConfiguration(
+            domain: domain,
+            configurationStore: configurationStore
+        )
+        try validateSupportedConfiguration(configuration, domain: domain)
+        let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
+        guard let token = try await tokenStore.loadToken(accountIdentifier: configuration.accountIdentifier),
+              token.shouldRefresh() == false || token.refreshToken != nil
+        else {
+            throw ExternalDomainBindingError.missingCredentials
+        }
+    }
+    #endif
+
+    private static func resolveConfiguration(
+        domain: NSFileProviderDomain,
+        configurationStore: DomainConfigurationFileStore
+    ) async throws -> ProviderDomainConfiguration {
+        #if os(macOS)
+        if ProviderExternalDomainUserInfoCodec.containsBinding(in: domain.userInfo) || domain.volumeUUID != nil {
+            let binding: ProviderExternalDomainBinding
+            do {
+                binding = try ProviderExternalDomainUserInfoCodec.decode(domain.userInfo)
+            } catch {
+                throw ExternalDomainBindingError.invalidBinding
+            }
+            guard let configuration = try await configurationStore.configuration(
+                configurationIdentifier: binding.configurationIdentifier
+            ) else {
+                throw ExternalDomainBindingError.missingConfiguration
+            }
+            guard configuration.domainIdentifier == domain.identifier.rawValue else {
+                throw ExternalDomainBindingError.domainIdentifierMismatch
+            }
+
+            switch configuration.storageLocation {
+            case .onThisMac:
+                guard domain.volumeUUID == nil else {
+                    throw ExternalDomainBindingError.storageLocationMismatch
+                }
+            case .externalVolume(let expectedVolumeUUID, _):
+                guard let actualVolumeUUID = domain.volumeUUID else {
+                    throw ExternalDomainBindingError.storageLocationMismatch
+                }
+                guard actualVolumeUUID == expectedVolumeUUID else {
+                    throw ExternalDomainBindingError.volumeIdentifierMismatch
+                }
+            }
+            return configuration
+        }
+        #endif
+
+        guard let configuration = try await configurationStore.configuration(
+            domainIdentifier: domain.identifier.rawValue
+        ) else {
+            throw ExternalDomainBindingError.missingConfiguration
+        }
+        return configuration
+    }
+
+    private static func validateSupportedConfiguration(
+        _ configuration: ProviderDomainConfiguration,
+        domain: NSFileProviderDomain
+    ) throws {
         guard configuration.encryptionMode != .opaqueVaultV1 else {
             FileProviderLog.runtime.error("unsupported experimental encrypted vault v1 for domain(\(domain.identifier.rawValue, privacy: .public)); returning cannotSynchronize")
             throw NSFileProviderError(.cannotSynchronize)
         }
-        FileProviderLog.runtime.debug("loaded configuration for domain(\(configuration.domainIdentifier, privacy: .public)) driveID(\(configuration.driveID, privacy: .public)) displayName(\(configuration.displayName, privacy: .private))")
-        return configuration
     }
 
     static func markMachineNamespaceLayout(domain: NSFileProviderDomain) async throws {
@@ -195,6 +276,32 @@ struct FileProviderRuntime: Sendable {
         } catch {
             FileProviderLog.runtime.error("failed to open app group configuration store for domain(\(domain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
             throw error
+        }
+    }
+}
+
+private enum ExternalDomainBindingError: Error, Equatable, LocalizedError, Sendable {
+    case invalidBinding
+    case missingConfiguration
+    case domainIdentifierMismatch
+    case storageLocationMismatch
+    case volumeIdentifierMismatch
+    case missingCredentials
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBinding:
+            return "The external File Provider domain has an invalid configuration binding."
+        case .missingConfiguration:
+            return "This Mac has no configuration for the external File Provider domain."
+        case .domainIdentifierMismatch:
+            return "The external File Provider domain does not match its local configuration."
+        case .storageLocationMismatch:
+            return "The File Provider domain storage location does not match its local configuration."
+        case .volumeIdentifierMismatch:
+            return "The external File Provider domain is on a different volume than its local configuration."
+        case .missingCredentials:
+            return "This Mac has no usable credentials for the external File Provider domain."
         }
     }
 }

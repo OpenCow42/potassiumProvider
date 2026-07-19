@@ -14,7 +14,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
     let domain: NSFileProviderDomain
     let manager: NSFileProviderManager
-    let temporaryDirectoryURL: URL
+    let temporaryDirectoryURL: URL?
     private var remotePollingTask: Task<Void, Never>?
 
     var fileProviderDomain: NSFileProviderDomain {
@@ -24,16 +24,35 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
     public required init(domain: NSFileProviderDomain) {
         self.domain = domain
         self.manager = NSFileProviderManager(for: domain)!
-        self.temporaryDirectoryURL = (try? manager.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
+        #if os(macOS)
+        let isStoredOnExternalVolume = domain.volumeUUID != nil
+        #else
+        let isStoredOnExternalVolume = false
+        #endif
+        self.temporaryDirectoryURL = isStoredOnExternalVolume
+            ? nil
+            : ((try? manager.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory)
         super.init()
-        startRemotePolling()
-        FileProviderLog.replicatedExtension.info("init replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public)) displayName(\(self.domain.displayName, privacy: .private)) temporaryDirectory(\(self.temporaryDirectoryURL.path, privacy: .private))")
+        if isStoredOnExternalVolume == false {
+            startRemotePolling()
+        }
+        if let temporaryDirectoryURL {
+            FileProviderLog.replicatedExtension.info("init replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public)) displayName(\(self.domain.displayName, privacy: .private)) temporaryDirectory(\(temporaryDirectoryURL.path, privacy: .private))")
+        } else {
+            FileProviderLog.replicatedExtension.info("init replicated extension for external domain(\(self.domain.identifier.rawValue, privacy: .public)) displayName(\(self.domain.displayName, privacy: .private)); waiting for connection approval")
+        }
     }
 
     public func invalidate() {
-        remotePollingTask?.cancel()
-        remotePollingTask = nil
+        stopRemotePolling()
         FileProviderLog.replicatedExtension.debug("invalidate replicated extension for domain(\(self.domain.identifier.rawValue, privacy: .public))")
+    }
+
+    func operationTemporaryDirectoryURL() throws -> URL {
+        if let temporaryDirectoryURL {
+            return temporaryDirectoryURL
+        }
+        return try manager.temporaryDirectoryURL()
     }
 
     public func materializedItemsDidChange(completionHandler: @escaping () -> Void) {
@@ -162,7 +181,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         FileProviderLog.replicatedExtension.debug("fetchContents(for:\(itemIdentifier.rawValue, privacy: .public)) requestedVersion(\(logVersionDescription(requestedVersion), privacy: .public)) @ domainVersion(\(request.logDomainVersion, privacy: .public))")
         let progress = Progress.fileTransfer(operationKind: .downloading)
         let domain = self.domain
-        let temporaryDirectoryURL = self.temporaryDirectoryURL
+        let configuredTemporaryDirectoryURL = self.temporaryDirectoryURL
+        let manager = self.manager
         let lifecycle = FileProviderOperationLifecycle(progress: progress) {
             FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
             completionHandler(nil, nil, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
@@ -171,6 +191,12 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             do {
+                let temporaryDirectoryURL: URL
+                if let configuredTemporaryDirectoryURL {
+                    temporaryDirectoryURL = configuredTemporaryDirectoryURL
+                } else {
+                    temporaryDirectoryURL = try manager.temporaryDirectoryURL()
+                }
                 let loadedRuntime = try await FileProviderRuntime.load(domain: domain)
                 runtime = loadedRuntime
                 if let vault = loadedRuntime.encryptedVault {
@@ -344,7 +370,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                             plaintextURL = url
                             generatedEmptyURL = nil
                         } else {
-                            let emptyURL = self.temporaryDirectoryURL
+                            let emptyURL = try self.operationTemporaryDirectoryURL()
                                 .appendingPathComponent("empty-\(UUID().uuidString)")
                             guard FileManager.default.createFile(
                                 atPath: emptyURL.path,
@@ -1050,7 +1076,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         await signalWorkingSet(runtime: runtime)
     }
 
-    private func startRemotePolling() {
+    func startRemotePolling() {
+        guard remotePollingTask == nil else { return }
         remotePollingTask = Task { [weak self] in
             while Task.isCancelled == false {
                 do {
@@ -1077,6 +1104,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
             }
         }
+    }
+
+    func stopRemotePolling() {
+        remotePollingTask?.cancel()
+        remotePollingTask = nil
     }
 
     private func pollWorkingSet(
