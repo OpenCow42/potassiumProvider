@@ -2911,9 +2911,30 @@ private actor FakeProviderEventStore: KDriveProviderEventStoring, KDriveProvider
 }
 
 @MainActor
-private struct NoopProviderDomainRegistrar: ProviderDomainRegistering {
-    func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
-    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+private final class NoopProviderDomainRegistrar: ProviderDomainRegistering {
+    private var registeredConfigurationsByDomainIdentifier: [String: ProviderDomainConfiguration] = [:]
+
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        registeredConfigurationsByDomainIdentifier[configuration.domainIdentifier] = configuration
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
+        registeredConfigurationsByDomainIdentifier[configuration.domainIdentifier] = nil
+    }
+
+    func registeredDomainStates() async throws -> [ProviderRegisteredDomainState] {
+        registeredConfigurationsByDomainIdentifier.values.map { configuration in
+            ProviderRegisteredDomainState(
+                configurationIdentifier: configuration.configurationIdentifier,
+                domainIdentifier: configuration.domainIdentifier,
+                displayName: configuration.displayName,
+                volumeUUID: nil,
+                isDisconnected: false,
+                isUserEnabled: true,
+                knownFolderSyncState: .unavailable
+            )
+        }
+    }
 }
 
 @MainActor

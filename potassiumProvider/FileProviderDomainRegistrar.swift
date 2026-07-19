@@ -464,6 +464,7 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
         return domain
     }
 
+    #if os(macOS)
     private static func knownFolderSyncState(
         for domain: NSFileProviderDomain
     ) -> ProviderKnownFolderSyncState {
@@ -476,6 +477,7 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
             return .inactive
         }
     }
+    #endif
 }
 
 @MainActor
