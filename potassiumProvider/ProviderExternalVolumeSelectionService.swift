@@ -255,6 +255,8 @@ extension ProviderExternalVolumeSelectionService {
             return .eligible
         case .ineligible(let reasons):
             return .ineligible(unsupportedReasons(from: reasons))
+        @unknown default:
+            return .ineligible([.unknown])
         }
     }
 }

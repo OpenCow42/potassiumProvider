@@ -422,6 +422,7 @@ struct FileProviderDomainSystemClient {
             #endif
         },
         reconnectDomain: { domain in
+            #if os(macOS)
             guard let manager = NSFileProviderManager(for: domain) else {
                 throw ProviderDomainRegistrationError.managerUnavailable(domain.identifier.rawValue)
             }
@@ -434,6 +435,9 @@ struct FileProviderDomainSystemClient {
                     }
                 }
             }
+            #else
+            throw ProviderDomainRegistrationError.externalVolumesUnsupported
+            #endif
         }
     )
 }
