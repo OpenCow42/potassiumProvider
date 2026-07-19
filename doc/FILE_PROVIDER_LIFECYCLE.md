@@ -4,11 +4,44 @@ The extension implements `NSFileProviderReplicatedExtension`. The system owns th
 local file-provider storage and calls the extension when it needs metadata,
 bytes, mutations, or enumeration.
 
+## Local And External Storage
+
+On macOS 15 or later, the containing app can create a domain with Apple's
+[`NSFileProviderDomain(displayName:userInfo:volumeURL:)`](https://developer.apple.com/documentation/fileprovider/nsfileproviderdomain/init(displayname:userinfo:volumeurl:))
+initializer. `volumeURL` is the normalized volume root. It tells File Provider
+which volume should hold the system-managed domain; it does not select a folder
+inside that volume and does not map an arbitrary local folder into kDrive.
+
+The app first calls
+[`NSFileProviderManager.checkDomainsCanBeStoredOnVolume(at:)`](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/checkdomainscanbestoredonvolume(at:)).
+Eligible targets are writable, local, encrypted APFS volumes. The implementation
+maps Apple's complete unsupported-reason set: unknown, non-APFS, unencrypted,
+read-only, network, and quarantined. Security-scoped access obtained by the
+picker remains balanced and covers preparation plus registration; the selected
+folder URL is used only for the security-scoped access grant while the operation
+uses its volume root.
+
+Apple generates the external domain identifier. The app saves that exact value
+as the configuration's current `domainIdentifier` and always passes the same
+prepared `NSFileProviderDomain` instance to registration. Existing external
+operations look up the registered system domain by that identifier instead of
+reconstructing one.
+
+The opaque external-domain `userInfo` has two non-secret fields: binding schema
+version and stable `configurationIdentifier`. It contains no account identifier,
+credential, path, URL, or customer data. The extension's
+`NSFileProviderExternalVolumeHandling` connection callback approves the domain
+only when this Mac has the matching configuration, the generated domain ID and
+volume UUID agree, and the associated keychain credential is usable. Otherwise
+it fails closed as not authenticated.
+
 ## Runtime Loading
 
 Most callbacks begin by loading `FileProviderRuntime`:
 
-1. Load the domain configuration from app group JSON.
+1. Load the domain configuration from app group JSON. Local domains resolve by
+   current domain identifier; external domains resolve by the stable opaque
+   configuration binding and verify the generated domain ID and volume UUID.
 2. Load the account-scoped OAuth token from keychain using the domain
    configuration's `accountIdentifier`.
 3. Refresh that account's token when needed and possible.
@@ -18,6 +51,14 @@ Most callbacks begin by loading `FileProviderRuntime`:
 If configuration or credentials are missing, the callback fails with a mapped
 File Provider error. Runtime-loading and authentication failures are also
 recorded as sanitized failure activity when the activity database can be opened.
+
+External placement state is refreshed from registered domains and mounted-volume
+identity. A missing external registration with an absent configured volume is
+reported as External Drive Disconnected. A connected volume with a missing or
+mismatched domain, or a durable interrupted relocation, is reported as Needs
+Repair. Registering and Moving remain informational. The app blocks removal and
+account logout while the external volume is unavailable so it does not delete
+local identity or credentials before system-domain cleanup can finish.
 
 ## Desktop & Documents Known Folders
 
@@ -39,6 +80,34 @@ File Provider reuses existing directory children or creates them at those
 locations, keeps its default binary-compatibility symlink behavior, and manages
 the local known-folder transition. Ordinary enumeration and mutation callbacks
 then synchronize their contents like other provider items.
+
+A storage move records whether known folders were active, releases both before
+the source domain is removed, and attempts to reclaim both after the target is
+registered. Consent may be required again. Failure to reclaim is a durable
+repair state; it does not erase the successful storage placement.
+
+## Storage Change Lifecycle
+
+File Provider has no in-place placement change, so the app uses a durable
+remove-and-recreate transaction:
+
+1. Write a relocation journal and wait for source stabilization.
+2. Release active Desktop & Documents and persist that phase.
+3. Prepare the exact target domain and journal its generated/current domain ID.
+4. Remove the source with `.preserveDirtyUserData`; surface any returned
+   preserved-data URL to the user.
+5. Save the new `domainIdentifier` and storage location under the unchanged
+   `configurationIdentifier`, then register the exact prepared target.
+6. Delete snapshot/event state keyed by the old domain identifier.
+7. Reclaim known folders and remove the journal only when all required work is
+   complete.
+
+If the target cannot be registered after source removal, recovery attempts to
+recreate the original placement; recovering an external source requires the
+same volume UUID to be mounted. Relaunch converts any unfinished journal into a
+Needs Repair state. Repair can finish cleanup for an already registered target,
+recreate a missing target/source as the journal allows, or retry known-folder
+reclaim. It never guesses based only on a volume display name.
 
 ## `item(for:)`
 

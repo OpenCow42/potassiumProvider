@@ -26,11 +26,13 @@ data.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
-  File Provider domain registration, and macOS Desktop & Documents controls.
+  File Provider domain registration, macOS storage placement, and Desktop &
+  Documents controls.
 - [Authentication](doc/AUTHENTICATION.md): OAuth PKCE, manual token entry,
   keychain storage, refresh behavior, and secret-handling rules.
 - [File Provider Lifecycle](doc/FILE_PROVIDER_LIFECYCLE.md): Apple callbacks,
-  known-folder locations, mutations, enumeration, and SQLite touch points.
+  local and external-volume domains, known-folder locations, mutations,
+  enumeration, and SQLite touch points.
 - [Listing And Versioning](doc/LISTING_AND_VERSIONING.md): how Apple
   enumeration, sync anchors, kDrive listing APIs, SQLite caching, and item
   versions fit together.
@@ -139,6 +141,36 @@ xcodebuild test \
 Use `xcodebuild -showdestinations` to copy exact Mac or visionOS destinations if
 local Xcode requires a more specific variant.
 
+## External File Provider Storage On macOS
+
+On macOS 15 or later, a kDrive File Provider domain can be placed on this Mac or
+on an eligible external volume. The picker accepts a folder only so the user can
+grant access; the app normalizes that choice to its containing volume, and macOS
+chooses the provider-managed folder on that volume. It is not arbitrary-folder
+sync and the selected folder is not used as a kDrive root.
+
+Before registration, the app asks Apple's
+[`checkDomainsCanBeStoredOnVolume(at:)`](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/checkdomainscanbestoredonvolume(at:))
+API whether the volume is eligible. The intended physical target is writable,
+local, encrypted APFS. The UI reports Apple's unsupported reasons for an unknown,
+non-APFS, unencrypted, read-only, network, or quarantined volume.
+
+External domains are bound to a stable local configuration identifier, while
+Apple generates the File Provider domain identifier. Changing storage therefore
+removes and recreates the system domain without changing the drive's identity in
+the app. The external domain's opaque `userInfo` contains only a binding schema
+version and that local configuration identifier—never account identifiers,
+tokens, URLs, or other credentials. Connection approval requires the matching
+configuration and usable keychain credentials on the same Mac.
+
+Setup provides add, Change Storage, and Repair flows. Status shows the configured
+volume and live placement state. Keep the external drive connected while using
+the domain; an absent volume is surfaced as an actionable warning and blocks
+unsafe removal/logout until the drive is reconnected or the placement is
+repaired. See [App And Domains](doc/APP_AND_DOMAINS.md) and
+[Testing And Development](doc/TESTING_AND_DEVELOPMENT.md) for the lifecycle and
+physical-drive validation matrix.
+
 ## Safety Notes
 
 - Do not commit bearer tokens, refresh tokens, account identifiers, private
@@ -150,6 +182,8 @@ local Xcode requires a more specific variant.
 - On macOS 15 or later, Desktop & Documents sync is an explicit, experimental
   opt-in that always handles both folders together under the selected kDrive's
   existing root-level `Private` directory.
+- External File Provider storage is experimental and must be validated with a
+  disposable encrypted APFS volume and non-customer data before relying on it.
 
 ## License
 
