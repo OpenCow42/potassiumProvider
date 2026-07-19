@@ -110,6 +110,23 @@ xcodebuild test \
 Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
 Xcode requires a more specific macOS variant.
 
+## Continuous Integration
+
+GitHub Actions runs an unsigned macOS build for every pull request and every
+push to `main`. The build uses the `macos-26` runner and its default Xcode 26.5
+installation:
+
+```sh
+xcodebuild build \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+This initial workflow checks compilation only. Unit tests, UI tests, caching,
+and iOS Simulator and visionOS jobs remain outside its scope.
+
 ## Test Style
 
 - New unit tests should use Swift Testing (`import Testing`).

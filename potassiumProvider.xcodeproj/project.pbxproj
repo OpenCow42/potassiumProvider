@@ -1077,7 +1077,7 @@
 		};
 		C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "git@github.com:OpenCow42/potassiumChannel.git";
+			repositoryURL = "https://github.com/OpenCow42/potassiumChannel.git";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 0.2.0;
@@ -1085,7 +1085,7 @@
 		};
 		C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "git@github.com:OpenCow42/swift-concurrency.git";
+			repositoryURL = "https://github.com/OpenCow42/swift-concurrency.git";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.0.1;
