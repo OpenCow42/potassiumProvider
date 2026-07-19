@@ -102,6 +102,11 @@ key if it still exists.
 
 The cleanup script does not delete remote kDrive files.
 
+If a development domain currently owns Desktop & Documents, stop that sync from
+the app before running the uninstall wrapper. The wrapper's existing reset modes
+remove domains and local provider state; they do not offer a separate
+known-folder release workflow.
+
 The cleanup script also does not directly delete Finder storage,
 `~/Library/CloudStorage`, or private File Provider system databases. If File
 Provider system state is corrupt beyond the supported APIs and the stale archive

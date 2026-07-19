@@ -16,6 +16,7 @@ The app handles:
   and usable account credentials are available
 - building a domain configuration for the selected account and drive
 - registering and removing `NSFileProviderDomain` entries
+- enabling or releasing macOS Desktop & Documents known-folder sync
 - logging out one account without touching other accounts
 - showing a Status dashboard for configured accounts, drives, cached snapshots,
   and sanitized provider activity
@@ -78,6 +79,9 @@ Domain configurations are stored as JSON files in the app group under
 `DomainConfigurations/`. Legacy JSON without `accountIdentifier` is migrated to
 the fixed `legacy-account` local account.
 
+Known-folder activation is not stored in domain JSON. On macOS,
+`NSFileProviderDomain.replicatedKnownFolders` is the source of truth.
+
 Finder/Files names use the drive name when unique. If multiple configured
 domains would have the same name, the app appends the account display name; if
 that is still ambiguous, it appends the drive ID and then a short domain ID.
@@ -95,7 +99,8 @@ The add flow is:
    name and, when needed, the account display name.
 6. The app saves the configuration to the app group.
 7. `FileProviderDomainRegistrar.addDomain(for:)` registers an
-   `NSFileProviderDomain` with Apple's File Provider manager.
+   `NSFileProviderDomain` with Apple's File Provider manager. On macOS 15 or
+   later, the domain advertises support for Desktop and Documents together.
 8. If registration fails, the app rolls back the saved configuration and removes
    any snapshots for that domain.
 
@@ -107,16 +112,37 @@ Finder-visible display-name policy and re-adds each stored
 `NSFileProviderDomain`. Re-adding a domain with the same identifier updates the
 system's registered display name.
 
+## Desktop & Documents On macOS
+
+On macOS 15 or later, a configured drive row can opt in to Apple's known-folder
+feature. This is not arbitrary-folder sync: Apple currently permits Desktop and
+Documents to be claimed only together.
+
+The app resolves the existing root-level kDrive directory named `Private` and
+uses its item identifier as the common parent for `Private/Desktop` and
+`Private/Documents`. The `Private` directory must already exist and be a
+directory. File Provider reuses directory children with the recommended names
+or creates them when absent; invalid or colliding locations fail the claim.
+
+Claiming begins only from the app's explicit control and presents Apple's user
+consent UI. Cancellation leaves the previous state unchanged. The extension's
+`getKnownFolderLocations` callback returns the same two locations when macOS
+initiates a switch outside that claim call. The app reads live state from the
+registered domain, refreshes it when domain state changes, and provides a
+matching control to stop syncing both folders through `releaseKnownFolders`.
+
 ## Removing A Domain
 
 The remove flow is:
 
-1. `NSFileProviderManager.remove(_:)` removes the domain from the system.
-2. `KDriveSnapshotStoring.removeSnapshots(domainIdentifier:)` deletes all SQLite
+1. On macOS, the app refreshes live known-folder state and releases Desktop and
+   Documents when this domain owns them. A release failure aborts removal.
+2. `NSFileProviderManager.remove(_:)` removes the domain from the system.
+3. `KDriveSnapshotStoring.removeSnapshots(domainIdentifier:)` deletes all SQLite
    snapshots for that domain.
-3. `DomainConfigurationFileStore.remove(domainIdentifier:)` deletes the domain
+4. `DomainConfigurationFileStore.remove(domainIdentifier:)` deletes the domain
    JSON file.
-4. The app refreshes its visible domain list.
+5. The app refreshes its visible domain list.
 
 Removing a domain only removes provider state from this app. It does not delete
 remote kDrive files.
@@ -125,9 +151,10 @@ remote kDrive files.
 
 Independent logout first removes every File Provider domain tied to that
 account, including domain JSON, snapshots, activity/conflict rows, and thumbnail
-cache entries. Only after domain cleanup succeeds does the app delete that
-account's keychain token and account JSON. Domains and tokens for other accounts
-are left untouched.
+cache entries. On macOS this includes releasing any known folders owned by those
+domains; a release failure stops logout. Only after domain cleanup succeeds does
+the app delete that account's keychain token and account JSON. Domains and tokens
+for other accounts are left untouched.
 
 For development, `scripts/uninstall-file-provider.sh` can perform the same
 domain-detach path outside the UI. It runs the signed macOS app with a hidden
