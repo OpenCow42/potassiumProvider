@@ -92,7 +92,7 @@ struct ProviderStatusView: View {
     private var statusRefreshID: String {
         var parts: [String] = []
         parts.append(appModel.accounts.map { "\($0.accountIdentifier):\($0.displayName):\($0.authenticationKind.rawValue)" }.joined(separator: ","))
-        parts.append(appModel.domains.map { "\($0.domainIdentifier):\($0.accountIdentifier):\($0.driveID):\($0.displayName):\($0.driveName)" }.joined(separator: ","))
+        parts.append(appModel.domains.map { "\($0.configurationIdentifier):\($0.domainIdentifier):\($0.accountIdentifier):\($0.driveID):\($0.displayName):\($0.driveName)" }.joined(separator: ","))
         parts.append(appModel.loadingDriveAccountIdentifiers.sorted().joined(separator: ","))
         parts.append(appModel.drivesByAccountIdentifier.keys.sorted().map { accountIdentifier in
             let drives = appModel.drivesByAccountIdentifier[accountIdentifier, default: []]
@@ -253,6 +253,7 @@ struct ProviderStatusDashboard: Equatable {
                 let eventStats = eventStatisticsByDomain[domain.domainIdentifier] ?? KDriveProviderEventDomainStatistics(domainIdentifier: domain.domainIdentifier)
                 let accountName = accountsByIdentifier[domain.accountIdentifier]?.displayName ?? "Account"
                 return ProviderStatusDrive(
+                    configurationIdentifier: domain.configurationIdentifier,
                     domainIdentifier: domain.domainIdentifier,
                     accountIdentifier: domain.accountIdentifier,
                     accountName: accountName,
@@ -347,8 +348,9 @@ struct ProviderStatusAccount: Equatable, Identifiable {
 }
 
 struct ProviderStatusDrive: Equatable, Identifiable {
-    var id: String { domainIdentifier }
+    var id: String { configurationIdentifier }
 
+    let configurationIdentifier: String
     let domainIdentifier: String
     let accountIdentifier: String
     let accountName: String

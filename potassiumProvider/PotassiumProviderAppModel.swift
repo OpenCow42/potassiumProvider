@@ -15,8 +15,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var domains: [ProviderDomainConfiguration] = []
     @Published private(set) var isConnecting = false
     @Published private(set) var loadingDriveAccountIdentifiers: Set<String> = []
-    @Published private(set) var knownFolderSyncStatesByDomainIdentifier: [String: ProviderKnownFolderSyncState] = [:]
-    @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
+    @Published private(set) var knownFolderSyncStatesByConfigurationIdentifier: [String: ProviderKnownFolderSyncState] = [:]
+    @Published private(set) var domainTransitionConfigurationIdentifiers: Set<String> = []
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -112,11 +112,11 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func knownFolderSyncState(for configuration: ProviderDomainConfiguration) -> ProviderKnownFolderSyncState {
-        knownFolderSyncStatesByDomainIdentifier[configuration.domainIdentifier] ?? .unavailable
+        knownFolderSyncStatesByConfigurationIdentifier[configuration.configurationIdentifier] ?? .unavailable
     }
 
     func isChangingKnownFolderSync(for configuration: ProviderDomainConfiguration) -> Bool {
-        knownFolderTransitionDomainIdentifiers.contains(configuration.domainIdentifier)
+        domainTransitionConfigurationIdentifiers.contains(configuration.configurationIdentifier)
     }
 
     func selectedDriveID(for accountIdentifier: String) -> Int? {
@@ -356,7 +356,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     func enableKnownFolderSync(for configuration: ProviderDomainConfiguration) async {
         #if os(macOS)
         guard beginKnownFolderTransition(for: configuration) else { return }
-        defer { knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier) }
+        defer { domainTransitionConfigurationIdentifiers.remove(configuration.configurationIdentifier) }
 
         do {
             let token = try await usableToken(accountIdentifier: configuration.accountIdentifier)
@@ -388,7 +388,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     func disableKnownFolderSync(for configuration: ProviderDomainConfiguration) async {
         #if os(macOS)
         guard beginKnownFolderTransition(for: configuration) else { return }
-        defer { knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier) }
+        defer { domainTransitionConfigurationIdentifiers.remove(configuration.configurationIdentifier) }
 
         do {
             try await domainRegistrar.releaseKnownFolders(for: configuration)
@@ -581,20 +581,20 @@ final class PotassiumProviderAppModel: ObservableObject {
         try await domainRegistrar.removeDomain(for: configuration)
         try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
         try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
-        try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
-        knownFolderSyncStatesByDomainIdentifier[configuration.domainIdentifier] = nil
+        try await domainStore.remove(configurationIdentifier: configuration.configurationIdentifier)
+        knownFolderSyncStatesByConfigurationIdentifier[configuration.configurationIdentifier] = nil
     }
 
     private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) async {
         try? await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
-        try? await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+        try? await domainStore.remove(configurationIdentifier: configuration.configurationIdentifier)
 
         if let synchronizedState = try? await synchronizedDomainConfigurations() {
             domains = synchronizedState.configurations
         } else if let storedDomains = try? await domainStore.allConfigurations() {
             domains = storedDomains
         } else {
-            domains.removeAll { $0.domainIdentifier == configuration.domainIdentifier }
+            domains.removeAll { $0.configurationIdentifier == configuration.configurationIdentifier }
         }
     }
 
@@ -618,14 +618,14 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private func beginKnownFolderTransition(for configuration: ProviderDomainConfiguration) -> Bool {
-        knownFolderTransitionDomainIdentifiers.insert(configuration.domainIdentifier).inserted
+        domainTransitionConfigurationIdentifiers.insert(configuration.configurationIdentifier).inserted
     }
 
     private func refreshKnownFolderSyncStates() async throws {
         let systemStates = try await domainRegistrar.knownFolderSyncStates()
-        knownFolderSyncStatesByDomainIdentifier = Dictionary(uniqueKeysWithValues: domains.map { configuration in
+        knownFolderSyncStatesByConfigurationIdentifier = Dictionary(uniqueKeysWithValues: domains.map { configuration in
             (
-                configuration.domainIdentifier,
+                configuration.configurationIdentifier,
                 systemStates[configuration.domainIdentifier] ?? .unavailable
             )
         })
@@ -776,7 +776,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         var registrationError: Error?
 
         for index in configurations.indices {
-            let desiredDisplayName = displayNames[configurations[index].domainIdentifier] ?? configurations[index].displayName
+            let desiredDisplayName = displayNames[configurations[index].configurationIdentifier] ?? configurations[index].displayName
             if configurations[index].displayName != desiredDisplayName {
                 configurations[index].displayName = desiredDisplayName
                 configurations[index].updatedAt = Date()
@@ -803,23 +803,23 @@ final class PotassiumProviderAppModel: ObservableObject {
         accounts: [String: ProviderAccount]
     ) -> [String: String] {
         let baseNames = Dictionary(uniqueKeysWithValues: configurations.map {
-            ($0.domainIdentifier, ProviderDomainConfiguration.finderDisplayName(forDriveName: $0.driveName))
+            ($0.configurationIdentifier, ProviderDomainConfiguration.finderDisplayName(forDriveName: $0.driveName))
         })
         let groupedByBaseName = Dictionary(grouping: configurations) { configuration in
-            baseNames[configuration.domainIdentifier]?.localizedLowercase ?? configuration.driveName.localizedLowercase
+            baseNames[configuration.configurationIdentifier]?.localizedLowercase ?? configuration.driveName.localizedLowercase
         }
 
         var names: [String: String] = [:]
         for (_, group) in groupedByBaseName {
             if group.count == 1, let configuration = group.first {
-                names[configuration.domainIdentifier] = baseNames[configuration.domainIdentifier]
+                names[configuration.configurationIdentifier] = baseNames[configuration.configurationIdentifier]
                 continue
             }
 
             for configuration in group {
-                let baseName = baseNames[configuration.domainIdentifier] ?? "kDrive"
+                let baseName = baseNames[configuration.configurationIdentifier] ?? "kDrive"
                 let accountName = accounts[configuration.accountIdentifier]?.displayName ?? "Account"
-                names[configuration.domainIdentifier] = "\(baseName) (\(accountName))"
+                names[configuration.configurationIdentifier] = "\(baseName) (\(accountName))"
             }
         }
 
@@ -834,14 +834,14 @@ final class PotassiumProviderAppModel: ObservableObject {
         suffix: (ProviderDomainConfiguration) -> String
     ) -> [String: String] {
         let groupedNames = Dictionary(grouping: configurations) { configuration in
-            names[configuration.domainIdentifier] ?? configuration.displayName
+            names[configuration.configurationIdentifier] ?? configuration.displayName
         }
         var updatedNames = names
 
         for (_, group) in groupedNames where group.count > 1 {
             for configuration in group {
-                let currentName = updatedNames[configuration.domainIdentifier] ?? configuration.displayName
-                updatedNames[configuration.domainIdentifier] = currentName + suffix(configuration)
+                let currentName = updatedNames[configuration.configurationIdentifier] ?? configuration.displayName
+                updatedNames[configuration.configurationIdentifier] = currentName + suffix(configuration)
             }
         }
 
