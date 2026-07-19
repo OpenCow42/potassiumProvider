@@ -192,10 +192,21 @@ private struct SystemFileProviderUninstallDomainManager: FileProviderUninstallDo
         _ domain: FileProviderUninstallRegisteredDomain,
         mode: FileProviderUninstallDomainRemovalMode
     ) async throws -> URL? {
-        let fileProviderDomain = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.identifier),
-            displayName: domain.displayName
-        )
+        let registeredDomains = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<[NSFileProviderDomain], Error>) in
+            NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: domains)
+                }
+            }
+        }
+        guard let fileProviderDomain = registeredDomains.first(where: {
+            $0.identifier.rawValue == domain.identifier
+        }) else {
+            throw NSFileProviderError(.noSuchItem)
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
             NSFileProviderManager.remove(fileProviderDomain, mode: mode.fileProviderMode) { preservedLocation, error in
@@ -240,6 +251,7 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
     private let containerURL: URL
     private let accountsURL: URL
     private let domainConfigurationsURL: URL
+    private let domainRelocationsURL: URL
     private let snapshotsDatabaseURL: URL
     private let conflictStagingURL: URL
 
@@ -251,6 +263,7 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
         self.containerURL = containerURL
         self.accountsURL = containerURL.appendingPathComponent("Accounts", isDirectory: true)
         self.domainConfigurationsURL = containerURL.appendingPathComponent("DomainConfigurations", isDirectory: true)
+        self.domainRelocationsURL = containerURL.appendingPathComponent("DomainRelocations", isDirectory: true)
         self.snapshotsDatabaseURL = containerURL.appendingPathComponent("Snapshots.sqlite3")
         self.conflictStagingURL = containerURL.appendingPathComponent("ConflictStaging", isDirectory: true)
     }
@@ -289,17 +302,52 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
             .sorted { $0.accountIdentifier < $1.accountIdentifier }
     }
 
+    func storedRelocationJournals() throws -> [ProviderDomainRelocationJournal] {
+        guard FileManager.default.fileExists(atPath: domainRelocationsURL.path) else {
+            return []
+        }
+
+        return try FileManager.default.contentsOfDirectory(
+            at: domainRelocationsURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        .filter { $0.pathExtension == "json" }
+        .map { try Self.makeDecoder().decode(ProviderDomainRelocationJournal.self, from: Data(contentsOf: $0)) }
+        .sorted { $0.configurationIdentifier < $1.configurationIdentifier }
+    }
+
     func stateItems(forDomainIdentifiers domainIdentifiers: Set<String>) throws -> [FileProviderUninstallStateItem] {
+        try stateItems(
+            forConfigurationIdentifiers: domainIdentifiers,
+            domainIdentifiers: domainIdentifiers
+        )
+    }
+
+    func stateItems(
+        forConfigurationIdentifiers configurationIdentifiers: Set<String>,
+        domainIdentifiers: Set<String>
+    ) throws -> [FileProviderUninstallStateItem] {
+        let sortedConfigurationIdentifiers = configurationIdentifiers.sorted()
         let sortedDomainIdentifiers = domainIdentifiers.sorted()
         var items: [FileProviderUninstallStateItem] = []
 
-        for domainIdentifier in sortedDomainIdentifiers {
-            let configurationURL = domainConfigurationURL(domainIdentifier: domainIdentifier)
+        for configurationIdentifier in sortedConfigurationIdentifiers {
+            let configurationURL = domainConfigurationURL(configurationIdentifier: configurationIdentifier)
             if FileManager.default.fileExists(atPath: configurationURL.path) {
                 items.append(FileProviderUninstallStateItem(
                     kind: .domainConfiguration,
-                    domainIdentifier: domainIdentifier,
+                    domainIdentifier: configurationIdentifier,
                     description: "Domain configuration \(configurationURL.path)"
+                ))
+            }
+
+            let relocationURL = domainRelocationURL(configurationIdentifier: configurationIdentifier)
+            if FileManager.default.fileExists(atPath: relocationURL.path) {
+                items.append(FileProviderUninstallStateItem(
+                    kind: .relocationJournal,
+                    domainIdentifier: configurationIdentifier,
+                    description: "Domain relocation journal \(relocationURL.path)"
                 ))
             }
         }
@@ -340,11 +388,6 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
     }
 
     func removeLocalState(domainIdentifier: String) async throws {
-        let configurationURL = domainConfigurationURL(domainIdentifier: domainIdentifier)
-        if FileManager.default.fileExists(atPath: configurationURL.path) {
-            try FileManager.default.removeItem(at: configurationURL)
-        }
-
         guard FileManager.default.fileExists(atPath: snapshotsDatabaseURL.path) else {
             return
         }
@@ -354,6 +397,18 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
 
         let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: snapshotsDatabaseURL)
         try await eventStore.removeEvents(domainIdentifier: domainIdentifier)
+    }
+
+    func removeConfiguration(configurationIdentifier: String) throws {
+        let url = domainConfigurationURL(configurationIdentifier: configurationIdentifier)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    func removeRelocationJournal(configurationIdentifier: String) throws {
+        let url = domainRelocationURL(configurationIdentifier: configurationIdentifier)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     func removeAccountRecords(accountIdentifiers: [String]) throws {
@@ -378,9 +433,15 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
         try FileManager.default.removeItem(at: conflictStagingURL)
     }
 
-    private func domainConfigurationURL(domainIdentifier: String) -> URL {
+    private func domainConfigurationURL(configurationIdentifier: String) -> URL {
         domainConfigurationsURL
-            .appendingPathComponent(Self.safeFileName(for: domainIdentifier))
+            .appendingPathComponent(Self.safeFileName(for: configurationIdentifier))
+            .appendingPathExtension("json")
+    }
+
+    private func domainRelocationURL(configurationIdentifier: String) -> URL {
+        domainRelocationsURL
+            .appendingPathComponent(Self.safeFileName(for: configurationIdentifier))
             .appendingPathExtension("json")
     }
 
