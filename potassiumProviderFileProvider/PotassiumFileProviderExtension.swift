@@ -26,12 +26,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         self.manager = NSFileProviderManager(for: domain)!
         #if os(macOS)
         let isStoredOnExternalVolume = domain.volumeUUID != nil
-        #else
-        let isStoredOnExternalVolume = false
-        #endif
         self.temporaryDirectoryURL = isStoredOnExternalVolume
             ? nil
             : ((try? manager.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory)
+        #else
+        let isStoredOnExternalVolume = false
+        self.temporaryDirectoryURL = (try? manager.temporaryDirectoryURL())
+            ?? FileManager.default.temporaryDirectory
+        #endif
         super.init()
         if isStoredOnExternalVolume == false {
             startRemotePolling()
