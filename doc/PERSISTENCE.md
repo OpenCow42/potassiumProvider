@@ -2,7 +2,8 @@
 
 The app and extension share state through the configured app group and keychain
 access group. The app group stores local account records, domain configuration,
-and listing snapshots. The keychain stores account-scoped OAuth tokens.
+durable storage-relocation journals, and listing snapshots. The keychain stores
+account-scoped OAuth tokens.
 
 ## App Group Storage
 
@@ -12,6 +13,8 @@ Current app group contents:
 
 - `Accounts/*.json`
 - `DomainConfigurations/*.json`
+- `DomainRelocations/*.json` while a File Provider storage change or repair is
+  incomplete
 - `Snapshots.sqlite3`, including listing snapshots, conflict events, and recent
   provider/app activity
 - `ConflictStaging/*.upload` while a stale-content conflict copy is being sent
@@ -44,8 +47,18 @@ These files are used by:
 - the extension, to load the account identifier used for account-scoped token
   lookup
 
-Filenames are sanitized from domain identifiers. Removing a domain deletes its
-configuration JSON after the File Provider domain is removed.
+Each record includes two distinct identities:
+
+- `configurationIdentifier` is stable across storage changes and keys the JSON
+  filename, app/status row, relocation journal, and external-domain binding.
+- `domainIdentifier` is the current system domain identity. Apple generates it
+  for external placement, and it changes when a domain is recreated during a
+  storage move or repair.
+
+The record also persists `storageLocation`: `onThisMac`, or an external volume's
+UUID and local display name. Filenames are sanitized from stable configuration
+identifiers. Removing a domain deletes its configuration JSON only after the
+exact registered File Provider domain is removed.
 
 macOS Desktop & Documents activation is not persisted here or in SQLite. The app
 derives it from each registered `NSFileProviderDomain.replicatedKnownFolders`.
@@ -53,6 +66,38 @@ derives it from each registered `NSFileProviderDomain.replicatedKnownFolders`.
 Legacy domain JSON that does not contain `accountIdentifier` decodes to the fixed
 `legacy-account` local account. The app rewrites those configurations during
 reload so future extension loads can use explicit account-scoped token lookup.
+Legacy JSON without `configurationIdentifier` uses its existing domain ID as the
+stable configuration identity, and legacy JSON without `storageLocation`
+defaults to `onThisMac`.
+
+External `NSFileProviderDomain.userInfo` is not a credential store. It contains
+only a binding schema version and `configurationIdentifier`. The extension uses
+that value to load this Mac's JSON, verifies the current generated domain ID and
+external volume UUID, and then looks up credentials separately in this Mac's
+keychain. Account identifiers, bearer/refresh tokens, paths, and private URLs are
+never written into domain `userInfo`.
+
+## DomainRelocations
+
+`ProviderDomainRelocationFileStore` keeps one JSON journal per stable
+configuration while changing File Provider placement. A journal records:
+
+- stable `configurationIdentifier`
+- complete source configuration, including old domain ID and storage location
+- target storage location and prepared target domain ID when known
+- whether Desktop & Documents were active
+- phase and local creation/update dates
+
+Phases cover preparation, known-folder release, source removal, target
+configuration save, target registration, known-folder reclaim required, and a
+general repair state. The file is removed only after the target and cleanup are
+complete. On relaunch, an unfinished journal deliberately overrides an apparently
+healthy row with Needs Repair so the app can complete or recover the transaction.
+
+The journal does not contain tokens. When recovery needs an external source or
+target, the app searches mounted volumes by persisted UUID and holds a new
+security-scoped access session through prepare/save/register. A matching display
+name alone is insufficient.
 
 ## Snapshots.sqlite3
 
@@ -197,6 +242,13 @@ already stored for File Provider enumeration, conflict tracking, and activity
 display. They do not expose OAuth tokens, remote account profile data, private
 links, file bytes, or thumbnail bytes.
 
+The Status dashboard combines those aggregates with in-memory File Provider
+placement state keyed by stable configuration identifier. Placement state is not
+stored in SQLite: it is recomputed from current registered domains, mounted
+volume identity, and any durable relocation journal. Authentication-required,
+external-volume-unavailable, and repair states add one issue each; registering
+and moving do not.
+
 ## What Is Cached
 
 SQLite caches metadata needed to enumerate and diff containers:
@@ -288,7 +340,9 @@ scanned item ID, avoiding whole-container dictionaries and sets.
 
 On macOS, the app releases Desktop and Documents first when the domain currently
 replicates them; a release failure leaves the domain and local records intact.
-After File Provider removes the domain, the app calls
+External domains are removed using the exact registered domain object and are
+not reconstructed from their saved fields. A missing external volume blocks the
+normal UI remove/logout path. After File Provider removes the domain, the app calls
 `removeSnapshots(domainIdentifier:)` and `removeEvents(domainIdentifier:)`.
 That deletes all snapshot, materialization, working-set poll/change, conflict,
 and activity rows for the domain.
@@ -296,9 +350,13 @@ and activity rows for the domain.
 For local development resets, `scripts/uninstall-file-provider.sh` invokes the
 signed app's hidden uninstall command. That command removes registered File
 Provider domains through `NSFileProviderManager`, deletes matching
-`DomainConfigurations` JSON files, and removes per-domain SQLite snapshot,
-conflict, and activity rows. It preserves account records, `ConflictStaging`,
-and account-scoped OAuth tokens by default;
+`DomainConfigurations` and `DomainRelocations` JSON files, and removes per-domain
+SQLite snapshot, conflict, and activity rows. Its plan gathers actual registered
+domain IDs, each configuration's current generated domain ID, and journaled
+source/target IDs; local JSON/journals are keyed separately by stable
+configuration ID. This prevents a storage move from leaving old domain-keyed
+state behind. It preserves account records, `ConflictStaging`, and account-scoped
+OAuth tokens by default;
 `--hard-purge` removes `ConflictStaging`, and `--full-logout` or `--hard-purge`
 deletes all account-scoped tokens, the legacy single-token key, and stored
 account records. See

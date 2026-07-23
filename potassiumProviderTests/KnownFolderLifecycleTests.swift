@@ -240,6 +240,7 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
 
     private(set) var events: [Event] = []
     private(set) var state: ProviderKnownFolderSyncState
+    private var registeredConfiguration: ProviderDomainConfiguration?
     private let releaseError: Error?
 
     init(state: ProviderKnownFolderSyncState, releaseError: Error? = nil) {
@@ -253,10 +254,25 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
 
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {
         events.append(.add(domainIdentifier: configuration.domainIdentifier))
+        registeredConfiguration = configuration
     }
 
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
         events.append(.remove(domainIdentifier: configuration.domainIdentifier))
+        registeredConfiguration = nil
+    }
+
+    func registeredDomainStates() async throws -> [ProviderRegisteredDomainState] {
+        guard let registeredConfiguration else { return [] }
+        return [ProviderRegisteredDomainState(
+            configurationIdentifier: registeredConfiguration.configurationIdentifier,
+            domainIdentifier: registeredConfiguration.domainIdentifier,
+            displayName: registeredConfiguration.displayName,
+            volumeUUID: nil,
+            isDisconnected: false,
+            isUserEnabled: true,
+            knownFolderSyncState: state
+        )]
     }
 
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {

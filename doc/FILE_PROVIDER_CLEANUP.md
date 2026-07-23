@@ -65,8 +65,8 @@ that contains XCTest injection libraries.
 ## App Command Behavior
 
 `--dry-run` prints the plan and does not remove domains, SQLite rows, thumbnail
-cache files, domain configuration JSON, account JSON, ConflictStaging contents,
-or OAuth tokens.
+cache files, domain configuration/relocation JSON, account JSON, ConflictStaging
+contents, or OAuth tokens.
 
 Without `--yes`, a non-dry run prints the plan and exits without mutating local
 state.
@@ -76,6 +76,7 @@ state.
 - removes this app's registered File Provider domains through
   `NSFileProviderManager` using the preserve-dirty-user-data mode;
 - removes matching `DomainConfigurations` JSON files;
+- removes matching `DomainRelocations` JSON files;
 - removes matching SQLite snapshot, conflict, and activity rows;
 - keeps ConflictStaging contents;
 - keeps all saved account records and OAuth tokens.
@@ -96,7 +97,33 @@ key if it still exists.
 - deletes every stored account record, every account-scoped OAuth token, and the
   legacy single-token key if it still exists;
 - may use the File Provider remove-all fallback if domain listing failed and
-  targeted removal by saved configuration also fails.
+targeted removal by saved configuration also fails.
+
+## Stable And Generated Identifiers
+
+External-volume domains use an Apple-generated File Provider domain identifier,
+and changing storage can replace it. The app's `configurationIdentifier` remains
+stable. An interrupted relocation journal can also contain both a source domain
+ID and a prepared/registered target domain ID.
+
+The uninstall plan therefore keeps two explicit cleanup sets:
+
+- configuration identifiers from stored configurations and relocation journals,
+  used to remove `DomainConfigurations` and `DomainRelocations` files;
+- domain identifiers from the actual registered-domain list, current stored
+  configurations, and journal source/target fields, used to remove all matching
+  SQLite and provider-local state.
+
+Do not replace this plan with display-name matching or assume one stable domain
+ID per kDrive. Dry-run output should be checked especially carefully after an
+interrupted move. Targeted domain removal resolves the exact object from Apple's
+current registered-domain list before removal; it does not reconstruct an
+external domain.
+
+Preserve-dirty-user-data removal may return one or more local preserved-data
+locations. The command prints those paths for manual review and does not delete
+them. A listing failure, missing/disconnected external domain, or stale saved ID
+causes plain `--yes` to stop rather than silently escalating to remove-all.
 
 ## Safety Boundary
 
@@ -106,6 +133,13 @@ If a development domain currently owns Desktop & Documents, stop that sync from
 the app before running the uninstall wrapper. The wrapper's existing reset modes
 remove domains and local provider state; they do not offer a separate
 known-folder release workflow.
+
+In the normal UI, an unavailable external volume disables Remove from Files and
+blocks account logout until that placement is reconnected or repaired. Keep that
+safety boundary when diagnosing a missing drive. The uninstall wrapper is a
+development recovery tool, not a user-facing workaround; inspect `--dry-run`,
+prefer plain `--yes`, and reconnect the volume when targeted removal requires the
+registered external domain.
 
 The cleanup script also does not directly delete Finder storage,
 `~/Library/CloudStorage`, or private File Provider system databases. If File
