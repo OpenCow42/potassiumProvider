@@ -1138,11 +1138,15 @@ struct PotassiumProviderCoreTests {
 
     @Test func itemIdentifierParsesFileProviderAndKDriveValues() throws {
         #expect(try KDriveItemIdentifier(rawValue: "NSFileProviderRootContainerItemIdentifier") == .root)
+        #expect(try KDriveItemIdentifier(rawValue: "NSFileProviderWorkingSetContainerItemIdentifier") == .workingSet)
         #expect(try KDriveItemIdentifier(rawValue: "NSFileProviderTrashContainerItemIdentifier") == .trash)
         #expect(try KDriveItemIdentifier(rawValue: "123") == .item(123))
+        #expect(KDriveItemIdentifier.workingSet.rawValue == "NSFileProviderWorkingSetContainerItemIdentifier")
         #expect(KDriveItemIdentifier.item(456).rawValue == "456")
         #expect(KDriveItemIdentifier.root.fileID == ProviderConstants.defaultRootFileID)
         #expect(KDriveItemIdentifier.root.fileID(rootFileID: 999) == 999)
+        #expect(KDriveItemIdentifier.workingSet.fileID == nil)
+        #expect(KDriveItemIdentifier.trash.fileID == nil)
         #expect(throws: KDriveItemIdentifierError.invalid("not-a-number")) {
             try KDriveItemIdentifier(rawValue: "not-a-number")
         }

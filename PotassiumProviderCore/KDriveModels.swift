@@ -514,6 +514,7 @@ public enum KDriveConflictFilename {
 
 public enum KDriveItemIdentifier: Equatable, Hashable, Sendable {
     case root
+    case workingSet
     case trash
     case item(Int)
 
@@ -521,6 +522,8 @@ public enum KDriveItemIdentifier: Equatable, Hashable, Sendable {
         switch rawValue {
         case "NSFileProviderRootContainerItemIdentifier":
             self = .root
+        case "NSFileProviderWorkingSetContainerItemIdentifier":
+            self = .workingSet
         case "NSFileProviderTrashContainerItemIdentifier":
             self = .trash
         default:
@@ -543,7 +546,7 @@ public enum KDriveItemIdentifier: Equatable, Hashable, Sendable {
         switch self {
         case .root:
             return rootFileID
-        case .trash:
+        case .workingSet, .trash:
             return nil
         case .item(let id):
             return id
@@ -554,6 +557,8 @@ public enum KDriveItemIdentifier: Equatable, Hashable, Sendable {
         switch self {
         case .root:
             return "NSFileProviderRootContainerItemIdentifier"
+        case .workingSet:
+            return "NSFileProviderWorkingSetContainerItemIdentifier"
         case .trash:
             return "NSFileProviderTrashContainerItemIdentifier"
         case .item(let id):

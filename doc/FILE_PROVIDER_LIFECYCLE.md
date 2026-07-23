@@ -48,12 +48,17 @@ Behavior:
 
 - `.rootContainer` returns a synthetic `FileProviderItem` from
   `ProviderDomainConfiguration`.
-- Other identifiers are parsed as `KDriveItemIdentifier.item(fileID)`.
+- `.workingSet` is a virtual enumeration container, not a kDrive item. Metadata
+  lookup returns `.noSuchItem` immediately without loading a runtime, making a
+  remote request, or recording an expected failure activity.
+- Other identifiers are parsed as `KDriveItemIdentifier`; only identifiers with
+  a concrete kDrive file ID proceed to remote metadata lookup.
 - The extension calls `PotassiumKDriveService.item(...)`, which uses
   `KDriveService.getFile(...)`.
 - The result is wrapped as `FileProviderItem`.
 
-SQLite: not touched.
+SQLite: successful lookups do not update snapshots. The expected `.workingSet`
+rejection is not written to the activity audit.
 
 ## `fetchContents`
 

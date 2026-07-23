@@ -85,6 +85,14 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         lifecycle.start { lifecycle in
             var runtime: FileProviderRuntime?
             do {
+                if identifier == .workingSet {
+                    FileProviderLog.replicatedExtension.debug("working set is a virtual enumeration container; return noSuchItem for metadata lookup")
+                    await lifecycle.finish(markProgressComplete: false) {
+                        completionHandler(nil, NSFileProviderError(.noSuchItem))
+                    }
+                    return
+                }
+
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
                 if identifier == .rootContainer {
@@ -640,7 +648,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         if parentIdentifier == .rootContainer {
             return runtime.configuration.rootFileID
         }
-        guard parentIdentifier != .trashContainer else {
+        guard parentIdentifier != .trashContainer,
+              parentIdentifier != .workingSet else {
             throw NSFileProviderError(.cannotSynchronize)
         }
         return try KDriveItemIdentifier(rawValue: parentIdentifier.rawValue).fileID(rootFileID: runtime.configuration.rootFileID)
