@@ -21,7 +21,7 @@ data.
 
 ## Documentation Index
 
-- [0.2.0 Release Notes](CHANGELOG.md): shipped behavior, dependency state,
+- [0.2.1 Release Notes](CHANGELOG.md): shipped behavior, dependency state,
   deferred transfer work, and remaining release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.

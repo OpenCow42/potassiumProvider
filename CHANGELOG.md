@@ -1,8 +1,23 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+- Treat the File Provider working-set identifier as a virtual enumeration
+  container. Metadata requests now return `.noSuchItem` locally instead of
+  starting a runtime, retrying kDrive metadata, and recording expected failures.
+- Reject working-set identifiers where a concrete kDrive parent is required.
+
+### Distribution
+
+- Repackaged the macOS universal download without AppleDouble metadata sidecars.
+  Standard ZIP extraction no longer adds unsealed files to embedded frameworks
+  and triggers a Gatekeeper override prompt.
+
 ## 0.2.0
 
-Release status: prepared on a dedicated dependency branch; not yet tagged.
+Released 2026-07-23.
 
 ### Added
 
