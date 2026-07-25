@@ -2,10 +2,18 @@ import Darwin
 import SwiftUI
 
 struct potassiumProviderApp: App {
-    @StateObject private var model = PotassiumProviderAppModel()
+    @StateObject private var model: PotassiumProviderAppModel
     #if os(macOS)
     @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
     #endif
+
+    init() {
+        #if DEBUG
+        _model = StateObject(wrappedValue: ProviderUITestFixture.makeModel() ?? PotassiumProviderAppModel())
+        #else
+        _model = StateObject(wrappedValue: PotassiumProviderAppModel())
+        #endif
+    }
 
     var body: some Scene {
         #if os(macOS)

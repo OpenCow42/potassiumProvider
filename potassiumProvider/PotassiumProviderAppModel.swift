@@ -6,6 +6,20 @@ import Foundation
 import OSLog
 import PotassiumProviderCore
 
+struct ProviderDriveKey: Hashable, Sendable {
+    let accountIdentifier: String
+    let driveID: Int
+}
+
+enum ProviderDriveAction: Equatable, Sendable {
+    case addingToFiles
+    case removingFromFiles
+    case enablingKnownFolders
+    case disablingKnownFolders
+    case showingInFiles
+    case syncingNow
+}
+
 @MainActor
 final class PotassiumProviderAppModel: ObservableObject {
     private static let log = ProviderLog.app
@@ -17,7 +31,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var loadingDriveAccountIdentifiers: Set<String> = []
     @Published private(set) var knownFolderSyncStatesByDomainIdentifier: [String: ProviderKnownFolderSyncState] = [:]
     @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
-    @Published private(set) var activeDomainActionIdentifiers: Set<String> = []
+    @Published private(set) var activeDriveActions: [ProviderDriveKey: ProviderDriveAction] = [:]
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -45,6 +59,9 @@ final class PotassiumProviderAppModel: ObservableObject {
         snapshotStore: (any KDriveSnapshotStoring)? = nil,
         eventStore: (any KDriveProviderEventStoring)? = nil,
         automaticallyReloadStoredState: Bool = true,
+        initialAccounts: [ProviderAccount] = [],
+        initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
+        initialDomains: [ProviderDomainConfiguration] = [],
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
     ) {
         self.accountStore = accountStore ?? Self.makeDefaultAccountStore()
@@ -55,7 +72,12 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
-        statusMessage = "No accounts connected."
+        accounts = initialAccounts
+        drivesByAccountIdentifier = initialDrivesByAccountIdentifier
+        domains = initialDomains
+        statusMessage = initialAccounts.isEmpty
+            ? "No accounts connected."
+            : "Loaded \(initialAccounts.count) account\(initialAccounts.count == 1 ? "" : "s")."
         observeFileProviderDomainChanges()
         if automaticallyReloadStoredState {
             Task { await reloadStoredState() }
@@ -120,8 +142,19 @@ final class PotassiumProviderAppModel: ObservableObject {
         knownFolderTransitionDomainIdentifiers.contains(configuration.domainIdentifier)
     }
 
+    func activeDriveAction(for key: ProviderDriveKey) -> ProviderDriveAction? {
+        activeDriveActions[key]
+    }
+
+    func isPerformingDriveAction(for accountIdentifier: String) -> Bool {
+        activeDriveActions.keys.contains { $0.accountIdentifier == accountIdentifier }
+    }
+
     func isPerformingDomainAction(_ domainIdentifier: String) -> Bool {
-        activeDomainActionIdentifiers.contains(domainIdentifier)
+        guard let configuration = domains.first(where: { $0.domainIdentifier == domainIdentifier }) else {
+            return false
+        }
+        return activeDriveActions[driveKey(for: configuration)] != nil
     }
 
     func selectedDriveID(for accountIdentifier: String) -> Int? {
@@ -293,6 +326,9 @@ final class PotassiumProviderAppModel: ObservableObject {
             statusMessage = nil
             return
         }
+        let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: draft.id)
+        guard beginDriveAction(.addingToFiles, for: key) else { return }
+        defer { endDriveAction(for: key) }
 
         var savedConfiguration: ProviderDomainConfiguration?
         do {
@@ -339,6 +375,10 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func removeDomain(_ configuration: ProviderDomainConfiguration) async {
+        let key = driveKey(for: configuration)
+        guard beginDriveAction(.removingFromFiles, for: key) else { return }
+        defer { endDriveAction(for: key) }
+
         do {
             try await removeDomainAndLocalState(configuration)
             let synchronizedState = try await synchronizedDomainConfigurations()
@@ -360,8 +400,8 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     func enableKnownFolderSync(for configuration: ProviderDomainConfiguration) async {
         #if os(macOS)
-        guard beginKnownFolderTransition(for: configuration) else { return }
-        defer { knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier) }
+        guard beginKnownFolderTransition(.enablingKnownFolders, for: configuration) else { return }
+        defer { endKnownFolderTransition(for: configuration) }
 
         do {
             let token = try await usableToken(accountIdentifier: configuration.accountIdentifier)
@@ -392,8 +432,8 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     func disableKnownFolderSync(for configuration: ProviderDomainConfiguration) async {
         #if os(macOS)
-        guard beginKnownFolderTransition(for: configuration) else { return }
-        defer { knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier) }
+        guard beginKnownFolderTransition(.disablingKnownFolders, for: configuration) else { return }
+        defer { endKnownFolderTransition(for: configuration) }
 
         do {
             try await domainRegistrar.releaseKnownFolders(for: configuration)
@@ -415,8 +455,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async -> URL? {
-        guard beginDomainAction(for: configuration) else { return nil }
-        defer { activeDomainActionIdentifiers.remove(configuration.domainIdentifier) }
+        let key = driveKey(for: configuration)
+        guard beginDriveAction(.showingInFiles, for: key) else { return nil }
+        defer { endDriveAction(for: key) }
 
         do {
             let url = try await domainRegistrar.userVisibleRootURL(for: configuration)
@@ -440,8 +481,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func syncNow(_ configuration: ProviderDomainConfiguration) async {
-        guard beginDomainAction(for: configuration) else { return }
-        defer { activeDomainActionIdentifiers.remove(configuration.domainIdentifier) }
+        let key = driveKey(for: configuration)
+        guard beginDriveAction(.syncingNow, for: key) else { return }
+        defer { endDriveAction(for: key) }
 
         do {
             try await domainRegistrar.signalWorkingSet(for: configuration)
@@ -460,6 +502,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func logoutAccount(_ account: ProviderAccount) async {
+        guard isPerformingDriveAction(for: account.accountIdentifier) == false else {
+            errorMessage = "Wait for the current drive action to finish before logging out \(account.displayName)."
+            statusMessage = nil
+            return
+        }
+
         do {
             let accountDomains = domains(for: account.accountIdentifier)
             for domain in accountDomains {
@@ -667,12 +715,36 @@ final class PotassiumProviderAppModel: ObservableObject {
         return token
     }
 
-    private func beginKnownFolderTransition(for configuration: ProviderDomainConfiguration) -> Bool {
-        knownFolderTransitionDomainIdentifiers.insert(configuration.domainIdentifier).inserted
+    private func driveKey(for configuration: ProviderDomainConfiguration) -> ProviderDriveKey {
+        ProviderDriveKey(
+            accountIdentifier: configuration.accountIdentifier,
+            driveID: configuration.driveID
+        )
     }
 
-    private func beginDomainAction(for configuration: ProviderDomainConfiguration) -> Bool {
-        activeDomainActionIdentifiers.insert(configuration.domainIdentifier).inserted
+    private func beginDriveAction(_ action: ProviderDriveAction, for key: ProviderDriveKey) -> Bool {
+        guard activeDriveActions[key] == nil else { return false }
+        activeDriveActions[key] = action
+        return true
+    }
+
+    private func endDriveAction(for key: ProviderDriveKey) {
+        activeDriveActions[key] = nil
+    }
+
+    private func beginKnownFolderTransition(
+        _ action: ProviderDriveAction,
+        for configuration: ProviderDomainConfiguration
+    ) -> Bool {
+        let key = driveKey(for: configuration)
+        guard beginDriveAction(action, for: key) else { return false }
+        knownFolderTransitionDomainIdentifiers.insert(configuration.domainIdentifier)
+        return true
+    }
+
+    private func endKnownFolderTransition(for configuration: ProviderDomainConfiguration) {
+        knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier)
+        endDriveAction(for: driveKey(for: configuration))
     }
 
     private func refreshKnownFolderSyncStates() async throws {

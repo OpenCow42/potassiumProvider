@@ -1047,6 +1047,7 @@ struct PotassiumProviderCoreTests {
         #expect(driveRow.health == .attention)
     }
 
+    @MainActor
     @Test func tabSelectionPolicyDefaultsToStatus() {
         #expect(ProviderAppTabSelectionPolicy.defaultSelection(configuredDomainCount: 0) == .status)
         #expect(ProviderAppTabSelectionPolicy.defaultSelection(configuredDomainCount: 1) == .status)
@@ -1937,6 +1938,10 @@ struct PotassiumProviderCoreTests {
         #expect(model.domains.isEmpty)
         #expect(try await domainStore.allConfigurations().isEmpty)
         #expect(model.errorMessage?.contains("The application cannot be used right now") == true)
+        #expect(model.activeDriveAction(for: ProviderDriveKey(
+            accountIdentifier: account.accountIdentifier,
+            driveID: 42
+        )) == nil)
 
         let failure = try #require(await eventStore.activities().first)
         #expect(failure.domainIdentifier == ProviderConstants.appActivityDomainIdentifier)
