@@ -14,6 +14,10 @@ source of truth.
 - Unit test target: `potassiumProviderTests`
 - UI test target: `potassiumProviderUITests`
 
+The shared `potassiumProvider` scheme runs `potassiumProviderTests` in its Test
+action. UI automation remains a separate Xcode test-target workflow and is not
+part of the shared scheme's command-line test path.
+
 Do not use Tuist or root-level SwiftPM commands for validation unless the
 project is intentionally migrated.
 
@@ -70,7 +74,7 @@ xcodebuild build \
   -destination 'platform=macOS'
 ```
 
-Run all tests:
+Run unit tests:
 
 ```sh
 xcodebuild test \
@@ -79,7 +83,7 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
 ```
 
-Run all tests on Mac as well:
+Run unit tests on Mac as well:
 
 ```sh
 xcodebuild test \
@@ -88,34 +92,14 @@ xcodebuild test \
   -destination 'platform=macOS'
 ```
 
-Run only unit tests:
-
-```sh
-xcodebuild test \
-  -project potassiumProvider.xcodeproj \
-  -scheme potassiumProvider \
-  -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
-  -only-testing:potassiumProviderTests
-```
-
-If the full scheme stalls during simulator/UI-test cleanup, retry with:
-
-```sh
-xcodebuild test \
-  -project potassiumProvider.xcodeproj \
-  -scheme potassiumProvider \
-  -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
-  -parallel-testing-enabled NO
-```
-
 Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
 Xcode requires a more specific macOS variant.
 
 ## Continuous Integration
 
-GitHub Actions runs an unsigned macOS build for every pull request and every
-push to `main`. The build uses the `macos-26` runner and its default Xcode 26.5
-installation:
+GitHub Actions runs an unsigned macOS build followed by the macOS unit tests for
+every pull request and every push to `main`. The job uses the `macos-26` runner
+and its default Xcode 26.5 installation:
 
 ```sh
 xcodebuild build \
@@ -123,10 +107,21 @@ xcodebuild build \
   -scheme potassiumProvider \
   -destination 'platform=macOS' \
   CODE_SIGNING_ALLOWED=NO
+
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider \
+  -destination 'platform=macOS' \
+  MACOSX_DEPLOYMENT_TARGET=26.4 \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-This initial workflow checks compilation only. Unit tests, UI tests, caching,
-and iOS Simulator and visionOS jobs remain outside its scope.
+The build and test commands run as consecutive steps in the same job and share
+the resolved package checkout and DerivedData directory. The CI-only
+deployment-target override allows the tests to run on the hosted runner's
+macOS 26.4 installation without changing the project's macOS 26.5 deployment
+target. UI tests, caching, iOS Simulator and visionOS jobs, and the manual File
+Provider release gates remain outside its scope.
 
 ## Test Style
 

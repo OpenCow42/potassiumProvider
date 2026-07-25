@@ -35,20 +35,6 @@
                ReferencedContainer = "container:potassiumProvider.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "NO"
-            buildForProfiling = "NO"
-            buildForArchiving = "NO"
-            buildForAnalyzing = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "C098429C2FF847B000CB8B7E"
-               BuildableName = "potassiumProviderUITests.xctest"
-               BlueprintName = "potassiumProviderUITests"
-               ReferencedContainer = "container:potassiumProvider.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -75,16 +61,6 @@
                BlueprintIdentifier = "C09842922FF847B000CB8B7E"
                BuildableName = "potassiumProviderTests.xctest"
                BlueprintName = "potassiumProviderTests"
-               ReferencedContainer = "container:potassiumProvider.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "C098429C2FF847B000CB8B7E"
-               BuildableName = "potassiumProviderUITests.xctest"
-               BlueprintName = "potassiumProviderUITests"
                ReferencedContainer = "container:potassiumProvider.xcodeproj">
             </BuildableReference>
          </TestableReference>
