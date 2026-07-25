@@ -95,6 +95,38 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
+    func testActivitiesPrefetchesOlderRowsAndReturnsToLatest() throws {
+        let app = launchSetupFixture(named: "activities-pagination")
+        openActivities(in: app)
+
+        XCTAssertTrue(app.staticTexts["Item 0000"].waitForExistence(timeout: 5))
+        let timeline = app.scrollViews["activity.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5))
+
+        for _ in 0..<14 where app.staticTexts["Item 0075"].exists == false {
+            timeline.swipeUp()
+        }
+
+        XCTAssertTrue(app.staticTexts["Item 0075"].waitForExistence(timeout: 5))
+        let backToLatest = app.buttons["activity.backToLatest"]
+        XCTAssertTrue(backToLatest.waitForExistence(timeout: 5))
+        backToLatest.tap()
+        XCTAssertTrue(app.staticTexts["Item 0000"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testActivitiesScrollPerformance() throws {
+        let app = launchSetupFixture(named: "activities-pagination")
+        openActivities(in: app)
+        let timeline = app.scrollViews["activity.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5))
+
+        measure(metrics: [XCTOSSignpostMetric.scrollingAndDecelerationMetric]) {
+            timeline.swipeUp(velocity: .fast)
+        }
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
@@ -119,6 +151,18 @@ final class potassiumProviderUITests: XCTestCase {
             let setupButton = app.buttons["Setup"]
             XCTAssertTrue(setupButton.waitForExistence(timeout: 5))
             setupButton.tap()
+        }
+    }
+
+    @MainActor
+    private func openActivities(in app: XCUIApplication) {
+        let tabBarButton = app.tabBars.buttons["Activities"]
+        if tabBarButton.waitForExistence(timeout: 2) {
+            tabBarButton.tap()
+        } else {
+            let activitiesButton = app.buttons["Activities"]
+            XCTAssertTrue(activitiesButton.waitForExistence(timeout: 5))
+            activitiesButton.tap()
         }
     }
 }

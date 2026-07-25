@@ -181,9 +181,18 @@ versions are rebuilt from kDrive instead of reused for later mutations.
 - `remoteRequestID`
 
 Conflict and activity tables are indexed by domain and event date. Activity rows
-are also indexed by related conflict ID, outcome, and correlation ID. Activity
-rows are bounded to the newest 5,000 records by default; conflict rows are not
-removed by this retention rule.
+are also indexed by related conflict ID, outcome, correlation ID, and partial
+timeline indexes for non-conflict activity. The conflict timeline index uses
+`COALESCE(resolvedAt, detectedAt)` so a resolved conflict appears at its
+effective event date. Activity rows are bounded to the newest 5,000 records by
+default; conflict rows are not removed by this retention rule.
+
+The Activities UI reads through `KDriveProviderEventTimelinePaging`.
+`KDriveProviderTimelineCursor` is a keyset cursor composed of effective event
+date, event kind, and UUID. This produces deterministic mixed pages when
+timestamps match and avoids the duplication and scroll movement associated with
+offset pagination while new rows are being written. Related-conflict activity
+is excluded in SQL because the conflict row already represents that event.
 
 Activity rows support both domain-scoped provider events and app-scoped setup
 events. App-scoped rows use `ProviderConstants.appActivityDomainIdentifier` and

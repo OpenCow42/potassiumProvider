@@ -45,6 +45,11 @@ conflict rows remain until a user action or domain cleanup removes them. The
 existing Clear action removes all activity rows and automatically resolved
 conflicts, preserving unresolved conflict state.
 
+The Activities screen pages over this retained history in batches of 50. This
+only limits UI decoding and rendering; it does not reduce retention or support
+export coverage. Live notifications refresh and merge the newest page, and
+ordinary scrolling does not resolve File Provider item URLs.
+
 ## Support Export
 
 The Activities toolbar exports a JSON document via the system file picker. Each
