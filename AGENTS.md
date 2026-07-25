@@ -9,8 +9,9 @@ File Provider experience.
 - UI: SwiftUI app shell
 - Build system: Xcode project, not Tuist and not a root Swift Package
 - Scheme: `potassiumProvider`
-- Targets: `potassiumProvider`, `potassiumProviderTests`,
-  `potassiumProviderUITests`
+- Targets: `potassiumProvider`, `PotassiumProviderCore`,
+  `potassiumProviderFileProvider`, `potassiumProviderActions`,
+  `potassiumProviderTests`, and `potassiumProviderUITests`
 - Supported validation platforms: iOS Simulator, macOS, and visionOS
 - Dependencies: `SQLite.swift` and `potassiumChannel` package products
   `PotassiumChannelCore`, `PotassiumKDrive`, and `PotassiumOAuth`
@@ -21,6 +22,10 @@ File Provider experience.
 ```text
 potassiumProvider/
 |-- potassiumProvider/           # App target; SwiftUI entry point and views
+|-- PotassiumProviderCore/       # Shared models, service adapters, and storage
+|-- potassiumProviderFileProvider/
+|                                # Replicated provider and background actions
+|-- potassiumProviderActions/    # File Provider UI contextual panels
 |-- potassiumProviderTests/      # Swift Testing unit tests
 |-- potassiumProviderUITests/    # XCTest UI automation tests
 |-- potassiumProvider.xcodeproj/ # Source of truth for targets, scheme, settings,

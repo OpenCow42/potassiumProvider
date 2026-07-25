@@ -30,6 +30,11 @@ public enum KDriveProviderActivityKind: String, Codable, Equatable, Sendable {
     case authentication
     case driveDiscovery
     case domainManagement
+    case favorite
+    case duplicate
+    case restore
+    case shareLink
+    case versionRestore
 }
 
 public enum KDriveProviderActivityScope: String, Codable, Equatable, Sendable {

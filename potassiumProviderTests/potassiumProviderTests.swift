@@ -1445,7 +1445,7 @@ struct PotassiumProviderCoreTests {
             conflictStrategy: .version
         )
         #expect(operation.progress.totalUnitCount >= -1)
-        #expect(await KDriveJSONRequestCapturingURLProtocol.lastRequest() == nil)
+        #expect(await KDriveJSONRequestCapturingURLProtocol.peekLastRequest() == nil)
 
         let item = try await operation.value
         let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
@@ -1484,7 +1484,7 @@ struct PotassiumProviderCoreTests {
 
         let operation = try service.downloadFileOperation(driveID: 100, fileID: 42)
         #expect(operation.progress.totalUnitCount >= -1)
-        #expect(await KDriveDataRequestCapturingURLProtocol.lastRequest() == nil)
+        #expect(await KDriveDataRequestCapturingURLProtocol.peekLastRequest() == nil)
 
         let data = try await operation.value
         let request = try #require(await KDriveDataRequestCapturingURLProtocol.lastRequest())
@@ -1947,6 +1947,41 @@ struct PotassiumProviderCoreTests {
     }
 
     @MainActor
+    @Test func appModelRevealsAndSignalsOneConfiguredDrive() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registrar = RecordingProviderDomainRegistrar()
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: registrar,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
+        )
+        let configuration = ProviderDomainConfiguration(
+            domainIdentifier: "domain-1",
+            displayName: "Work Drive",
+            driveID: 42,
+            driveName: "Work Drive"
+        )
+
+        let visibleURL = await model.userVisibleRootURL(for: configuration)
+        await model.syncNow(configuration)
+
+        #expect(visibleURL == registrar.visibleRootURL)
+        #expect(registrar.revealedConfigurations == [configuration])
+        #expect(registrar.signaledConfigurations == [configuration])
+        #expect(model.statusMessage == "Requested a fresh sync for Work Drive.")
+        #expect(model.isPerformingDomainAction(configuration.domainIdentifier) == false)
+    }
+
+    @MainActor
     @Test func appModelRecordsSanitizedFailureActivity() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2380,6 +2415,10 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
         await capture.lastRequest()
     }
 
+    static func peekLastRequest() async -> URLRequest? {
+        await capture.peekLastRequest()
+    }
+
     static func lastBody() async -> Data? {
         await capture.lastBody()
     }
@@ -2421,6 +2460,10 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
 
     static func lastRequest() async -> URLRequest? {
         await capture.lastRequest()
+    }
+
+    static func peekLastRequest() async -> URLRequest? {
+        await capture.peekLastRequest()
     }
 
     static func lastBody() async -> Data? {
@@ -2498,6 +2541,10 @@ private actor CapturedURLRequestStore {
     func lastRequest() async -> URLRequest? {
         await waitForCapture()
         return capturedRequest
+    }
+
+    func peekLastRequest() -> URLRequest? {
+        capturedRequest
     }
 
     func lastBody() async -> Data? {
@@ -2741,6 +2788,9 @@ private struct NoopProviderDomainRegistrar: ProviderDomainRegistering {
 private final class RecordingProviderDomainRegistrar: ProviderDomainRegistering {
     private(set) var addedConfigurations: [ProviderDomainConfiguration] = []
     private(set) var removedConfigurations: [ProviderDomainConfiguration] = []
+    private(set) var revealedConfigurations: [ProviderDomainConfiguration] = []
+    private(set) var signaledConfigurations: [ProviderDomainConfiguration] = []
+    let visibleRootURL = URL(fileURLWithPath: "/tmp/potassium-provider-visible-root")
 
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {
         addedConfigurations.append(configuration)
@@ -2748,6 +2798,15 @@ private final class RecordingProviderDomainRegistrar: ProviderDomainRegistering 
 
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
         removedConfigurations.append(configuration)
+    }
+
+    func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL {
+        revealedConfigurations.append(configuration)
+        return visibleRootURL
+    }
+
+    func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {
+        signaledConfigurations.append(configuration)
     }
 }
 

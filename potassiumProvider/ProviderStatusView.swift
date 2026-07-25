@@ -6,6 +6,7 @@ struct ProviderStatusView: View {
     @ObservedObject var appModel: PotassiumProviderAppModel
     @StateObject private var statusModel: ProviderStatusViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openURL) private var openURL
 
     let showSetup: () -> Void
 
@@ -48,8 +49,32 @@ struct ProviderStatusView: View {
                         ProviderStatusSectionHeader("Drives")
                         VStack(spacing: 10) {
                             ForEach(statusModel.dashboard.drives) { drive in
-                                ProviderStatusDriveCard(drive: drive)
+                                if let configuration = appModel.domains.first(where: {
+                                    $0.domainIdentifier == drive.domainIdentifier
+                                }) {
+                                    ProviderStatusDriveCard(
+                                        drive: drive,
+                                        isPerformingAction: appModel.isPerformingDomainAction(
+                                            drive.domainIdentifier
+                                        ),
+                                        showInFiles: {
+                                            Task {
+                                                if let url = await appModel.userVisibleRootURL(
+                                                    for: configuration
+                                                ) {
+                                                    openURL(url)
+                                                }
+                                            }
+                                        },
+                                        syncNow: {
+                                            Task {
+                                                await appModel.syncNow(configuration)
+                                                await statusModel.load(input: statusInput)
+                                            }
+                                        }
+                                    )
                                     .transition(cardTransition)
+                                }
                             }
                         }
                     }
@@ -617,6 +642,9 @@ private struct ProviderStatusAccountRow: View {
 
 private struct ProviderStatusDriveCard: View {
     let drive: ProviderStatusDrive
+    let isPerformingAction: Bool
+    let showInFiles: () -> Void
+    let syncNow: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -674,6 +702,26 @@ private struct ProviderStatusDriveCard: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            HStack {
+                Button(action: showInFiles) {
+                    #if os(macOS)
+                    Label("Show in Finder", systemImage: "folder")
+                    #else
+                    Label("Show in Files", systemImage: "folder")
+                    #endif
+                }
+                .disabled(isPerformingAction)
+                Button(action: syncNow) {
+                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isPerformingAction)
+                if isPerformingAction {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .buttonStyle(.bordered)
         }
         .providerStatusCard()
     }

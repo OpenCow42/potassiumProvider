@@ -21,8 +21,8 @@ data.
 
 ## Documentation Index
 
-- [0.2.1 Release Notes](CHANGELOG.md): shipped behavior, dependency state,
-  deferred transfer work, and remaining release gates.
+- [0.3.0 Release Notes](CHANGELOG.md): actionable kDrive behavior, dependency
+  state, validation, and remaining manual release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
@@ -31,6 +31,8 @@ data.
   keychain storage, refresh behavior, and secret-handling rules.
 - [File Provider Lifecycle](doc/FILE_PROVIDER_LIFECYCLE.md): Apple callbacks,
   known-folder locations, mutations, enumeration, and SQLite touch points.
+- [Contextual Actions](doc/CONTEXTUAL_ACTIONS.md): Finder/Files favorite,
+  duplicate, restore, share-link, and version-history actions.
 - [Listing And Versioning](doc/LISTING_AND_VERSIONING.md): how Apple
   enumeration, sync anchors, kDrive listing APIs, SQLite caching, and item
   versions fit together.
@@ -53,6 +55,7 @@ The root Xcode project is the source of truth:
 
 - App target: `potassiumProvider`
 - File Provider extension target: `potassiumProviderFileProvider`
+- File Provider UI extension target: `potassiumProviderActions`
 - Shared framework target: `PotassiumProviderCore`
 - Unit tests: `potassiumProviderTests`
 - UI tests: `potassiumProviderUITests`

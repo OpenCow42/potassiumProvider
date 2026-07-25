@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Finder/Files actions to add or remove kDrive favorites, duplicate items
+  server-side, and restore items from trash with root fallback when the
+  original parent is gone.
+- A cross-platform File Provider UI extension for share-link management and
+  paged document version history with non-destructive “Restore as Copy.”
+- Favorite and trash metadata used by native File Provider presentation and
+  action predicates.
+- Native lazy/offline metadata so the system can present Download Now and
+  Remove Download.
+- Per-drive Show in Finder/Files and Sync Now controls in the app.
+- Sanitized favorite, duplicate, restore, share-link, and version-restore
+  activity in the existing timeline.
+
+### Changed
+
+- Snapshot generation and legacy snapshot tables now retain nullable favorite
+  state with an in-place SQLite migration. Older snapshot and working-set JSON
+  remains decodable.
+- Successful local mutations invalidate and signal each affected folder plus
+  the working set.
+- Release version is `0.3.0` with build number `4`.
+
+### Dependency state
+
+- potassiumChannel remains pinned to `0.2.0`.
+- Contextual operations use only existing typed `PotassiumKDrive` 0.2.0
+  service methods; no local ad hoc HTTP requests were added.
+
+### Security
+
+- Share URLs and passwords remain view-model memory only. They are not written
+  to domain JSON, SQLite, activity rows, support logs, or unified logs.
+
 ## 0.2.1
 
 ### Fixed

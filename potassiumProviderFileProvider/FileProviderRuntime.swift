@@ -13,6 +13,7 @@ struct FileProviderRuntime: Sendable {
     let configuration: ProviderDomainConfiguration
     let token: KDriveOAuthToken
     let remote: any KDriveFileProviding
+    let actions: any KDriveContextActionProviding
     let workingSetRemote: any KDriveWorkingSetRemoteProviding
     let snapshotStore: any KDriveSnapshotStoring
     let workingSetStateStore: any KDriveWorkingSetStateStoring
@@ -22,6 +23,7 @@ struct FileProviderRuntime: Sendable {
         configuration: ProviderDomainConfiguration,
         token: KDriveOAuthToken,
         remote: any KDriveFileProviding,
+        actions: any KDriveContextActionProviding,
         workingSetRemote: any KDriveWorkingSetRemoteProviding,
         snapshotStore: any KDriveSnapshotStoring,
         workingSetStateStore: any KDriveWorkingSetStateStoring,
@@ -30,6 +32,7 @@ struct FileProviderRuntime: Sendable {
         self.configuration = configuration
         self.token = token
         self.remote = remote
+        self.actions = actions
         self.workingSetRemote = workingSetRemote
         self.snapshotStore = snapshotStore
         self.workingSetStateStore = workingSetStateStore
@@ -63,6 +66,7 @@ struct FileProviderRuntime: Sendable {
             configuration: configuration,
             token: token,
             remote: remote,
+            actions: remote,
             workingSetRemote: remote,
             snapshotStore: sqliteStore,
             workingSetStateStore: sqliteStore,

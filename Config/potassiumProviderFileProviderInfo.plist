@@ -26,6 +26,41 @@
 		<true/>
 		<key>NSExtensionFileProviderDocumentGroup</key>
 		<string>group.net.weavee.potassiumProvider</string>
+		<key>NSExtensionFileProviderActions</key>
+		<array>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>net.weavee.potassiumProvider.action.addFavorite</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Add to kDrive Favorites</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.isRoot == NO AND $item.userInfo.isTrashed == NO AND $item.userInfo.isFavorite == NO).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>net.weavee.potassiumProvider.action.removeFavorite</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Remove from kDrive Favorites</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.isRoot == NO AND $item.userInfo.isTrashed == NO AND $item.userInfo.isFavorite == YES).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>net.weavee.potassiumProvider.action.duplicate</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Duplicate on kDrive</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.isRoot == NO AND $item.userInfo.isTrashed == NO).@count == 1</string>
+			</dict>
+			<dict>
+				<key>NSExtensionFileProviderActionIdentifier</key>
+				<string>net.weavee.potassiumProvider.action.restoreFromTrash</string>
+				<key>NSExtensionFileProviderActionName</key>
+				<string>Restore from kDrive Trash</string>
+				<key>NSExtensionFileProviderActionActivationRule</key>
+				<string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $item, $item.userInfo.isRoot == NO AND $item.userInfo.isTrashed == YES).@count == 1</string>
+			</dict>
+		</array>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.fileprovider-nonui</string>
 		<key>NSExtensionPrincipalClass</key>

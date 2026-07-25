@@ -29,6 +29,7 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
     public let path: String?
     public let size: Int?
     public let mimeType: String?
+    public let isFavorite: Bool?
     public let createdAt: Date?
     public let modifiedAt: Date
     public let updatedAt: Date
@@ -43,6 +44,7 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
         path: String?,
         size: Int?,
         mimeType: String?,
+        isFavorite: Bool? = nil,
         createdAt: Date?,
         modifiedAt: Date,
         updatedAt: Date
@@ -56,6 +58,7 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
         self.path = path
         self.size = size
         self.mimeType = mimeType
+        self.isFavorite = isFavorite
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.updatedAt = updatedAt

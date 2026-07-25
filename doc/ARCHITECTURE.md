@@ -1,15 +1,18 @@
 # Architecture
 
 `potassiumProvider` is split into a SwiftUI setup app, a replicated File
-Provider extension, and a shared framework that contains kDrive models,
-networking adapters, account-scoped authentication helpers, and persistence.
+Provider extension, a File Provider UI action extension, and a shared framework
+that contains kDrive models, networking adapters, account-scoped authentication
+helpers, action coordination, and persistence.
 
 ```mermaid
 flowchart LR
     User["User / Files app"] --> FP["potassiumProviderFileProvider"]
+    User --> Actions["potassiumProviderActions"]
     App["SwiftUI app"] --> Domain["NSFileProviderManager domains"]
     App --> Core["PotassiumProviderCore"]
     FP --> Core
+    Actions --> Core
     Core --> KC["potassiumChannel"]
     KC --> KDrive["Infomaniak kDrive APIs"]
     Core --> Keychain["Keychain tokens"]
@@ -27,11 +30,16 @@ flowchart LR
   independently.
 - `potassiumProviderFileProvider`: `NSFileProviderReplicatedExtension`
   implementation used by the system to enumerate, fetch, create, modify, trash,
-  and delete items, and to provide macOS known-folder locations.
+  and delete items, provide macOS known-folder locations, and execute
+  background favorite, duplicate, and restore actions.
+- `potassiumProviderActions`: `FPUIActionExtensionViewController` hosted
+  SwiftUI for share-link management and document version history on macOS,
+  iOS, and visionOS.
 - `PotassiumProviderCore`: shared framework with domain configuration storage,
-  OAuth/keychain storage, kDrive models, kDrive service adapter, snapshot diffing,
-  SQLite snapshot storage, unified-log categories, durable activity retention,
-  and redacted support-log export.
+  OAuth/keychain storage, kDrive models, kDrive service and contextual-action
+  adapters, action runtime/coordinator, snapshot diffing, SQLite snapshot
+  storage, unified-log categories, durable activity retention, and redacted
+  support-log export.
 - `potassiumProviderTests`: Swift Testing unit tests for shared behavior and app
   model flows.
 - `potassiumProviderUITests`: XCTest UI automation tests.
@@ -60,9 +68,10 @@ configuration's `accountIdentifier` to load and refresh the correct OAuth token
 from keychain when needed, creates a `PotassiumKDriveService`, and opens the
 SQLite snapshot store.
 
-The extension does not keep a long-lived process-level sync engine. Each File
-Provider callback performs the work it was asked to do, then returns via Apple's
-completion handler.
+Neither extension keeps a long-lived process-level sync engine. Each File
+Provider callback or contextual panel loads account-scoped runtime state,
+performs the requested work, signals affected enumerators, and completes
+through Apple's extension context.
 
 ## Local Reference Tree
 

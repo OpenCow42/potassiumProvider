@@ -132,6 +132,29 @@ Behavior:
 SQLite: not updated directly. Later trash/root/folder enumeration reconciles the
 missing item.
 
+## Contextual Actions
+
+The extension plist declares four single-item background actions and the
+extension adopts `NSFileProviderCustomAction`:
+
+- add to or remove from kDrive favorites
+- duplicate on kDrive
+- restore from kDrive trash
+
+Activation predicates use the item's `userInfo.isFavorite` and
+`userInfo.isTrashed` values. Favorite changes refetch authoritative metadata.
+Duplicate stays entirely server-side and refetches the resulting item. Restore
+uses the original parent when it still exists and otherwise restores to the
+drive root.
+
+All direct actions use `FileProviderOperationLifecycle`. On success they remove
+the affected parent snapshots, signal those parent enumerators, and signal the
+working set. Restore additionally invalidates and signals trash. Sanitized
+activity uses dedicated favorite, duplicate, and restore kinds.
+
+The separate `potassiumProviderActions` UI extension presents Share kDrive Link
+and Version History. See [Contextual Actions](CONTEXTUAL_ACTIONS.md).
+
 ## Progress and Cancellation
 
 Every replicated-extension callback returns a parent `Progress` synchronously
@@ -166,10 +189,10 @@ state. See [Listing And Versioning](LISTING_AND_VERSIONING.md).
 `materializedItemsDidChange` acknowledges File Provider immediately and then
 enumerates the system-owned materialized set in the background. The identifiers
 and container flags are persisted in SQLite. The active extension performs a
-domain-throttled working-set poll every 60 seconds and signals only
-`.workingSet` when it finds remote changes. Local mutations also invalidate the
-affected cached snapshots and signal `.workingSet`, rather than signaling root,
-trash, or arbitrary folder enumerators.
+domain-throttled working-set poll every 60 seconds and signals `.workingSet`
+when it finds remote changes. Successful local mutations and contextual actions
+invalidate affected cached snapshots, signal the corresponding root, trash, or
+folder enumerators, and also signal `.workingSet`.
 
 This release intentionally uses client polling only. File Provider can receive
 updates late when the containing app and extension are suspended.
