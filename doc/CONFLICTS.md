@@ -206,7 +206,11 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   and item actions without making every row expensive to render.
 - File links are resolved from stored domain and item identifiers through
   `NSFileProviderManager.getUserVisibleURL(for:)` only after the user selects
-  **Open in Files**. Scrolling the timeline does not perform File Provider URL
+  **Open in Finder** on macOS or **Open in Files** on iOS and visionOS.
+  macOS then asks `NSWorkspace` to reveal and select the item in Finder rather
+  than opening the document in its default app. Resolution or Finder-selection
+  failures show an inline message explaining that the item may have moved or
+  been deleted. Scrolling the timeline does not perform File Provider URL
   lookups.
 - The default Errors filter shows conflicts and non-conflict failure activity.
   All Activity also includes successful enumeration, change sync, and item

@@ -5,6 +5,44 @@ import Testing
 
 @Suite(.serialized)
 struct ActivityTimelinePagingTests {
+    @Test func itemOpenActionUsesThePlatformFileBrowserName() {
+        #if os(macOS)
+        #expect(ProviderFileBrowserPresentation.applicationName == "Finder")
+        #expect(ProviderFileBrowserPresentation.openActionTitle == "Open in Finder")
+        #expect(ProviderFileBrowserPresentation.openingActionTitle == "Opening in Finder…")
+        #expect(
+            ProviderFileBrowserPresentation.accessibilityLabel(for: "Report")
+                == "Open Report in Finder"
+        )
+        #expect(
+            ProviderFileBrowserPresentation.unavailableMessage
+                == "This item could not be found in Finder. It may have been moved or deleted."
+        )
+        #else
+        #expect(ProviderFileBrowserPresentation.applicationName == "Files")
+        #expect(ProviderFileBrowserPresentation.openActionTitle == "Open in Files")
+        #expect(ProviderFileBrowserPresentation.openingActionTitle == "Opening in Files…")
+        #expect(
+            ProviderFileBrowserPresentation.accessibilityLabel(for: "Report")
+                == "Open Report in Files"
+        )
+        #expect(
+            ProviderFileBrowserPresentation.unavailableMessage
+                == "This item is not currently available in Files."
+        )
+        #endif
+    }
+
+    #if os(macOS)
+    @MainActor
+    @Test func finderRevealReportsAMissingItem() {
+        let missingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-provider-item-\(UUID().uuidString)")
+
+        #expect(ProviderFileBrowserPresentation.revealInFinder(missingURL) == false)
+    }
+    #endif
+
     @Test func sqliteTimelinePagesMixedEventsWithoutDuplicatesOrGaps() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

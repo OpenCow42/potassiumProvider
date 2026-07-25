@@ -355,7 +355,9 @@ private struct ProviderActivityDetails: View {
 }
 
 private struct ProviderItemAction: View {
+    #if !os(macOS)
     @Environment(\.openURL) private var openURL
+    #endif
     let domainIdentifier: String
     let itemIdentifier: String?
     let title: String
@@ -370,13 +372,21 @@ private struct ProviderItemAction: View {
                     Task { await resolveAndOpen(itemIdentifier: itemIdentifier) }
                 } label: {
                     if isResolving {
-                        Label("Opening in Files…", systemImage: "arrow.up.forward.app")
+                        Label(
+                            ProviderFileBrowserPresentation.openingActionTitle,
+                            systemImage: "arrow.up.forward.app"
+                        )
                     } else {
-                        Label("Open in Files", systemImage: "arrow.up.forward.app")
+                        Label(
+                            ProviderFileBrowserPresentation.openActionTitle,
+                            systemImage: "arrow.up.forward.app"
+                        )
                     }
                 }
                 .disabled(isResolving)
-                .accessibilityLabel("Open \(title) in Files")
+                .accessibilityLabel(
+                    ProviderFileBrowserPresentation.accessibilityLabel(for: title)
+                )
                 .accessibilityIdentifier("activity.openInFiles")
 
                 if let fallbackDetail, fallbackDetail.isEmpty == false {
@@ -413,11 +423,58 @@ private struct ProviderItemAction: View {
             }
         }
         guard let resolvedURL else {
-            errorMessage = "This item is not currently available in Files."
+            errorMessage = ProviderFileBrowserPresentation.unavailableMessage
             return
         }
+
+        #if os(macOS)
+        guard ProviderFileBrowserPresentation.revealInFinder(resolvedURL) else {
+            errorMessage = ProviderFileBrowserPresentation.unavailableMessage
+            return
+        }
+        #else
         openURL(resolvedURL)
+        #endif
     }
+}
+
+enum ProviderFileBrowserPresentation {
+    #if os(macOS)
+    static let applicationName = "Finder"
+    #else
+    static let applicationName = "Files"
+    #endif
+
+    static var openActionTitle: String {
+        "Open in \(applicationName)"
+    }
+
+    static var openingActionTitle: String {
+        "Opening in \(applicationName)…"
+    }
+
+    static func accessibilityLabel(for itemTitle: String) -> String {
+        "Open \(itemTitle) in \(applicationName)"
+    }
+
+    static var unavailableMessage: String {
+        #if os(macOS)
+        "This item could not be found in Finder. It may have been moved or deleted."
+        #else
+        "This item is not currently available in Files."
+        #endif
+    }
+
+    #if os(macOS)
+    @MainActor
+    static func revealInFinder(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        return NSWorkspace.shared.selectFile(
+            url.path,
+            inFileViewerRootedAtPath: ""
+        )
+    }
+    #endif
 }
 
 private struct CopyActivityDetailsButton: View {
