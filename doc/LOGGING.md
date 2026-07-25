@@ -50,6 +50,13 @@ only limits UI decoding and rendering; it does not reduce retention or support
 export coverage. Live notifications refresh and merge the newest page, and
 ordinary scrolling does not resolve File Provider item URLs.
 
+Timeline actions expose model-backed availability and repeat those guards inside
+the action methods. Destructive Clear cannot overlap loading, Refresh, or
+Export, while the read-only Refresh and Export operations may overlap. Action
+errors are displayed independently from initial-load and paging errors, and all
+operation progress state is cleared after success, failure, cancellation, or a
+superseded filter generation.
+
 ## Support Export
 
 The Activities toolbar exports a JSON document via the system file picker. Each

@@ -10,9 +10,22 @@ struct ConflictLogView: View {
     @State private var supportLogDocument: ProviderSupportLogDocument?
     @State private var scrollPositionID: String?
     @State private var visibleEntryIDs: [String] = []
+    private let actionDependencies: ProviderActivityActionDependencies
 
-    init(eventStore: (any KDriveProviderEventStoring)?) {
-        _model = StateObject(wrappedValue: ConflictLogViewModel(eventStore: eventStore))
+    init(
+        eventStore: (any KDriveProviderEventStoring)?,
+        actionDependencies: ProviderActivityActionDependencies? = nil
+    ) {
+        let viewModel = ConflictLogViewModel(eventStore: eventStore)
+        #if DEBUG
+        viewModel.actionErrorMessage = ProviderUITestFixture.initialActivityActionError()
+        self.actionDependencies = actionDependencies
+            ?? ProviderUITestFixture.activityActionDependencies()
+            ?? .live
+        #else
+        self.actionDependencies = actionDependencies ?? .live
+        #endif
+        _model = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {
@@ -20,6 +33,14 @@ struct ConflictLogView: View {
             VStack(spacing: 0) {
                 filterControl
                 Divider()
+                if let actionErrorMessage = model.actionErrorMessage {
+                    ActivityInlineError(
+                        message: actionErrorMessage,
+                        dismiss: model.dismissActionError
+                    )
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
+                }
                 timelineContent
             }
             .navigationTitle("Activities")
@@ -33,8 +54,9 @@ struct ConflictLogView: View {
             .confirmationDialog("Clear Activities?", isPresented: $isClearConfirmationPresented) {
                 Button("Clear Events and Resolved Conflicts", role: .destructive) {
                     Task {
-                        await model.clearActivity()
-                        moveToLatest(animated: false)
+                        if await model.clearActivity() {
+                            moveToLatest(animated: false)
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) {}
@@ -69,6 +91,7 @@ struct ConflictLogView: View {
         .padding(.vertical, 10)
         .accessibilityLabel("Activity visibility")
         .accessibilityIdentifier("activity.filter")
+        .disabled(model.canChangeFilter == false)
     }
 
     private var filterBinding: Binding<KDriveProviderTimelineFilter> {
@@ -120,19 +143,13 @@ struct ConflictLogView: View {
         ZStack(alignment: .bottomTrailing) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    if let actionErrorMessage = model.actionErrorMessage {
-                        ActivityInlineError(
-                            message: actionErrorMessage,
-                            dismiss: model.dismissActionError
-                        )
-                        .padding(.horizontal)
-                        .padding(.top, 12)
-                    }
-
                     ForEach(model.sections) { section in
                         Section {
                             ForEach(section.entries) { entry in
-                                ProviderActivityTimelineRow(entry: entry)
+                                ProviderActivityTimelineRow(
+                                    entry: entry,
+                                    actionDependencies: actionDependencies
+                                )
                                     .id(entry.id)
                                     .padding(.horizontal)
                                     .padding(.vertical, 5)
@@ -240,7 +257,7 @@ struct ConflictLogView: View {
         } label: {
             Label(model.isRefreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
         }
-        .disabled(model.isLoading)
+        .disabled(model.canRefresh == false)
         .accessibilityIdentifier("activity.refresh")
     }
 

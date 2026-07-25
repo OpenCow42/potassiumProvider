@@ -5,6 +5,50 @@ import Testing
 
 @Suite(.serialized)
 struct ActivityTimelinePagingTests {
+    @MainActor
+    @Test func itemOpeningReportsResolutionAndPresentationResults() async {
+        let url = URL(fileURLWithPath: "/tmp/report.txt")
+        let opened = ProviderItemOpening(
+            resolve: { _, _ in .resolved(url) },
+            present: { $0 == url }
+        )
+        let rejected = ProviderItemOpening(
+            resolve: { _, _ in .resolved(url) },
+            present: { _ in false }
+        )
+        let missingDomain = ProviderItemOpening(
+            resolve: { _, _ in .domainUnavailable },
+            present: { _ in true }
+        )
+        let missingItem = ProviderItemOpening(
+            resolve: { _, _ in .itemUnavailable },
+            present: { _ in true }
+        )
+
+        #expect(await opened.open(domainIdentifier: "domain", itemIdentifier: "item") == .opened)
+        #expect(
+            await rejected.open(domainIdentifier: "domain", itemIdentifier: "item")
+                == .itemUnavailable
+        )
+        #expect(
+            await missingDomain.open(domainIdentifier: "domain", itemIdentifier: "item")
+                == .domainUnavailable
+        )
+        #expect(
+            await missingItem.open(domainIdentifier: "domain", itemIdentifier: "item")
+                == .itemUnavailable
+        )
+    }
+
+    @MainActor
+    @Test func copyActionOnlyReportsCopiedAfterASuccessfulWrite() {
+        let successful = ProviderActivityCopyAction(write: { _ in true })
+        let failed = ProviderActivityCopyAction(write: { _ in false })
+
+        #expect(successful.copy("details") == .copied)
+        #expect(failed.copy("details") == .failed)
+    }
+
     @Test func itemOpenActionUsesThePlatformFileBrowserName() {
         #if os(macOS)
         #expect(ProviderFileBrowserPresentation.applicationName == "Finder")
@@ -288,6 +332,119 @@ struct ActivityTimelinePagingTests {
         #expect(Set(model.entries.map(\.id)).count == model.entries.count)
     }
 
+    @MainActor
+    @Test func viewModelGuardsClearAndExportFromOverlapAndDuplicateCalls() async {
+        let store = BlockingActivityActionStore()
+        let model = ConflictLogViewModel(eventStore: store)
+        await model.load()
+
+        let clearTask = Task { await model.clearActivity() }
+        while await store.clearRequestCount() == 0 {
+            await Task.yield()
+        }
+        #expect(model.isClearing)
+        #expect(model.canExportSupportLog == false)
+        #expect(await model.clearActivity() == false)
+        #expect(await model.supportLogData() == nil)
+        #expect(await store.clearRequestCount() == 1)
+        #expect(await store.exportRequestCount() == 0)
+
+        await store.releaseClear()
+        #expect(await clearTask.value)
+        #expect(model.isClearing == false)
+
+        let exportTask = Task { await model.supportLogData() }
+        while await store.exportRequestCount() == 0 {
+            await Task.yield()
+        }
+        #expect(model.isExporting)
+        #expect(model.canClearActivity == false)
+        #expect(await model.supportLogData() == nil)
+        #expect(await model.clearActivity() == false)
+        #expect(await store.exportRequestCount() == 1)
+        #expect(await store.clearRequestCount() == 1)
+
+        await store.releaseExport()
+        #expect(await exportTask.value != nil)
+        #expect(model.isExporting == false)
+    }
+
+    @MainActor
+    @Test func viewModelAvailabilityMatchesUnavailableAndBusyStates() async {
+        let unavailable = ConflictLogViewModel(eventStore: nil)
+        #expect(unavailable.canRefresh == false)
+        #expect(unavailable.canChangeFilter == false)
+        #expect(unavailable.canClearActivity == false)
+        #expect(unavailable.canExportSupportLog == false)
+
+        let store = BlockingActivityActionStore()
+        let model = ConflictLogViewModel(eventStore: store)
+        await model.load()
+        #expect(model.canRefresh)
+        #expect(model.canChangeFilter)
+
+        let clearTask = Task { await model.clearActivity() }
+        while await store.clearRequestCount() == 0 {
+            await Task.yield()
+        }
+        #expect(model.canRefresh == false)
+        #expect(model.canChangeFilter == false)
+        await store.releaseClear()
+        #expect(await clearTask.value)
+        #expect(model.canRefresh)
+        #expect(model.canChangeFilter)
+    }
+
+    @MainActor
+    @Test func viewModelCleansActionProgressAfterFailures() async {
+        let store = FailingActivityActionStore()
+        let model = ConflictLogViewModel(eventStore: store)
+        await model.load()
+
+        #expect(await model.clearActivity() == false)
+        #expect(model.isClearing == false)
+        #expect(model.actionErrorMessage?.contains("Could not clear activity events") == true)
+
+        #expect(await model.supportLogData() == nil)
+        #expect(model.isExporting == false)
+        #expect(model.actionErrorMessage?.contains("Could not create support log") == true)
+    }
+
+    @MainActor
+    @Test func refreshAvailabilityTracksInitialAndPagingLoads() async {
+        let entry = KDriveProviderTimelineEntry.activity(makeActivity(
+            id: UUID(),
+            date: Date(timeIntervalSince1970: 1_000),
+            outcome: .failure
+        ))
+        let initialStore = BlockingTimelineStore(entry: entry, blocksInitialLoad: true)
+        let initialModel = ConflictLogViewModel(eventStore: initialStore)
+        let initialTask = Task { await initialModel.load() }
+        while await initialStore.pageRequestCount() == 0 {
+            await Task.yield()
+        }
+        #expect(initialModel.isInitialLoading)
+        #expect(initialModel.canRefresh == false)
+        #expect(initialModel.canChangeFilter)
+        await initialStore.releasePage()
+        await initialTask.value
+        #expect(initialModel.canRefresh)
+
+        let pagingStore = BlockingTimelineStore(entry: entry, blocksInitialLoad: false)
+        let pagingModel = ConflictLogViewModel(eventStore: pagingStore)
+        await pagingModel.load()
+        let pagingTask = Task { await pagingModel.loadMore() }
+        while await pagingStore.pageRequestCount() < 2 {
+            await Task.yield()
+        }
+        #expect(pagingModel.isLoadingMore)
+        #expect(pagingModel.canRefresh == false)
+        #expect(pagingModel.canChangeFilter)
+        await pagingStore.releasePage()
+        await pagingTask.value
+        #expect(pagingModel.canRefresh)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("activity-timeline-tests-\(UUID().uuidString)", isDirectory: true)
@@ -455,6 +612,141 @@ private actor PagingEventStore: KDriveProviderEventStoring, KDriveProviderEventT
             return lhs.kind.rawValue < rhs.kind.rawValue
         }
         return lhs.eventID.uuidString < rhs.eventID.uuidString
+    }
+}
+
+private actor BlockingActivityActionStore:
+    KDriveProviderEventStoring,
+    KDriveProviderEventTimelinePaging,
+    KDriveProviderEventExporting
+{
+    private var clearCount = 0
+    private var exportCount = 0
+    private var clearContinuation: CheckedContinuation<Void, Never>?
+    private var exportContinuation: CheckedContinuation<Void, Never>?
+
+    func saveConflict(_: KDriveConflictEvent) {}
+    func recordActivity(_: KDriveProviderActivityEvent) {}
+    func recentConflicts(domainIdentifier _: String?, limit _: Int) -> [KDriveConflictEvent] { [] }
+    func recentActivity(domainIdentifier _: String?, limit _: Int) -> [KDriveProviderActivityEvent] { [] }
+    func recentActivity(
+        domainIdentifier _: String?,
+        outcome _: KDriveProviderActivityOutcome?,
+        limit _: Int
+    ) -> [KDriveProviderActivityEvent] { [] }
+
+    func removeActivityAndResolvedConflicts(domainIdentifier _: String?) async {
+        clearCount += 1
+        await withCheckedContinuation { clearContinuation = $0 }
+    }
+
+    func removeEvents(domainIdentifier _: String) {}
+
+    func timelinePage(
+        filter _: KDriveProviderTimelineFilter,
+        before _: KDriveProviderTimelineCursor?,
+        limit _: Int
+    ) -> KDriveProviderTimelinePage {
+        KDriveProviderTimelinePage(entries: [], nextCursor: nil, hasMore: false)
+    }
+
+    func supportLogData(domainIdentifier _: String?) async -> Data {
+        exportCount += 1
+        await withCheckedContinuation { exportContinuation = $0 }
+        return Data("{}".utf8)
+    }
+
+    func clearRequestCount() -> Int { clearCount }
+    func exportRequestCount() -> Int { exportCount }
+
+    func releaseClear() {
+        clearContinuation?.resume()
+        clearContinuation = nil
+    }
+
+    func releaseExport() {
+        exportContinuation?.resume()
+        exportContinuation = nil
+    }
+}
+
+private actor FailingActivityActionStore:
+    KDriveProviderEventStoring,
+    KDriveProviderEventTimelinePaging,
+    KDriveProviderEventExporting
+{
+    func saveConflict(_: KDriveConflictEvent) {}
+    func recordActivity(_: KDriveProviderActivityEvent) {}
+    func recentConflicts(domainIdentifier _: String?, limit _: Int) -> [KDriveConflictEvent] { [] }
+    func recentActivity(domainIdentifier _: String?, limit _: Int) -> [KDriveProviderActivityEvent] { [] }
+    func recentActivity(
+        domainIdentifier _: String?,
+        outcome _: KDriveProviderActivityOutcome?,
+        limit _: Int
+    ) -> [KDriveProviderActivityEvent] { [] }
+    func removeActivityAndResolvedConflicts(domainIdentifier _: String?) throws {
+        throw TestPagingError.failed
+    }
+    func removeEvents(domainIdentifier _: String) {}
+    func timelinePage(
+        filter _: KDriveProviderTimelineFilter,
+        before _: KDriveProviderTimelineCursor?,
+        limit _: Int
+    ) -> KDriveProviderTimelinePage {
+        KDriveProviderTimelinePage(entries: [], nextCursor: nil, hasMore: false)
+    }
+    func supportLogData(domainIdentifier _: String?) throws -> Data {
+        throw TestPagingError.failed
+    }
+}
+
+private actor BlockingTimelineStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging {
+    private let entry: KDriveProviderTimelineEntry
+    private let blocksInitialLoad: Bool
+    private var requestCount = 0
+    private var pageContinuation: CheckedContinuation<Void, Never>?
+
+    init(entry: KDriveProviderTimelineEntry, blocksInitialLoad: Bool) {
+        self.entry = entry
+        self.blocksInitialLoad = blocksInitialLoad
+    }
+
+    func saveConflict(_: KDriveConflictEvent) {}
+    func recordActivity(_: KDriveProviderActivityEvent) {}
+    func recentConflicts(domainIdentifier _: String?, limit _: Int) -> [KDriveConflictEvent] { [] }
+    func recentActivity(domainIdentifier _: String?, limit _: Int) -> [KDriveProviderActivityEvent] { [] }
+    func recentActivity(
+        domainIdentifier _: String?,
+        outcome _: KDriveProviderActivityOutcome?,
+        limit _: Int
+    ) -> [KDriveProviderActivityEvent] { [] }
+    func removeActivityAndResolvedConflicts(domainIdentifier _: String?) {}
+    func removeEvents(domainIdentifier _: String) {}
+
+    func timelinePage(
+        filter _: KDriveProviderTimelineFilter,
+        before: KDriveProviderTimelineCursor?,
+        limit _: Int
+    ) async -> KDriveProviderTimelinePage {
+        requestCount += 1
+        if (before == nil && blocksInitialLoad) || before != nil {
+            await withCheckedContinuation { pageContinuation = $0 }
+        }
+        if before == nil {
+            return KDriveProviderTimelinePage(
+                entries: [entry],
+                nextCursor: entry.cursor,
+                hasMore: true
+            )
+        }
+        return KDriveProviderTimelinePage(entries: [], nextCursor: nil, hasMore: false)
+    }
+
+    func pageRequestCount() -> Int { requestCount }
+
+    func releasePage() {
+        pageContinuation?.resume()
+        pageContinuation = nil
     }
 }
 

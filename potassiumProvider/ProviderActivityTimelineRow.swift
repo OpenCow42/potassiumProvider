@@ -10,7 +10,16 @@ import UIKit
 struct ProviderActivityTimelineRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let entry: KDriveProviderTimelineEntry
+    let actionDependencies: ProviderActivityActionDependencies
     @State private var isExpanded = false
+
+    init(
+        entry: KDriveProviderTimelineEntry,
+        actionDependencies: ProviderActivityActionDependencies = .live
+    ) {
+        self.entry = entry
+        self.actionDependencies = actionDependencies
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -29,6 +38,7 @@ struct ProviderActivityTimelineRow: View {
             .accessibilityLabel("\(title), \(statusText)")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint(isExpanded ? "Collapses activity details" : "Shows activity details")
+            .accessibilityIdentifier("activity.entry.\(entry.id)")
 
             if isExpanded {
                 Divider()
@@ -42,7 +52,6 @@ struct ProviderActivityTimelineRow: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(.separator.opacity(0.4), lineWidth: 0.5)
         }
-        .accessibilityIdentifier("activity.entry.\(entry.id)")
     }
 
     private var summary: some View {
@@ -93,9 +102,9 @@ struct ProviderActivityTimelineRow: View {
     private var details: some View {
         switch entry {
         case .conflict(let event):
-            ConflictActivityDetails(event: event)
+            ConflictActivityDetails(event: event, actionDependencies: actionDependencies)
         case .activity(let event):
-            ProviderActivityDetails(event: event)
+            ProviderActivityDetails(event: event, actionDependencies: actionDependencies)
         }
     }
 
@@ -161,6 +170,7 @@ struct ProviderActivityTimelineRow: View {
 
 private struct ConflictActivityDetails: View {
     let event: KDriveConflictEvent
+    let actionDependencies: ProviderActivityActionDependencies
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -188,10 +198,14 @@ private struct ConflictActivityDetails: View {
                 domainIdentifier: event.domainIdentifier,
                 itemIdentifier: event.conflictItemIdentifier ?? event.originalItemIdentifier,
                 title: event.conflictItemName ?? event.originalItemName ?? "Open item",
-                fallbackDetail: event.conflictItemPath ?? event.originalItemPath
+                fallbackDetail: event.conflictItemPath ?? event.originalItemPath,
+                itemOpener: actionDependencies.itemOpener
             )
 
-            CopyActivityDetailsButton(text: copyText)
+            CopyActivityDetailsButton(
+                text: copyText,
+                copyAction: actionDependencies.copyAction
+            )
         }
         .font(.caption)
     }
@@ -226,6 +240,7 @@ private struct ConflictActivityDetails: View {
 
 private struct ProviderActivityDetails: View {
     let event: KDriveProviderActivityEvent
+    let actionDependencies: ProviderActivityActionDependencies
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -262,14 +277,18 @@ private struct ProviderActivityDetails: View {
                     domainIdentifier: event.domainIdentifier,
                     itemIdentifier: event.itemIdentifier,
                     title: event.itemName ?? event.itemIdentifier ?? "Open item",
-                    fallbackDetail: event.itemPath
+                    fallbackDetail: event.itemPath,
+                    itemOpener: actionDependencies.itemOpener
                 )
             } else {
                 Label("App activity", systemImage: "app")
                     .foregroundStyle(.secondary)
             }
 
-            CopyActivityDetailsButton(text: copyText)
+            CopyActivityDetailsButton(
+                text: copyText,
+                copyAction: actionDependencies.copyAction
+            )
         }
         .font(.caption)
     }
@@ -362,8 +381,23 @@ private struct ProviderItemAction: View {
     let itemIdentifier: String?
     let title: String
     let fallbackDetail: String?
+    let itemOpener: ProviderItemOpening?
     @State private var isResolving = false
     @State private var errorMessage: String?
+
+    init(
+        domainIdentifier: String,
+        itemIdentifier: String?,
+        title: String,
+        fallbackDetail: String?,
+        itemOpener: ProviderItemOpening? = nil
+    ) {
+        self.domainIdentifier = domainIdentifier
+        self.itemIdentifier = itemIdentifier
+        self.title = title
+        self.fallbackDetail = fallbackDetail
+        self.itemOpener = itemOpener
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -408,33 +442,89 @@ private struct ProviderItemAction: View {
         errorMessage = nil
         defer { isResolving = false }
 
+        let opener = itemOpener ?? ProviderItemOpening.live { url in
+            #if os(macOS)
+            ProviderFileBrowserPresentation.revealInFinder(url)
+            #else
+            await withCheckedContinuation { continuation in
+                openURL(url) { accepted in
+                    continuation.resume(returning: accepted)
+                }
+            }
+            #endif
+        }
+        switch await opener.open(
+            domainIdentifier: domainIdentifier,
+            itemIdentifier: itemIdentifier
+        ) {
+        case .opened:
+            break
+        case .domainUnavailable:
+            errorMessage = "This File Provider domain is unavailable."
+        case .itemUnavailable:
+            errorMessage = ProviderFileBrowserPresentation.unavailableMessage
+        }
+    }
+}
+
+enum ProviderItemOpenResult: Equatable {
+    case opened
+    case domainUnavailable
+    case itemUnavailable
+}
+
+enum ProviderItemURLResolution: Equatable {
+    case resolved(URL)
+    case domainUnavailable
+    case itemUnavailable
+}
+
+@MainActor
+struct ProviderItemOpening {
+    typealias Resolver = (
+        _ domainIdentifier: String,
+        _ itemIdentifier: String
+    ) async -> ProviderItemURLResolution
+    typealias Presenter = (_ url: URL) async -> Bool
+
+    let resolve: Resolver
+    let present: Presenter
+
+    func open(
+        domainIdentifier: String,
+        itemIdentifier: String
+    ) async -> ProviderItemOpenResult {
+        switch await resolve(domainIdentifier, itemIdentifier) {
+        case .domainUnavailable:
+            return .domainUnavailable
+        case .itemUnavailable:
+            return .itemUnavailable
+        case .resolved(let url):
+            return await present(url) ? .opened : .itemUnavailable
+        }
+    }
+
+    static func live(present: @escaping Presenter) -> ProviderItemOpening {
+        ProviderItemOpening(resolve: resolveUserVisibleURL, present: present)
+    }
+
+    private static func resolveUserVisibleURL(
+        domainIdentifier: String,
+        itemIdentifier: String
+    ) async -> ProviderItemURLResolution {
         let domain = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(rawValue: domainIdentifier),
             displayName: domainIdentifier
         )
         guard let manager = NSFileProviderManager(for: domain) else {
-            errorMessage = "This File Provider domain is unavailable."
-            return
+            return .domainUnavailable
         }
-
         let resolvedURL: URL? = await withCheckedContinuation { continuation in
             manager.getUserVisibleURL(for: NSFileProviderItemIdentifier(itemIdentifier)) { url, _ in
                 continuation.resume(returning: url)
             }
         }
-        guard let resolvedURL else {
-            errorMessage = ProviderFileBrowserPresentation.unavailableMessage
-            return
-        }
-
-        #if os(macOS)
-        guard ProviderFileBrowserPresentation.revealInFinder(resolvedURL) else {
-            errorMessage = ProviderFileBrowserPresentation.unavailableMessage
-            return
-        }
-        #else
-        openURL(resolvedURL)
-        #endif
+        return resolvedURL.map(ProviderItemURLResolution.resolved) ?? .itemUnavailable
     }
 }
 
@@ -479,16 +569,70 @@ enum ProviderFileBrowserPresentation {
 
 private struct CopyActivityDetailsButton: View {
     let text: String
-    @State private var didCopy = false
+    let copyAction: ProviderActivityCopyAction
+    @State private var feedback: ProviderActivityCopyFeedback = .idle
+
+    init(
+        text: String,
+        copyAction: ProviderActivityCopyAction = .live
+    ) {
+        self.text = text
+        self.copyAction = copyAction
+    }
 
     var body: some View {
-        Button {
-            ProviderActivityClipboard.copy(text)
-            didCopy = true
-        } label: {
-            Label(didCopy ? "Copied" : "Copy Details", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                feedback = copyAction.copy(text)
+            } label: {
+                Label(
+                    feedback == .copied ? "Copied" : "Copy Details",
+                    systemImage: feedback == .copied ? "checkmark" : "doc.on.doc"
+                )
+            }
+            .accessibilityIdentifier("activity.copyDetails")
+
+            if feedback == .failed {
+                Label(
+                    "Could not copy activity details.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("activity.copyError")
+            }
         }
-        .accessibilityIdentifier("activity.copyDetails")
+    }
+}
+
+enum ProviderActivityCopyFeedback: Equatable {
+    case idle
+    case copied
+    case failed
+}
+
+struct ProviderActivityCopyAction {
+    let write: (String) -> Bool
+
+    func copy(_ text: String) -> ProviderActivityCopyFeedback {
+        write(text) ? .copied : .failed
+    }
+
+    static var live: ProviderActivityCopyAction {
+        ProviderActivityCopyAction { text in
+            ProviderActivityClipboard.copy(text)
+        }
+    }
+}
+
+struct ProviderActivityActionDependencies {
+    let itemOpener: ProviderItemOpening?
+    let copyAction: ProviderActivityCopyAction
+
+    static var live: ProviderActivityActionDependencies {
+        ProviderActivityActionDependencies(
+            itemOpener: nil,
+            copyAction: .live
+        )
     }
 }
 
@@ -508,13 +652,16 @@ private struct ActivityMetadataFlow<Content: View>: View {
     }
 }
 
-private enum ProviderActivityClipboard {
-    static func copy(_ text: String) {
+enum ProviderActivityClipboard {
+    static func copy(_ text: String) -> Bool {
         #if os(macOS)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        return NSPasteboard.general.setString(text, forType: .string)
         #elseif canImport(UIKit)
         UIPasteboard.general.string = text
+        return true
+        #else
+        return false
         #endif
     }
 }

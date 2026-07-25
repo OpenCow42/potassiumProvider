@@ -126,6 +126,72 @@ final class potassiumProviderUITests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testActivitiesShowsExportFailureWhileTimelineIsEmpty() throws {
+        let app = launchSetupFixture(named: "activities-action-errors")
+        openActivities(in: app)
+
+        #if os(macOS)
+        let export = app.buttons["Export"]
+        #else
+        app.buttons["More Activity Actions"].tap()
+        let export = app.buttons["Export"]
+        #endif
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
+        export.tap()
+
+        let error = app.descendants(matching: .any)["activity.error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Could not create support log")
+        ).firstMatch.exists)
+    }
+
+    @MainActor
+    func testActivitiesDisablesRefreshWhenDatabaseIsUnavailable() throws {
+        let app = launchSetupFixture(named: "activities-unavailable")
+        openActivities(in: app)
+
+        XCTAssertTrue(app.staticTexts["Activities Unavailable"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["activity.error"].exists)
+        let refresh = app.buttons["activity.refresh"]
+        XCTAssertTrue(refresh.exists)
+        XCTAssertFalse(refresh.isEnabled)
+    }
+
+    @MainActor
+    func testActivitiesReportsRejectedItemOpenAndClipboardWrite() throws {
+        let app = launchSetupFixture(named: "activities-row-action-errors")
+        openActivities(in: app)
+
+        let entry = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "Failed enumeration")
+        ).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+
+        let openItem = app.buttons["activity.openInFiles"]
+        XCTAssertTrue(openItem.waitForExistence(timeout: 5))
+        openItem.tap()
+        #if os(macOS)
+        let unavailableText = "This item could not be found in Finder"
+        #else
+        let unavailableText = "This item is not currently available in Files"
+        #endif
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", unavailableText)
+        ).firstMatch.waitForExistence(timeout: 5))
+
+        let copy = app.buttons["activity.copyDetails"]
+        XCTAssertTrue(copy.exists)
+        copy.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["activity.copyError"]
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertFalse(app.buttons["Copied"].exists)
+    }
+
     #if os(macOS)
     @MainActor
     func testActivitiesExportPresentsSavePanel() throws {

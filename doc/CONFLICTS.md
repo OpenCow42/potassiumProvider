@@ -210,8 +210,9 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   macOS then asks `NSWorkspace` to reveal and select the item in Finder rather
   than opening the document in its default app. Resolution or Finder-selection
   failures show an inline message explaining that the item may have moved or
-  been deleted. Scrolling the timeline does not perform File Provider URL
-  lookups.
+  been deleted. A rejected Files presentation on iOS or visionOS also returns
+  the row to a retryable state and displays an inline unavailable-item message.
+  Scrolling the timeline does not perform File Provider URL lookups.
 - The default Errors filter shows conflicts and non-conflict failure activity.
   All Activity also includes successful enumeration, change sync, and item
   operations.
@@ -219,9 +220,16 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   older history. **Back to Latest** returns to the newest entry.
 - The Clear button removes activity event rows and automatically resolved
   conflict rows while preserving unresolved, blocked, and failed conflict rows.
+  Clear is exclusive with loading, refresh, and export; the reader returns to
+  the newest position only after the store confirms that clearing succeeded.
 - The Export button creates a redacted JSON support log. It pseudonymizes
   identifiers and omits item names, paths, staged-upload paths, and raw conflict
-  identifiers.
+  identifiers. Export and Refresh may run together because both are read-only.
+- Action failures use a dismissible banner above every timeline state,
+  including empty, initial-error, and unavailable-database views. Paging errors
+  remain attached to the paging footer. Copy feedback changes to **Copied**
+  only after the platform clipboard accepts the write; a rejected write stays
+  retryable and displays an inline error.
 - Failure rows store sanitized diagnostics such as category, severity, mapped
   provider error code, underlying error domain/code, recovery suggestion, and a
   short diagnostic summary. They do not store tokens or raw response bodies.

@@ -61,10 +61,25 @@ final class ConflictLogViewModel: ObservableObject {
             && isLoadingMore == false
             && isRefreshing == false
             && isClearing == false
+            && isExporting == false
     }
 
     var canExportSupportLog: Bool {
-        eventStore is any KDriveProviderEventExporting && isExporting == false
+        eventStore is any KDriveProviderEventExporting
+            && isExporting == false
+            && isClearing == false
+    }
+
+    var canRefresh: Bool {
+        timelineStore != nil
+            && isInitialLoading == false
+            && isLoadingMore == false
+            && isRefreshing == false
+            && isClearing == false
+    }
+
+    var canChangeFilter: Bool {
+        timelineStore != nil && isClearing == false
     }
 
     func start() async {
@@ -82,7 +97,7 @@ final class ConflictLogViewModel: ObservableObject {
     }
 
     func setFilter(_ newFilter: KDriveProviderTimelineFilter) async {
-        guard filter != newFilter else { return }
+        guard canChangeFilter, filter != newFilter else { return }
         filter = newFilter
         await load()
     }
@@ -143,6 +158,7 @@ final class ConflictLogViewModel: ObservableObject {
             isLoadingMore == false,
             isInitialLoading == false,
             isRefreshing == false,
+            isClearing == false,
             let nextCursor
         else {
             return
@@ -179,14 +195,7 @@ final class ConflictLogViewModel: ObservableObject {
             initialErrorMessage = "Activity database is unavailable."
             return
         }
-        guard
-            isRefreshing == false,
-            isInitialLoading == false,
-            isLoadingMore == false,
-            isClearing == false
-        else {
-            return
-        }
+        guard canRefresh else { return }
 
         let generation = loadGeneration
         isRefreshing = true
@@ -224,11 +233,13 @@ final class ConflictLogViewModel: ObservableObject {
         }
     }
 
-    func clearActivity() async {
+    @discardableResult
+    func clearActivity() async -> Bool {
         guard let eventStore else {
             actionErrorMessage = "Activity database is unavailable."
-            return
+            return false
         }
+        guard canClearActivity else { return false }
 
         isClearing = true
         defer { isClearing = false }
@@ -237,8 +248,10 @@ final class ConflictLogViewModel: ObservableObject {
             try await eventStore.removeActivityAndResolvedConflicts(domainIdentifier: nil)
             actionErrorMessage = nil
             await load()
+            return true
         } catch {
             actionErrorMessage = "Could not clear activity events: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -247,6 +260,7 @@ final class ConflictLogViewModel: ObservableObject {
             actionErrorMessage = "Support-log export is unavailable."
             return nil
         }
+        guard canExportSupportLog else { return nil }
 
         isExporting = true
         defer { isExporting = false }
@@ -262,6 +276,12 @@ final class ConflictLogViewModel: ObservableObject {
     }
 
     func recordExportFailure(_ error: Error) {
+        let cocoaError = error as NSError
+        if error is CancellationError
+            || (cocoaError.domain == NSCocoaErrorDomain
+                && cocoaError.code == CocoaError.Code.userCancelled.rawValue) {
+            return
+        }
         actionErrorMessage = "Could not export support log: \(error.localizedDescription)"
     }
 

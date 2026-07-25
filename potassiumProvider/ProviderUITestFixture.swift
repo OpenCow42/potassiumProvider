@@ -8,13 +8,51 @@ enum ProviderUITestFixture {
 
     static func makeModel() -> PotassiumProviderAppModel? {
         guard let fixtureName = ProcessInfo.processInfo.environment[environmentKey],
-              ["setup-navigation", "setup-error-banner", "activities-pagination"].contains(fixtureName)
+              [
+                  "setup-navigation",
+                  "setup-error-banner",
+                  "activities-pagination",
+                  "activities-action-errors",
+                  "activities-unavailable",
+                  "activities-row-action-errors",
+              ].contains(fixtureName)
         else {
             return nil
         }
 
         if fixtureName == "activities-pagination" {
             return makeActivitiesModel()
+        }
+        if fixtureName == "activities-action-errors" {
+            return PotassiumProviderAppModel(
+                eventStore: ProviderUITestActivityStore(activity: [], failsExport: true),
+                automaticallyReloadStoredState: false
+            )
+        }
+        if fixtureName == "activities-unavailable" {
+            return PotassiumProviderAppModel(
+                eventStore: nil,
+                automaticallyReloadStoredState: false
+            )
+        }
+        if fixtureName == "activities-row-action-errors" {
+            let event = KDriveProviderActivityEvent(
+                id: deterministicUUID(10_001),
+                occurredAt: Date(timeIntervalSince1970: 2_000_000),
+                domainIdentifier: "ui-domain",
+                driveID: 10,
+                kind: .enumeration,
+                outcome: .failure,
+                severity: .error,
+                itemIdentifier: "missing-item",
+                itemName: "Missing Item",
+                itemPath: "/Missing Item",
+                summary: "The item could not be enumerated."
+            )
+            return PotassiumProviderAppModel(
+                eventStore: ProviderUITestActivityStore(activity: [event]),
+                automaticallyReloadStoredState: false
+            )
         }
 
         let account = ProviderAccount(
@@ -100,6 +138,30 @@ enum ProviderUITestFixture {
     private static func deterministicUUID(_ index: Int) -> UUID {
         UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", index + 1))!
     }
+
+    static func activityActionDependencies() -> ProviderActivityActionDependencies? {
+        guard ProcessInfo.processInfo.environment[environmentKey] == "activities-row-action-errors"
+        else {
+            return nil
+        }
+        return ProviderActivityActionDependencies(
+            itemOpener: ProviderItemOpening(
+                resolve: { _, _ in
+                    .resolved(URL(fileURLWithPath: "/Missing Item"))
+                },
+                present: { _ in false }
+            ),
+            copyAction: ProviderActivityCopyAction(write: { _ in false })
+        )
+    }
+
+    static func initialActivityActionError() -> String? {
+        guard ProcessInfo.processInfo.environment[environmentKey] == "activities-unavailable"
+        else {
+            return nil
+        }
+        return "Activity actions are unavailable while the database is closed."
+    }
 }
 
 @MainActor
@@ -124,9 +186,11 @@ private struct ProviderUITestDomainRegistrar: ProviderDomainRegistering {
 
 private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging, KDriveProviderEventExporting {
     private var activity: [KDriveProviderActivityEvent]
+    private let failsExport: Bool
 
-    init(activity: [KDriveProviderActivityEvent]) {
+    init(activity: [KDriveProviderActivityEvent], failsExport: Bool = false) {
         self.activity = activity
+        self.failsExport = failsExport
     }
 
     func saveConflict(_: KDriveConflictEvent) {}
@@ -160,8 +224,11 @@ private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDrivePro
         activity.removeAll { $0.domainIdentifier == domainIdentifier }
     }
 
-    func supportLogData(domainIdentifier _: String?) -> Data {
-        Data(#"{"formatVersion":1,"events":[]}"#.utf8)
+    func supportLogData(domainIdentifier _: String?) throws -> Data {
+        if failsExport {
+            throw ProviderUITestActivityError.exportFailed
+        }
+        return Data(#"{"formatVersion":1,"events":[]}"#.utf8)
     }
 
     func timelinePage(
@@ -193,6 +260,14 @@ private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDrivePro
             nextCursor: hasMore ? pageEntries.last?.cursor : nil,
             hasMore: hasMore
         )
+    }
+}
+
+private enum ProviderUITestActivityError: LocalizedError {
+    case exportFailed
+
+    var errorDescription: String? {
+        "The fixture could not create a support log."
     }
 }
 #endif
