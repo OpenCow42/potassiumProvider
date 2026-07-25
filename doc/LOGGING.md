@@ -58,6 +58,9 @@ and request identifiers. It omits names, paths, staged-upload paths, and raw
 conflict identifiers. Summaries and diagnostic text are scrubbed of known item
 values, URLs, and paths before export.
 
+On macOS, the containing app enables sandboxed user-selected file read/write
+access so the save panel can create the support log at the chosen destination.
+
 The document includes event timestamps, operation kinds, outcomes, severities,
 sanitized summaries, numeric error codes, duration, network operation, HTTP
 status, and conflict-resolution state. It is not an export of the Apple unified

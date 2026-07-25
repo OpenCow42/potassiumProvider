@@ -81,5 +81,20 @@ struct MacAppPresenceTests {
 
         #expect(plist["LSUIElement"] as? Bool == true)
     }
+
+    @Test func macAppAllowsWritingUserSelectedSupportLogDestinations() throws {
+        let sourceFile = URL(fileURLWithPath: #filePath)
+        let projectDirectory = sourceFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let projectFileURL = projectDirectory
+            .appendingPathComponent("potassiumProvider.xcodeproj", isDirectory: true)
+            .appendingPathComponent("project.pbxproj")
+        let projectFile = try String(contentsOf: projectFileURL, encoding: .utf8)
+        let readWriteSetting = "ENABLE_USER_SELECTED_FILES = readwrite;"
+
+        #expect(projectFile.components(separatedBy: readWriteSetting).count - 1 == 2)
+        #expect(projectFile.contains("ENABLE_USER_SELECTED_FILES = readonly;") == false)
+    }
 }
 #endif

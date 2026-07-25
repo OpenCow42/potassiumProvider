@@ -122,7 +122,7 @@ private struct ProviderUITestDomainRegistrar: ProviderDomainRegistering {
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
 }
 
-private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging {
+private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging, KDriveProviderEventExporting {
     private var activity: [KDriveProviderActivityEvent]
 
     init(activity: [KDriveProviderActivityEvent]) {
@@ -158,6 +158,10 @@ private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDrivePro
 
     func removeEvents(domainIdentifier: String) {
         activity.removeAll { $0.domainIdentifier == domainIdentifier }
+    }
+
+    func supportLogData(domainIdentifier _: String?) -> Data {
+        Data(#"{"formatVersion":1,"events":[]}"#.utf8)
     }
 
     func timelinePage(

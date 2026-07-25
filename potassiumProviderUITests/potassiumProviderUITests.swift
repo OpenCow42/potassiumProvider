@@ -126,6 +126,25 @@ final class potassiumProviderUITests: XCTestCase {
         }
     }
 
+    #if os(macOS)
+    @MainActor
+    func testActivitiesExportPresentsSavePanel() throws {
+        let app = launchSetupFixture(named: "activities-pagination")
+        openActivities(in: app)
+
+        let export = app.buttons["Export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
+        XCTAssertTrue(export.isEnabled)
+        export.tap()
+
+        let savePanel = app.sheets.firstMatch
+        XCTAssertTrue(savePanel.waitForExistence(timeout: 5))
+        let cancel = savePanel.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 2))
+        cancel.tap()
+    }
+    #endif
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
