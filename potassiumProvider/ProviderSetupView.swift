@@ -80,6 +80,7 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
 
 struct ProviderSetupView: View {
     @ObservedObject var model: PotassiumProviderAppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var path: [ProviderSetupRoute] = []
 
     var body: some View {
@@ -89,11 +90,18 @@ struct ProviderSetupView: View {
                     destination(for: route)
                 }
         }
-        .alert("kDrive", isPresented: errorBinding) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(model.errorMessage ?? "")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let errorMessage = model.errorMessage {
+                ProviderSetupErrorBanner(message: errorMessage) {
+                    model.errorMessage = nil
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(
+            reduceMotion ? .easeOut(duration: 0.16) : .snappy(duration: 0.28, extraBounce: 0),
+            value: model.errorMessage
+        )
     }
 
     private var accountList: some View {
@@ -105,9 +113,19 @@ struct ProviderSetupView: View {
                 }
                 .accessibilityIdentifier("setup.addAccount")
             }
+            .disabled(model.isReloadingStoredState)
 
             Section("Accounts") {
-                if model.accounts.isEmpty {
+                if model.isReloadingStoredState && model.accounts.isEmpty {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading saved accounts…")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Loading saved accounts")
+                } else if model.accounts.isEmpty {
                     ContentUnavailableView(
                         "No Accounts Connected",
                         systemImage: "person.crop.circle.badge.questionmark",
@@ -128,7 +146,7 @@ struct ProviderSetupView: View {
                 }
             }
 
-            if let statusMessage = model.statusMessage {
+            if model.isReloadingStoredState == false, let statusMessage = model.statusMessage {
                 Section {
                     ProviderFeedbackLabel(message: statusMessage)
                 }
@@ -150,7 +168,11 @@ struct ProviderSetupView: View {
                 } label: {
                     Label("Refresh All Accounts", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.accounts.isEmpty || model.loadingDriveAccountIdentifiers.isEmpty == false)
+                .disabled(
+                    model.isReloadingStoredState ||
+                    model.accounts.isEmpty ||
+                    model.loadingDriveAccountIdentifiers.isEmpty == false
+                )
                 .accessibilityIdentifier("setup.refreshAll")
             }
         }
@@ -173,16 +195,6 @@ struct ProviderSetupView: View {
         case .drive(let key):
             ProviderDriveManagementView(model: model, key: key)
                 .providerNavigationAnimation()
-        }
-    }
-
-    private var errorBinding: Binding<Bool> {
-        Binding {
-            model.errorMessage != nil
-        } set: { isPresented in
-            if isPresented == false {
-                model.errorMessage = nil
-            }
         }
     }
 
@@ -803,6 +815,46 @@ private struct ProviderFeedbackLabel: View {
         Label(message, systemImage: "checkmark.circle")
             .foregroundStyle(.secondary)
             .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ProviderSetupErrorBanner: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("kDrive")
+                    .font(.headline)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss kDrive message")
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(.quaternary, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+        .padding()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("setup.errorBanner")
     }
 }
 

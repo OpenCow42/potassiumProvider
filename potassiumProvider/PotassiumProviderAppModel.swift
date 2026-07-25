@@ -32,6 +32,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var knownFolderSyncStatesByDomainIdentifier: [String: ProviderKnownFolderSyncState] = [:]
     @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
     @Published private(set) var activeDriveActions: [ProviderDriveKey: ProviderDriveAction] = [:]
+    @Published private(set) var isReloadingStoredState = false
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -75,6 +76,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
         domains = initialDomains
+        isReloadingStoredState = automaticallyReloadStoredState
         statusMessage = initialAccounts.isEmpty
             ? "No accounts connected."
             : "Loaded \(initialAccounts.count) account\(initialAccounts.count == 1 ? "" : "s")."
@@ -183,6 +185,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func reloadStoredState() async {
+        isReloadingStoredState = true
+        defer { isReloadingStoredState = false }
+
         do {
             try await migrateLegacyStateIfNeeded()
             accounts = try await accountStore.allAccounts()

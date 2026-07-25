@@ -7,7 +7,9 @@ enum ProviderUITestFixture {
     private static let environmentKey = "POTASSIUM_UI_TEST_FIXTURE"
 
     static func makeModel() -> PotassiumProviderAppModel? {
-        guard ProcessInfo.processInfo.environment[environmentKey] == "setup-navigation" else {
+        guard let fixtureName = ProcessInfo.processInfo.environment[environmentKey],
+              ["setup-navigation", "setup-error-banner"].contains(fixtureName)
+        else {
             return nil
         }
 
@@ -42,7 +44,7 @@ enum ProviderUITestFixture {
         let fixtureDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("potassiumProviderUITestFixture", isDirectory: true)
 
-        return PotassiumProviderAppModel(
+        let model = PotassiumProviderAppModel(
             accountStore: ProviderAccountFileStore(
                 directoryURL: fixtureDirectory.appendingPathComponent("Accounts", isDirectory: true)
             ),
@@ -59,6 +61,10 @@ enum ProviderUITestFixture {
             ],
             initialDomains: [configuration]
         )
+        if fixtureName == "setup-error-banner" {
+            model.errorMessage = "Could not refresh kDrive details."
+        }
+        return model
     }
 }
 

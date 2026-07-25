@@ -45,7 +45,10 @@ Setup uses a three-level navigation hierarchy:
 
 Account creation has its own destination. Infomaniak OAuth is the primary path;
 manual access-token entry remains available in an Advanced section for
-development.
+development. While stored state is being restored, Setup shows an explicit
+loading row instead of briefly presenting the empty-account state. Setup errors
+appear in a nonmodal, dismissible banner so background refreshes do not interrupt
+navigation with a transient alert.
 
 The Status dashboard only uses local/provider-safe state: local account records,
 configured domain records, currently loaded kDrive summaries, SQLite listing

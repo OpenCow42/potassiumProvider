@@ -93,6 +93,41 @@ struct ProviderSetupViewTests {
         #expect(removed.isConfigured == false)
     }
 
+    @Test func storedStateReloadPublishesLoadingUntilAccountsAreAvailable() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-a",
+            displayName: "Account",
+            authenticationKind: .oauth
+        )
+        let accountStore = BlockingSetupAccountStore(accounts: [account])
+        let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: SetupTestOAuthAuthenticator(),
+            domainRegistrar: SetupTestDomainRegistrar(),
+            automaticallyReloadStoredState: false
+        )
+
+        #expect(model.isReloadingStoredState == false)
+        let reload = Task { await model.reloadStoredState() }
+        await accountStore.waitUntilAllAccountsStarts()
+
+        #expect(model.isReloadingStoredState)
+
+        await accountStore.resumeAllAccounts()
+        await reload.value
+
+        #expect(model.isReloadingStoredState == false)
+        #expect(model.accounts == [account])
+    }
+
     @Test func duplicateAddIsGuardedAndActionStateClears() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -253,4 +288,51 @@ private final class SetupTestOAuthAuthenticator: KDriveOAuthAuthenticating {
 private struct SetupTestDomainRegistrar: ProviderDomainRegistering {
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+}
+
+private actor BlockingSetupAccountStore: ProviderAccountStoring {
+    private var accounts: [ProviderAccount]
+    private var hasStartedAllAccounts = false
+    private var startContinuations: [CheckedContinuation<Void, Never>] = []
+    private var allAccountsContinuation: CheckedContinuation<Void, Never>?
+
+    init(accounts: [ProviderAccount]) {
+        self.accounts = accounts
+    }
+
+    func allAccounts() async -> [ProviderAccount] {
+        hasStartedAllAccounts = true
+        let waiting = startContinuations
+        startContinuations.removeAll()
+        waiting.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            allAccountsContinuation = continuation
+        }
+        return accounts
+    }
+
+    func account(accountIdentifier: String) -> ProviderAccount? {
+        accounts.first { $0.accountIdentifier == accountIdentifier }
+    }
+
+    func save(_ account: ProviderAccount) {
+        accounts.removeAll { $0.accountIdentifier == account.accountIdentifier }
+        accounts.append(account)
+    }
+
+    func remove(accountIdentifier: String) {
+        accounts.removeAll { $0.accountIdentifier == accountIdentifier }
+    }
+
+    func waitUntilAllAccountsStarts() async {
+        guard hasStartedAllAccounts == false else { return }
+        await withCheckedContinuation { continuation in
+            startContinuations.append(continuation)
+        }
+    }
+
+    func resumeAllAccounts() {
+        allAccountsContinuation?.resume()
+        allAccountsContinuation = nil
+    }
 }

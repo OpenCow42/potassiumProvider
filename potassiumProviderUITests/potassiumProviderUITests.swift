@@ -82,6 +82,19 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
+    func testSetupPresentsErrorsAsDismissibleBannerInsteadOfAlert() throws {
+        let app = launchSetupFixture(named: "setup-error-banner")
+        openSetup(in: app)
+
+        let banner = app.descendants(matching: .any)["setup.errorBanner"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.alerts.count, 0)
+
+        app.buttons["Dismiss kDrive message"].tap()
+        XCTAssertTrue(banner.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
@@ -90,9 +103,9 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
-    private func launchSetupFixture() -> XCUIApplication {
+    private func launchSetupFixture(named fixtureName: String = "setup-navigation") -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchEnvironment["POTASSIUM_UI_TEST_FIXTURE"] = "setup-navigation"
+        app.launchEnvironment["POTASSIUM_UI_TEST_FIXTURE"] = fixtureName
         app.launch()
         return app
     }
