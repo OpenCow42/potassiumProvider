@@ -32,7 +32,9 @@ close option. Closing the setup window does not quit the app.
 
 The main window has three tabs: Status, Setup, and Activities. Status is the
 default tab and is a read-only dashboard. Account and drive actions live under
-Setup rather than on the dashboard.
+Setup rather than on the dashboard. Switching tabs uses the same short
+slide-and-fade motion as Setup navigation; Reduce Motion removes the horizontal
+movement and keeps a brief fade.
 
 Setup uses a three-level navigation hierarchy:
 

@@ -17,18 +17,21 @@ struct ContentView: View {
             ProviderStatusView(appModel: model) {
                 selectedTab = .setup
             }
+            .providerNavigationAnimation(animatesInitialAppearance: false)
             .tabItem {
                 Label("Status", systemImage: "gauge.medium")
             }
             .tag(ProviderAppTab.status)
 
             ProviderSetupView(model: model)
+                .providerNavigationAnimation()
                 .tabItem {
                     Label("Setup", systemImage: "externaldrive.connected.to.line.below")
                 }
                 .tag(ProviderAppTab.setup)
 
             ConflictLogView(eventStore: model.providerEventStore)
+                .providerNavigationAnimation()
                 .tabItem {
                     Label("Activities", systemImage: "clock.arrow.circlepath")
                 }

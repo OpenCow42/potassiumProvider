@@ -878,13 +878,15 @@ private extension ProviderAccountAuthenticationKind {
     }
 }
 
-private extension View {
+extension View {
     func providerNavigationAnimation(animatesInitialAppearance: Bool = true) -> some View {
         modifier(ProviderNavigationAnimationModifier(
             animatesInitialAppearance: animatesInitialAppearance
         ))
     }
+}
 
+private extension View {
     @ViewBuilder
     func platformPasswordEntry() -> some View {
         #if canImport(UIKit)
