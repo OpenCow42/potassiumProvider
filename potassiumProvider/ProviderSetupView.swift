@@ -840,10 +840,12 @@ private struct ProviderSetupErrorBanner: View {
             Spacer(minLength: 8)
 
             Button(action: dismiss) {
-                Image(systemName: "xmark")
+                Label("Dismiss", systemImage: "xmark")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
+            .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Dismiss kDrive message")
+            .accessibilityIdentifier("setup.dismissError")
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))

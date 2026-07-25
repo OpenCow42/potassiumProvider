@@ -62,9 +62,9 @@ final class potassiumProviderUITests: XCTestCase {
         remove.tap()
 
         XCTAssertTrue(app.buttons["Remove from Files"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "Remote kDrive files are not deleted")
-        ).firstMatch.exists)
+        XCTAssertTrue(
+            text(containing: "Remote kDrive files are not deleted", in: app).exists
+        )
     }
 
     @MainActor
@@ -90,7 +90,13 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(banner.waitForExistence(timeout: 5))
         XCTAssertEqual(app.alerts.count, 0)
 
-        app.buttons["Dismiss kDrive message"].tap()
+        let dismiss = app.buttons["setup.dismissError"]
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 5))
+        #if os(macOS)
+        app.typeKey(.escape, modifierFlags: [])
+        #else
+        dismiss.tap()
+        #endif
         XCTAssertTrue(banner.waitForNonExistence(timeout: 5))
     }
 
@@ -99,19 +105,25 @@ final class potassiumProviderUITests: XCTestCase {
         let app = launchSetupFixture(named: "activities-pagination")
         openActivities(in: app)
 
-        XCTAssertTrue(app.staticTexts["Item 0000"].waitForExistence(timeout: 5))
+        let latestEntry = app.buttons[
+            "activity.entry.activity-00000000-0000-0000-0000-000000000001"
+        ]
+        XCTAssertTrue(latestEntry.waitForExistence(timeout: 5))
         let timeline = app.scrollViews["activity.timeline"]
         XCTAssertTrue(timeline.waitForExistence(timeout: 5))
 
-        for _ in 0..<14 where app.staticTexts["Item 0075"].exists == false {
+        let olderEntry = app.buttons[
+            "activity.entry.activity-00000000-0000-0000-0000-000000000076"
+        ]
+        for _ in 0..<14 where olderEntry.exists == false {
             timeline.swipeUp()
         }
 
-        XCTAssertTrue(app.staticTexts["Item 0075"].waitForExistence(timeout: 5))
+        XCTAssertTrue(olderEntry.waitForExistence(timeout: 5))
         let backToLatest = app.buttons["activity.backToLatest"]
         XCTAssertTrue(backToLatest.waitForExistence(timeout: 5))
         backToLatest.tap()
-        XCTAssertTrue(app.staticTexts["Item 0000"].waitForExistence(timeout: 5))
+        XCTAssertTrue(latestEntry.waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -142,9 +154,9 @@ final class potassiumProviderUITests: XCTestCase {
 
         let error = app.descendants(matching: .any)["activity.error"]
         XCTAssertTrue(error.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "Could not create support log")
-        ).firstMatch.exists)
+        XCTAssertTrue(
+            text(containing: "Could not create support log", in: app).exists
+        )
     }
 
     @MainActor
@@ -152,7 +164,10 @@ final class potassiumProviderUITests: XCTestCase {
         let app = launchSetupFixture(named: "activities-unavailable")
         openActivities(in: app)
 
-        XCTAssertTrue(app.staticTexts["Activities Unavailable"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            text(containing: "Activities Unavailable", in: app)
+                .waitForExistence(timeout: 5)
+        )
         XCTAssertTrue(app.descendants(matching: .any)["activity.error"].exists)
         let refresh = app.buttons["activity.refresh"]
         XCTAssertTrue(refresh.exists)
@@ -178,9 +193,10 @@ final class potassiumProviderUITests: XCTestCase {
         #else
         let unavailableText = "This item is not currently available in Files"
         #endif
-        XCTAssertTrue(app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", unavailableText)
-        ).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            text(containing: unavailableText, in: app)
+                .waitForExistence(timeout: 5)
+        )
 
         let copy = app.buttons["activity.copyDetails"]
         XCTAssertTrue(copy.exists)
@@ -229,25 +245,46 @@ final class potassiumProviderUITests: XCTestCase {
 
     @MainActor
     private func openSetup(in app: XCUIApplication) {
-        let tabBarButton = app.tabBars.buttons["Setup"]
-        if tabBarButton.waitForExistence(timeout: 2) {
-            tabBarButton.tap()
-        } else {
-            let setupButton = app.buttons["Setup"]
-            XCTAssertTrue(setupButton.waitForExistence(timeout: 5))
-            setupButton.tap()
-        }
+        openTab(named: "Setup", in: app)
     }
 
     @MainActor
     private func openActivities(in app: XCUIApplication) {
-        let tabBarButton = app.tabBars.buttons["Activities"]
+        openTab(named: "Activities", in: app)
+    }
+
+    @MainActor
+    private func text(containing text: String, in app: XCUIApplication) -> XCUIElement {
+        app.staticTexts.matching(
+            NSPredicate(
+                format: "label CONTAINS %@ OR value CONTAINS %@",
+                text,
+                text
+            )
+        ).firstMatch
+    }
+
+    @MainActor
+    private func openTab(named name: String, in app: XCUIApplication) {
+        #if os(macOS)
+        let tab = app.radioButtons[name]
+        XCTAssertTrue(
+            tab.waitForExistence(timeout: 5),
+            "The \(name) tab was not available."
+        )
+        tab.tap()
+        #else
+        let tabBarButton = app.tabBars.buttons[name]
         if tabBarButton.waitForExistence(timeout: 2) {
             tabBarButton.tap()
         } else {
-            let activitiesButton = app.buttons["Activities"]
-            XCTAssertTrue(activitiesButton.waitForExistence(timeout: 5))
-            activitiesButton.tap()
+            let tabButton = app.buttons[name]
+            XCTAssertTrue(
+                tabButton.waitForExistence(timeout: 5),
+                "The \(name) tab was not available."
+            )
+            tabButton.tap()
         }
+        #endif
     }
 }

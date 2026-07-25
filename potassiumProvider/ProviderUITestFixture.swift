@@ -31,7 +31,7 @@ enum ProviderUITestFixture {
         }
         if fixtureName == "activities-unavailable" {
             return PotassiumProviderAppModel(
-                eventStore: nil,
+                eventStore: ProviderUITestUnavailableEventStore(),
                 automaticallyReloadStoredState: false
             )
         }
@@ -261,6 +261,38 @@ private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDrivePro
             hasMore: hasMore
         )
     }
+}
+
+private actor ProviderUITestUnavailableEventStore: KDriveProviderEventStoring {
+    func saveConflict(_: KDriveConflictEvent) {}
+
+    func recordActivity(_: KDriveProviderActivityEvent) {}
+
+    func recentConflicts(
+        domainIdentifier _: String?,
+        limit _: Int
+    ) -> [KDriveConflictEvent] {
+        []
+    }
+
+    func recentActivity(
+        domainIdentifier _: String?,
+        limit _: Int
+    ) -> [KDriveProviderActivityEvent] {
+        []
+    }
+
+    func recentActivity(
+        domainIdentifier _: String?,
+        outcome _: KDriveProviderActivityOutcome?,
+        limit _: Int
+    ) -> [KDriveProviderActivityEvent] {
+        []
+    }
+
+    func removeActivityAndResolvedConflicts(domainIdentifier _: String?) {}
+
+    func removeEvents(domainIdentifier _: String) {}
 }
 
 private enum ProviderUITestActivityError: LocalizedError {
