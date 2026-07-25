@@ -1,92 +1,63 @@
-import Combine
-import FileProvider
 import PotassiumProviderCore
 import SwiftUI
 import UniformTypeIdentifiers
-#if os(macOS)
-import AppKit
-#endif
 
 struct ConflictLogView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var model: ConflictLogViewModel
     @State private var isClearConfirmationPresented = false
     @State private var isSupportLogExporterPresented = false
     @State private var supportLogDocument: ProviderSupportLogDocument?
+    @State private var scrollPositionID: String?
+    @State private var visibleEntryIDs: [String] = []
+    private let actionDependencies: ProviderActivityActionDependencies
 
-    init(eventStore: (any KDriveProviderEventStoring)?) {
-        _model = StateObject(wrappedValue: ConflictLogViewModel(eventStore: eventStore))
+    init(
+        eventStore: (any KDriveProviderEventStoring)?,
+        actionDependencies: ProviderActivityActionDependencies? = nil
+    ) {
+        let viewModel = ConflictLogViewModel(eventStore: eventStore)
+        #if DEBUG
+        viewModel.actionErrorMessage = ProviderUITestFixture.initialActivityActionError()
+        self.actionDependencies = actionDependencies
+            ?? ProviderUITestFixture.activityActionDependencies()
+            ?? .live
+        #else
+        self.actionDependencies = actionDependencies ?? .live
+        #endif
+        _model = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    activityFilterControl
+            VStack(spacing: 0) {
+                filterControl
+                Divider()
+                if let actionErrorMessage = model.actionErrorMessage {
+                    ActivityInlineError(
+                        message: actionErrorMessage,
+                        dismiss: model.dismissActionError
+                    )
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
                 }
-
-                if let errorMessage = model.errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if model.timelineItems.isEmpty {
-                    Section {
-                        Label(emptyActivityMessage, systemImage: "checkmark.seal")
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Section(model.showsActivity ? "Full Activity" : "Errors and Conflicts") {
-                        ForEach(model.timelineItems) { item in
-                            switch item {
-                            case .conflict(let event):
-                                ConflictEventRow(event: event)
-                            case .activity(let event):
-                                ActivityEventRow(event: event)
-                            }
-                        }
-                    }
-                }
+                timelineContent
             }
             .navigationTitle("Activities")
-            .toolbar {
-                ToolbarItemGroup(placement: activityToolbarPlacement) {
-                    Button(role: .destructive) {
-                        isClearConfirmationPresented = true
-                    } label: {
-                        Label(model.isClearing ? "Clearing" : "Clear", systemImage: "trash")
-                    }
-                    .disabled(model.canClearActivity == false)
-
-                    Button {
-                        Task { await model.load() }
-                    } label: {
-                        Label(model.isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(model.isLoading)
-
-                    Button {
-                        Task {
-                            guard let data = await model.supportLogData() else { return }
-                            supportLogDocument = ProviderSupportLogDocument(data: data)
-                            isSupportLogExporterPresented = true
-                        }
-                    } label: {
-                        Label(model.isExporting ? "Exporting" : "Export", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(model.canExportSupportLog == false)
-                }
-            }
+            .toolbar { activityToolbar }
             .task {
-                await model.load()
+                await model.start()
             }
-            .onChange(of: model.showsActivity) { _, _ in
-                Task { await model.load() }
+            .onDisappear {
+                model.stop()
             }
             .confirmationDialog("Clear Activities?", isPresented: $isClearConfirmationPresented) {
                 Button("Clear Events and Resolved Conflicts", role: .destructive) {
-                    Task { await model.clearActivity() }
+                    Task {
+                        if await model.clearActivity() {
+                            moveToLatest(animated: false)
+                        }
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -105,217 +76,276 @@ struct ConflictLogView: View {
         }
     }
 
-    private var activityFilterControl: some View {
-        Picker("Activity visibility", selection: activityFilter) {
-            ForEach(ActivityFilterOption.allCases) { option in
-                Label(option.title, systemImage: option.systemImage)
-                    .tag(option)
-            }
+    private var filterControl: some View {
+        Picker("Activity visibility", selection: filterBinding) {
+            Label("Errors", systemImage: "exclamationmark.triangle")
+                .tag(KDriveProviderTimelineFilter.errorsAndConflicts)
+            Label("All Activity", systemImage: "clock.arrow.circlepath")
+                .tag(KDriveProviderTimelineFilter.allActivity)
         }
         .pickerStyle(.segmented)
         .controlSize(.large)
         .labelsHidden()
         .frame(maxWidth: 420)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
         .accessibilityLabel("Activity visibility")
-        .providerActivityControlGlass()
+        .accessibilityIdentifier("activity.filter")
+        .disabled(model.canChangeFilter == false)
     }
 
-    private var activityFilter: Binding<ActivityFilterOption> {
+    private var filterBinding: Binding<KDriveProviderTimelineFilter> {
         Binding {
-            model.showsActivity ? .fullActivity : .errorsOnly
-        } set: { option in
-            model.showsActivity = option.showsActivity
-        }
-    }
-
-    private var emptyActivityMessage: String {
-        model.showsActivity ? "No activities yet" : "No errors or conflicts yet"
-    }
-
-    private var activityToolbarPlacement: ToolbarItemPlacement {
-        #if os(macOS)
-        .automatic
-        #else
-        .topBarTrailing
-        #endif
-    }
-}
-
-private enum ActivityFilterOption: CaseIterable, Identifiable {
-    case errorsOnly
-    case fullActivity
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .errorsOnly:
-            return "Only Errors"
-        case .fullActivity:
-            return "Full Activity"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .errorsOnly:
-            return "exclamationmark.triangle"
-        case .fullActivity:
-            return "clock.arrow.circlepath"
-        }
-    }
-
-    var showsActivity: Bool {
-        self == .fullActivity
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func providerActivityControlGlass() -> some View {
-        #if os(visionOS)
-        self
-        #else
-        glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 8))
-        #endif
-    }
-
-    @ViewBuilder
-    func providerActivityCopyableText(_ text: String) -> some View {
-        #if os(macOS)
-        textSelection(.enabled)
-            .contextMenu {
-                Button {
-                    ProviderActivityClipboard.copy(text)
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-            }
-        #else
-        self
-        #endif
-    }
-}
-
-#if os(macOS)
-private enum ProviderActivityClipboard {
-    static func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-#endif
-
-@MainActor
-final class ConflictLogViewModel: ObservableObject {
-    @Published private(set) var conflicts: [KDriveConflictEvent] = []
-    @Published private(set) var activity: [KDriveProviderActivityEvent] = []
-    @Published private(set) var isLoading = false
-    @Published private(set) var isClearing = false
-    @Published private(set) var isExporting = false
-    @Published var showsActivity = false
-    @Published var errorMessage: String?
-
-    private let eventStore: (any KDriveProviderEventStoring)?
-    private var eventObservationTask: Task<Void, Never>?
-
-    init(eventStore: (any KDriveProviderEventStoring)?) {
-        self.eventStore = eventStore
-        if let eventStore = eventStore as? any KDriveProviderEventObserving {
-            eventObservationTask = Task { [weak self] in
-                let changes = await eventStore.eventChanges(pollInterval: 1)
-                for await _ in changes {
-                    await self?.load()
-                }
+            model.filter
+        } set: { filter in
+            Task {
+                await model.setFilter(filter)
+                moveToLatest(animated: true)
             }
         }
     }
 
-    deinit {
-        eventObservationTask?.cancel()
-    }
-
-    var timelineItems: [ConflictTimelineItem] {
-        let conflictItems = conflicts.map(ConflictTimelineItem.conflict)
-        let activityItems = activity
-            .filter { $0.relatedConflictID == nil }
-            .filter { showsActivity || $0.outcome == .failure }
-            .map(ConflictTimelineItem.activity)
-        return (conflictItems + activityItems).sorted { $0.date > $1.date }
-    }
-
-    var canClearActivity: Bool {
-        eventStore != nil && isLoading == false && isClearing == false
-    }
-
-    var canExportSupportLog: Bool {
-        eventStore is any KDriveProviderEventExporting && isExporting == false
-    }
-
-    func load() async {
-        guard let eventStore else {
-            conflicts = []
-            activity = []
-            errorMessage = "Activity database is unavailable."
-            return
-        }
-
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            conflicts = try await eventStore.recentConflicts(domainIdentifier: nil, limit: 100)
-            activity = try await eventStore.recentActivity(
-                domainIdentifier: nil,
-                outcome: showsActivity ? nil : .failure,
-                limit: 100
+    @ViewBuilder
+    private var timelineContent: some View {
+        if model.isDatabaseUnavailable {
+            ContentUnavailableView(
+                "Activities Unavailable",
+                systemImage: "externaldrive.badge.exclamationmark",
+                description: Text("The activity database could not be opened.")
             )
-            errorMessage = nil
-        } catch {
-            errorMessage = "Could not load activity events: \(error.localizedDescription)"
+        } else if model.isInitialLoading && model.entries.isEmpty {
+            ProgressView("Loading activities…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("activity.initialLoading")
+        } else if let errorMessage = model.initialErrorMessage, model.entries.isEmpty {
+            ContentUnavailableView {
+                Label("Could Not Load Activities", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(errorMessage)
+            } actions: {
+                Button("Try Again") {
+                    Task { await model.load() }
+                }
+                .accessibilityIdentifier("activity.retryInitial")
+            }
+        } else if model.entries.isEmpty {
+            ContentUnavailableView(
+                emptyActivityTitle,
+                systemImage: "checkmark.seal",
+                description: Text(emptyActivityDescription)
+            )
+        } else {
+            timelineScrollView
         }
     }
 
-    func clearActivity() async {
-        guard let eventStore else {
-            conflicts = []
-            activity = []
-            errorMessage = "Activity database is unavailable."
-            return
-        }
+    private var timelineScrollView: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    ForEach(model.sections) { section in
+                        Section {
+                            ForEach(section.entries) { entry in
+                                ProviderActivityTimelineRow(
+                                    entry: entry,
+                                    actionDependencies: actionDependencies
+                                )
+                                    .id(entry.id)
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 5)
+                            }
+                        } header: {
+                            ActivityDateHeader(date: section.id)
+                        }
+                    }
 
-        isClearing = true
-        defer { isClearing = false }
+                    paginationFooter
+                }
+                .scrollTargetLayout()
+                .padding(.bottom, 12)
+            }
+            .scrollPosition(id: $scrollPositionID)
+            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.35) { visibleIDs in
+                visibleEntryIDs = visibleIDs
+                Task { await model.loadMoreIfNeeded(visibleEntryIDs: visibleIDs) }
+            }
+            .refreshable {
+                await model.refresh()
+            }
+            .accessibilityIdentifier("activity.timeline")
 
-        do {
-            try await eventStore.removeActivityAndResolvedConflicts(domainIdentifier: nil)
-            await load()
-        } catch {
-            errorMessage = "Could not clear activity events: \(error.localizedDescription)"
+            if isAwayFromLatest {
+                Button {
+                    moveToLatest(animated: true)
+                } label: {
+                    Label("Back to Latest", systemImage: "arrow.up.to.line")
+                }
+                .buttonStyle(.borderedProminent)
+                .labelStyle(.titleAndIcon)
+                .padding()
+                .accessibilityIdentifier("activity.backToLatest")
+            }
         }
     }
 
-    func supportLogData() async -> Data? {
-        guard let eventStore = eventStore as? any KDriveProviderEventExporting else {
-            errorMessage = "Support-log export is unavailable."
-            return nil
-        }
-
-        isExporting = true
-        defer { isExporting = false }
-
-        do {
-            let data = try await eventStore.supportLogData(domainIdentifier: nil)
-            errorMessage = nil
-            return data
-        } catch {
-            errorMessage = "Could not create support log: \(error.localizedDescription)"
-            return nil
+    @ViewBuilder
+    private var paginationFooter: some View {
+        if model.isLoadingMore {
+            HStack {
+                Spacer()
+                ProgressView("Loading older activity…")
+                Spacer()
+            }
+            .padding()
+            .accessibilityIdentifier("activity.loadingMore")
+        } else if let paginationErrorMessage = model.paginationErrorMessage {
+            VStack(spacing: 8) {
+                Label(paginationErrorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+                Button("Try Again") {
+                    Task { await model.loadMore() }
+                }
+                .accessibilityIdentifier("activity.retryPage")
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+        } else if model.hasMore == false {
+            Label("End of activity", systemImage: "checkmark")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .accessibilityIdentifier("activity.end")
         }
     }
 
-    func recordExportFailure(_ error: Error) {
-        errorMessage = "Could not export support log: \(error.localizedDescription)"
+    @ToolbarContentBuilder
+    private var activityToolbar: some ToolbarContent {
+        #if os(macOS)
+        ToolbarItemGroup(placement: .automatic) {
+            clearButton
+            refreshButton
+            exportButton
+        }
+        #else
+        ToolbarItem(placement: .topBarTrailing) {
+            refreshButton
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                exportButton
+                clearButton
+            } label: {
+                Label("More Activity Actions", systemImage: "ellipsis.circle")
+            }
+        }
+        #endif
+    }
+
+    private var clearButton: some View {
+        Button(role: .destructive) {
+            isClearConfirmationPresented = true
+        } label: {
+            Label(model.isClearing ? "Clearing" : "Clear", systemImage: "trash")
+        }
+        .disabled(model.canClearActivity == false)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task { await model.refresh() }
+        } label: {
+            Label(model.isRefreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+        }
+        .disabled(model.canRefresh == false)
+        .accessibilityIdentifier("activity.refresh")
+    }
+
+    private var exportButton: some View {
+        Button {
+            Task {
+                guard let data = await model.supportLogData() else { return }
+                supportLogDocument = ProviderSupportLogDocument(data: data)
+                isSupportLogExporterPresented = true
+            }
+        } label: {
+            Label(model.isExporting ? "Exporting" : "Export", systemImage: "square.and.arrow.up")
+        }
+        .disabled(model.canExportSupportLog == false)
+    }
+
+    private var isAwayFromLatest: Bool {
+        guard let latestID = model.entries.first?.id else { return false }
+        guard visibleEntryIDs.isEmpty == false else { return false }
+        return visibleEntryIDs.contains(latestID) == false
+    }
+
+    private func moveToLatest(animated: Bool) {
+        guard let latestID = model.entries.first?.id else { return }
+        if animated && reduceMotion == false {
+            withAnimation(.snappy) {
+                scrollPositionID = latestID
+            }
+        } else {
+            scrollPositionID = latestID
+        }
+    }
+
+    private var emptyActivityTitle: String {
+        model.showsActivity ? "No Activities Yet" : "No Errors or Conflicts"
+    }
+
+    private var emptyActivityDescription: String {
+        model.showsActivity
+            ? "Provider activity will appear here as files synchronize."
+            : "Everything looks clear. Switch to All Activity to see successful operations."
+    }
+}
+
+private struct ActivityDateHeader: View {
+    let date: Date
+
+    var body: some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.vertical, 7)
+            .background(.bar)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var title: String {
+        let calendar = Calendar.autoupdatingCurrent
+        if calendar.isDateInToday(date) {
+            return "Today"
+        }
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+        return date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+    }
+}
+
+private struct ActivityInlineError: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Dismiss", systemImage: "xmark", action: dismiss)
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("Dismiss activity message")
+        }
+        .padding(12)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("activity.error")
     }
 }
 
@@ -337,504 +367,5 @@ private struct ProviderSupportLogDocument: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: data)
-    }
-}
-
-enum ConflictTimelineItem: Identifiable {
-    case conflict(KDriveConflictEvent)
-    case activity(KDriveProviderActivityEvent)
-
-    var id: String {
-        switch self {
-        case .conflict(let event):
-            return "conflict-\(event.id.uuidString)"
-        case .activity(let event):
-            return "activity-\(event.id.uuidString)"
-        }
-    }
-
-    var date: Date {
-        switch self {
-        case .conflict(let event):
-            return event.resolvedAt ?? event.detectedAt
-        case .activity(let event):
-            return event.occurredAt
-        }
-    }
-}
-
-private struct ConflictEventRow: View {
-    let event: KDriveConflictEvent
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Label(eventTitle, systemImage: event.resolutionState.systemImage)
-                    .font(.headline)
-                Spacer()
-                Text(event.detectedAt, format: .dateTime.month().day().hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 12) {
-                Label(event.operation.displayName, systemImage: event.operation.systemImage)
-                Label(event.resolutionState.displayName, systemImage: event.resolutionState.systemImage)
-                if event.automaticallyResolved {
-                    Label("Automatic", systemImage: "bolt.fill")
-                }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-
-            Text(event.resolutionSummary)
-                .font(.subheadline)
-
-            if let stagedUploadRelativePath = event.stagedUploadRelativePath {
-                Text(stagedUploadRelativePath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ProviderItemLink(
-                domainIdentifier: event.domainIdentifier,
-                itemIdentifier: event.conflictItemIdentifier ?? event.originalItemIdentifier,
-                title: linkTitle,
-                fallbackDetail: event.conflictItemPath ?? event.originalItemPath
-            )
-        }
-        .padding(.vertical, 4)
-        .providerActivityCopyableText(copyText)
-    }
-
-    private var eventTitle: String {
-        event.conflictItemName
-            ?? event.originalItemName
-            ?? event.originalItemIdentifier
-            ?? "Unknown item"
-    }
-
-    private var linkTitle: String {
-        event.conflictItemName
-            ?? event.originalItemName
-            ?? "Open item"
-    }
-
-    private var copyText: String {
-        var lines = [
-            "Conflict: \(eventTitle)",
-            "Detected: \(event.detectedAt.providerActivityCopyFormatted)",
-            "Operation: \(event.operation.displayName)",
-            "State: \(event.resolutionState.displayName)",
-            "Summary: \(event.resolutionSummary)"
-        ]
-
-        if let resolvedAt = event.resolvedAt {
-            lines.insert("Resolved: \(resolvedAt.providerActivityCopyFormatted)", at: 2)
-        }
-        if event.automaticallyResolved {
-            lines.append("Automatic: Yes")
-        }
-        if let stagedUploadRelativePath = event.stagedUploadRelativePath, stagedUploadRelativePath.isEmpty == false {
-            lines.append("Staged upload: \(stagedUploadRelativePath)")
-        }
-        if let itemPath = event.conflictItemPath ?? event.originalItemPath, itemPath.isEmpty == false {
-            lines.append("Item path: \(itemPath)")
-        }
-        if let itemIdentifier = event.conflictItemIdentifier ?? event.originalItemIdentifier, itemIdentifier.isEmpty == false {
-            lines.append("Item identifier: \(itemIdentifier)")
-        }
-
-        return lines.joined(separator: "\n")
-    }
-}
-
-private struct ActivityEventRow: View {
-    let event: KDriveProviderActivityEvent
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Label(title, systemImage: event.outcome.systemImage(for: event.kind))
-                    .font(.headline)
-                Spacer()
-                Text(event.occurredAt, format: .dateTime.month().day().hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(event.summary)
-                .font(.subheadline)
-
-            if event.outcome == .failure {
-                HStack(spacing: 12) {
-                    Label(event.kind.displayName, systemImage: event.kind.systemImage)
-                    if let errorCategory = event.errorCategory {
-                        Label(errorCategory.displayName, systemImage: "tag")
-                    }
-                    if let diagnosticCode {
-                        Label(diagnosticCode, systemImage: "number")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                if let recoverySuggestion = event.recoverySuggestion, recoverySuggestion.isEmpty == false {
-                    Text(recoverySuggestion)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let diagnosticSummary = event.diagnosticSummary, diagnosticSummary.isEmpty == false {
-                    Text(diagnosticSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if event.scope == .domain {
-                ProviderItemLink(
-                    domainIdentifier: event.domainIdentifier,
-                    itemIdentifier: event.itemIdentifier,
-                    title: event.itemName ?? event.itemIdentifier ?? "Open item",
-                    fallbackDetail: event.itemPath
-                )
-            } else {
-                Label("App", systemImage: "app")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
-        .providerActivityCopyableText(copyText)
-    }
-
-    private var title: String {
-        switch event.outcome {
-        case .success:
-            return event.kind.displayName
-        case .failure:
-            return "Failed \(event.kind.displayName.lowercased())"
-        }
-    }
-
-    private var diagnosticCode: String? {
-        if let providerErrorCode = event.providerErrorCode {
-            return "Provider \(providerErrorCode)"
-        }
-        if let underlyingErrorDomain = event.underlyingErrorDomain,
-           let underlyingErrorCode = event.underlyingErrorCode {
-            return "\(underlyingErrorDomain) \(underlyingErrorCode)"
-        }
-        return nil
-    }
-
-    private var copyText: String {
-        var lines = [
-            "Activity: \(title)",
-            "Occurred: \(event.occurredAt.providerActivityCopyFormatted)",
-            "Outcome: \(event.outcome.copyDisplayName)",
-            "Outcome key: \(event.outcome.rawValue)",
-            "Kind: \(event.kind.displayName)",
-            "Kind key: \(event.kind.rawValue)",
-            "Summary: \(event.summary)"
-        ]
-
-        if let correlationID = event.correlationID, correlationID.isEmpty == false {
-            lines.append("Correlation ID: \(correlationID)")
-        }
-        if let durationMilliseconds = event.durationMilliseconds {
-            lines.append("Duration: \(durationMilliseconds) ms")
-        }
-        if let networkOperation = event.networkOperation, networkOperation.isEmpty == false {
-            lines.append("Network operation: \(networkOperation)")
-        }
-        if let httpStatusCode = event.httpStatusCode {
-            lines.append("HTTP status: \(httpStatusCode)")
-        }
-
-        if event.outcome == .failure {
-            lines.append("Severity: \(event.severity.copyDisplayName)")
-            lines.append("Severity key: \(event.severity.rawValue)")
-            if let errorCategory = event.errorCategory {
-                lines.append("Error category: \(errorCategory.displayName)")
-                lines.append("Error category key: \(errorCategory.rawValue)")
-            }
-            if let providerErrorCode = event.providerErrorCode {
-                lines.append("Provider error code: \(providerErrorCode)")
-            }
-            if let underlyingErrorDomain = event.underlyingErrorDomain, underlyingErrorDomain.isEmpty == false {
-                lines.append("Underlying error domain: \(underlyingErrorDomain)")
-            }
-            if let underlyingErrorCode = event.underlyingErrorCode {
-                lines.append("Underlying error code: \(underlyingErrorCode)")
-            }
-            if let recoverySuggestion = event.recoverySuggestion, recoverySuggestion.isEmpty == false {
-                lines.append("Recovery suggestion: \(recoverySuggestion)")
-            }
-            if let diagnosticSummary = event.diagnosticSummary, diagnosticSummary.isEmpty == false {
-                lines.append("Diagnostic summary: \(diagnosticSummary)")
-            }
-            if let relatedConflictID = event.relatedConflictID {
-                lines.append("Related conflict ID: \(relatedConflictID.uuidString)")
-            }
-            lines.append("Event ID: \(event.id.uuidString)")
-            lines.append("Domain identifier: \(event.domainIdentifier)")
-            lines.append("Drive ID: \(event.driveID)")
-        }
-        if event.scope == .domain {
-            lines.append("Scope: Domain")
-            if let itemName = event.itemName, itemName.isEmpty == false {
-                lines.append("Item: \(itemName)")
-            }
-            if let itemPath = event.itemPath, itemPath.isEmpty == false {
-                lines.append("Item path: \(itemPath)")
-            }
-            if let itemIdentifier = event.itemIdentifier, itemIdentifier.isEmpty == false {
-                lines.append("Item identifier: \(itemIdentifier)")
-            }
-        } else {
-            lines.append("Scope: App")
-        }
-
-        return lines.joined(separator: "\n")
-    }
-}
-
-private struct ProviderItemLink: View {
-    let domainIdentifier: String
-    let itemIdentifier: String?
-    let title: String
-    let fallbackDetail: String?
-
-    @State private var resolvedURL: URL?
-    @State private var didResolve = false
-
-    var body: some View {
-        Group {
-            if let resolvedURL {
-                Link(destination: resolvedURL) {
-                    Label(title, systemImage: "arrow.up.forward.app")
-                }
-            } else if let itemIdentifier {
-                Label(fallbackDetail ?? itemIdentifier, systemImage: didResolve ? "link.badge.plus" : "link")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .font(.caption)
-        .task(id: "\(domainIdentifier)-\(itemIdentifier ?? "")") {
-            await resolveURL()
-        }
-    }
-
-    private func resolveURL() async {
-        guard let itemIdentifier else {
-            didResolve = true
-            resolvedURL = nil
-            return
-        }
-
-        let domain = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domainIdentifier),
-            displayName: domainIdentifier
-        )
-        guard let manager = NSFileProviderManager(for: domain) else {
-            didResolve = true
-            resolvedURL = nil
-            return
-        }
-
-        resolvedURL = await withCheckedContinuation { continuation in
-            manager.getUserVisibleURL(for: NSFileProviderItemIdentifier(itemIdentifier)) { url, _ in
-                continuation.resume(returning: url)
-            }
-        }
-        didResolve = true
-    }
-}
-
-private extension Date {
-    var providerActivityCopyFormatted: String {
-        formatted(.dateTime.year().month().day().hour().minute().second())
-    }
-}
-
-private extension KDriveProviderActivityKind {
-    var displayName: String {
-        switch self {
-        case .enumeration:
-            return "Enumeration"
-        case .changeSync:
-            return "Change Sync"
-        case .syncAnchor:
-            return "Sync Anchor"
-        case .fetchContents:
-            return "Fetch"
-        case .metadataLookup:
-            return "Metadata Lookup"
-        case .create:
-            return "Create"
-        case .modify:
-            return "Modify"
-        case .trash:
-            return "Trash"
-        case .delete:
-            return "Delete"
-        case .conflict:
-            return "Conflict"
-        case .thumbnail:
-            return "Thumbnail"
-        case .runtimeLoading:
-            return "Runtime Loading"
-        case .authentication:
-            return "Authentication"
-        case .driveDiscovery:
-            return "Drive Discovery"
-        case .domainManagement:
-            return "Domain Management"
-        case .favorite:
-            return "Favorite"
-        case .duplicate:
-            return "Duplicate"
-        case .restore:
-            return "Restore"
-        case .shareLink:
-            return "Share Link"
-        case .versionRestore:
-            return "Version Restore"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .enumeration:
-            return "list.bullet.rectangle"
-        case .changeSync:
-            return "arrow.triangle.2.circlepath"
-        case .syncAnchor:
-            return "link"
-        case .fetchContents:
-            return "arrow.down.doc"
-        case .metadataLookup:
-            return "doc.text.magnifyingglass"
-        case .create:
-            return "plus"
-        case .modify:
-            return "pencil"
-        case .trash:
-            return "trash"
-        case .delete:
-            return "xmark.bin"
-        case .conflict:
-            return "exclamationmark.triangle"
-        case .thumbnail:
-            return "photo"
-        case .runtimeLoading:
-            return "gearshape"
-        case .authentication:
-            return "person.crop.circle.badge.exclamationmark"
-        case .driveDiscovery:
-            return "externaldrive.badge.questionmark"
-        case .domainManagement:
-            return "folder.badge.gearshape"
-        case .favorite:
-            return "star"
-        case .duplicate:
-            return "plus.square.on.square"
-        case .restore:
-            return "arrow.uturn.backward"
-        case .shareLink:
-            return "link"
-        case .versionRestore:
-            return "clock.arrow.trianglehead.counterclockwise.rotate.90"
-        }
-    }
-}
-
-private extension KDriveProviderActivityOutcome {
-    func systemImage(for kind: KDriveProviderActivityKind) -> String {
-        switch self {
-        case .success:
-            return kind.systemImage
-        case .failure:
-            return "exclamationmark.triangle"
-        }
-    }
-
-    var copyDisplayName: String {
-        switch self {
-        case .success:
-            return "Success"
-        case .failure:
-            return "Failure"
-        }
-    }
-}
-
-private extension KDriveProviderActivitySeverity {
-    var copyDisplayName: String {
-        switch self {
-        case .info:
-            return "Info"
-        case .warning:
-            return "Warning"
-        case .error:
-            return "Error"
-        }
-    }
-}
-
-private extension KDriveProviderActivityErrorCategory {
-    var displayName: String {
-        switch self {
-        case .authentication:
-            return "Authentication"
-        case .network:
-            return "Network"
-        case .api:
-            return "API"
-        case .fileProvider:
-            return "File Provider"
-        case .listing:
-            return "Listing"
-        case .snapshot:
-            return "Snapshot"
-        case .storage:
-            return "Storage"
-        case .validation:
-            return "Validation"
-        case .mutationConflict:
-            return "Conflict"
-        case .unknown:
-            return "Unknown"
-        }
-    }
-}
-
-private extension KDriveConflictResolutionState {
-    var displayName: String {
-        switch self {
-        case .unresolved:
-            return "Unresolved"
-        case .automaticallyResolved:
-            return "Resolved"
-        case .blockedRetryable:
-            return "Blocked"
-        case .failed:
-            return "Failed"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .unresolved:
-            return "questionmark.circle"
-        case .automaticallyResolved:
-            return "checkmark.circle"
-        case .blockedRetryable:
-            return "pause.circle"
-        case .failed:
-            return "xmark.circle"
-        }
     }
 }

@@ -198,19 +198,38 @@ Stale rename, move, trash, and permanent delete attempts are recorded as
 
 The app has an Activities tab backed by `Snapshots.sqlite3`.
 
-- Conflict rows show the detection date, operation, resolution state, automatic
-  resolution marker, summary, and file link when the File Provider item can be
-  resolved.
-- File links are resolved at display time from stored domain and item
-  identifiers through `NSFileProviderManager.getUserVisibleURL(for:)`.
-- The default view shows conflicts and recent non-conflict failure activity.
-- The Last Activity toggle adds recent successful provider activity from the
-  database, including enumeration/change sync and major item operations.
+- The timeline loads 50 mixed conflict/activity entries initially and
+  automatically prefetches older keyset-paged entries near the end. Appending
+  history and merging live database changes preserve the visible event anchor.
+- Entries are grouped by day and use compact summaries. Expanding an entry
+  reveals conflict state, diagnostics, recovery guidance, identifiers, copy,
+  and item actions without making every row expensive to render.
+- File links are resolved from stored domain and item identifiers through
+  `NSFileProviderManager.getUserVisibleURL(for:)` only after the user selects
+  **Open in Finder** on macOS or **Open in Files** on iOS and visionOS.
+  macOS then asks `NSWorkspace` to reveal and select the item in Finder rather
+  than opening the document in its default app. Resolution or Finder-selection
+  failures show an inline message explaining that the item may have moved or
+  been deleted. A rejected Files presentation on iOS or visionOS also returns
+  the row to a retryable state and displays an inline unavailable-item message.
+  Scrolling the timeline does not perform File Provider URL lookups.
+- The default Errors filter shows conflicts and non-conflict failure activity.
+  All Activity also includes successful enumeration, change sync, and item
+  operations.
+- New live entries are merged silently without moving a user who is reading
+  older history. **Back to Latest** returns to the newest entry.
 - The Clear button removes activity event rows and automatically resolved
   conflict rows while preserving unresolved, blocked, and failed conflict rows.
+  Clear is exclusive with loading, refresh, and export; the reader returns to
+  the newest position only after the store confirms that clearing succeeded.
 - The Export button creates a redacted JSON support log. It pseudonymizes
   identifiers and omits item names, paths, staged-upload paths, and raw conflict
-  identifiers.
+  identifiers. Export and Refresh may run together because both are read-only.
+- Action failures use a dismissible banner above every timeline state,
+  including empty, initial-error, and unavailable-database views. Paging errors
+  remain attached to the paging footer. Copy feedback changes to **Copied**
+  only after the platform clipboard accepts the write; a rejected write stays
+  retryable and displays an inline error.
 - Failure rows store sanitized diagnostics such as category, severity, mapped
   provider error code, underlying error domain/code, recovery suggestion, and a
   short diagnostic summary. They do not store tokens or raw response bodies.
@@ -218,7 +237,8 @@ The app has an Activities tab backed by `Snapshots.sqlite3`.
   as app activity and do not attempt File Provider item-link resolution.
 - The tab observes database changes with SQLite.swift's `updateHook` for its
   own connection and SQLite `PRAGMA data_version` polling for writes committed
-  by the File Provider extension's separate connection.
+  by the File Provider extension's separate connection. Bursts are coalesced
+  before the newest page is refreshed.
 - This is an audit/read model only. It does not replay failed operations or
   automatically retry retained staged uploads.
 

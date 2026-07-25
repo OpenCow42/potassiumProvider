@@ -897,24 +897,20 @@ struct PotassiumProviderCoreTests {
 
         await model.load()
 
-        #expect(model.conflicts == [conflict])
-        #expect(model.activity == [failureActivity])
-        #expect(model.timelineItems.map(\.id) == [
+        #expect(model.entries.map(\.id) == [
             "activity-\(failureActivity.id.uuidString)",
             "conflict-\(conflict.id.uuidString)"
         ])
-        #expect(await store.activityQueryCount() == 1)
+        #expect(await store.timelineQueryCount() == 1)
 
-        model.showsActivity = true
-        await model.load()
+        await model.setFilter(.allActivity)
 
-        #expect(model.activity == [successActivity, failureActivity])
-        #expect(model.timelineItems.map(\.id) == [
+        #expect(model.entries.map(\.id) == [
             "activity-\(successActivity.id.uuidString)",
             "activity-\(failureActivity.id.uuidString)",
             "conflict-\(conflict.id.uuidString)"
         ])
-        #expect(await store.activityQueryCount() == 2)
+        #expect(await store.timelineQueryCount() == 2)
     }
 
     @MainActor
@@ -955,9 +951,7 @@ struct PotassiumProviderCoreTests {
 
         await model.clearActivity()
 
-        #expect(model.conflicts == [unresolvedConflict])
-        #expect(model.activity.isEmpty)
-        #expect(model.timelineItems.map(\.id) == ["conflict-\(unresolvedConflict.id.uuidString)"])
+        #expect(model.entries.map(\.id) == ["conflict-\(unresolvedConflict.id.uuidString)"])
         #expect(await store.storedConflicts().map(\.id) == [unresolvedConflict.id])
         #expect(await store.activities().isEmpty)
     }
@@ -1047,6 +1041,7 @@ struct PotassiumProviderCoreTests {
         #expect(driveRow.health == .attention)
     }
 
+    @MainActor
     @Test func tabSelectionPolicyDefaultsToStatus() {
         #expect(ProviderAppTabSelectionPolicy.defaultSelection(configuredDomainCount: 0) == .status)
         #expect(ProviderAppTabSelectionPolicy.defaultSelection(configuredDomainCount: 1) == .status)
@@ -1937,6 +1932,10 @@ struct PotassiumProviderCoreTests {
         #expect(model.domains.isEmpty)
         #expect(try await domainStore.allConfigurations().isEmpty)
         #expect(model.errorMessage?.contains("The application cannot be used right now") == true)
+        #expect(model.activeDriveAction(for: ProviderDriveKey(
+            accountIdentifier: account.accountIdentifier,
+            driveID: 42
+        )) == nil)
 
         let failure = try #require(await eventStore.activities().first)
         #expect(failure.domainIdentifier == ProviderConstants.appActivityDomainIdentifier)
@@ -2709,10 +2708,11 @@ private struct FakeProviderEventStatisticsProvider: KDriveProviderEventStatistic
     }
 }
 
-private actor FakeProviderEventStore: KDriveProviderEventStoring {
+private actor FakeProviderEventStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging {
     private var conflicts: [KDriveConflictEvent]
     private var activity: [KDriveProviderActivityEvent]
     private var activityQueries = 0
+    private var timelineQueries = 0
 
     init(conflicts: [KDriveConflictEvent], activity: [KDriveProviderActivityEvent]) {
         self.conflicts = conflicts
@@ -2765,8 +2765,38 @@ private actor FakeProviderEventStore: KDriveProviderEventStoring {
         }
     }
 
+    func timelinePage(
+        filter: KDriveProviderTimelineFilter,
+        before cursor: KDriveProviderTimelineCursor?,
+        limit: Int
+    ) throws -> KDriveProviderTimelinePage {
+        timelineQueries += 1
+        let allEntries = (
+            conflicts.map(KDriveProviderTimelineEntry.conflict)
+                + activity
+                    .filter { $0.relatedConflictID == nil }
+                    .filter { filter == .allActivity || $0.outcome == .failure }
+                    .map(KDriveProviderTimelineEntry.activity)
+        ).sorted(by: isTimelineEntryNewer)
+        let eligibleEntries = allEntries.filter { entry in
+            guard let cursor else { return true }
+            return isTimelineCursor(entry.cursor, olderThan: cursor)
+        }
+        let pageEntries = Array(eligibleEntries.prefix(max(0, limit)))
+        let hasMore = eligibleEntries.count > pageEntries.count
+        return KDriveProviderTimelinePage(
+            entries: pageEntries,
+            nextCursor: hasMore ? pageEntries.last?.cursor : nil,
+            hasMore: hasMore
+        )
+    }
+
     func activityQueryCount() -> Int {
         activityQueries
+    }
+
+    func timelineQueryCount() -> Int {
+        timelineQueries
     }
 
     func storedConflicts() -> [KDriveConflictEvent] {
@@ -2775,6 +2805,34 @@ private actor FakeProviderEventStore: KDriveProviderEventStoring {
 
     func activities() -> [KDriveProviderActivityEvent] {
         activity
+    }
+
+    private func isTimelineEntryNewer(
+        _ lhs: KDriveProviderTimelineEntry,
+        than rhs: KDriveProviderTimelineEntry
+    ) -> Bool {
+        let lhsCursor = lhs.cursor
+        let rhsCursor = rhs.cursor
+        if lhsCursor.date != rhsCursor.date {
+            return lhsCursor.date > rhsCursor.date
+        }
+        if lhsCursor.kind != rhsCursor.kind {
+            return lhsCursor.kind.rawValue > rhsCursor.kind.rawValue
+        }
+        return lhsCursor.eventID.uuidString > rhsCursor.eventID.uuidString
+    }
+
+    private func isTimelineCursor(
+        _ candidate: KDriveProviderTimelineCursor,
+        olderThan cursor: KDriveProviderTimelineCursor
+    ) -> Bool {
+        if candidate.date != cursor.date {
+            return candidate.date < cursor.date
+        }
+        if candidate.kind != cursor.kind {
+            return candidate.kind.rawValue < cursor.kind.rawValue
+        }
+        return candidate.eventID.uuidString < cursor.eventID.uuidString
     }
 }
 

@@ -223,6 +223,76 @@ public struct KDriveProviderActivityEvent: Identifiable, Codable, Equatable, Sen
     }
 }
 
+public enum KDriveProviderTimelineFilter: String, CaseIterable, Codable, Equatable, Sendable {
+    case errorsAndConflicts
+    case allActivity
+}
+
+public enum KDriveProviderTimelineEntry: Identifiable, Equatable, Sendable {
+    case conflict(KDriveConflictEvent)
+    case activity(KDriveProviderActivityEvent)
+
+    public var id: String {
+        switch self {
+        case .conflict(let event):
+            return "conflict-\(event.id.uuidString)"
+        case .activity(let event):
+            return "activity-\(event.id.uuidString)"
+        }
+    }
+
+    public var date: Date {
+        switch self {
+        case .conflict(let event):
+            return event.resolvedAt ?? event.detectedAt
+        case .activity(let event):
+            return event.occurredAt
+        }
+    }
+
+    public var cursor: KDriveProviderTimelineCursor {
+        switch self {
+        case .conflict(let event):
+            return KDriveProviderTimelineCursor(date: date, kind: .conflict, eventID: event.id)
+        case .activity(let event):
+            return KDriveProviderTimelineCursor(date: date, kind: .activity, eventID: event.id)
+        }
+    }
+}
+
+public struct KDriveProviderTimelineCursor: Codable, Equatable, Sendable {
+    public enum Kind: Int, Codable, Equatable, Sendable {
+        case activity = 0
+        case conflict = 1
+    }
+
+    public let date: Date
+    public let kind: Kind
+    public let eventID: UUID
+
+    public init(date: Date, kind: Kind, eventID: UUID) {
+        self.date = date
+        self.kind = kind
+        self.eventID = eventID
+    }
+}
+
+public struct KDriveProviderTimelinePage: Equatable, Sendable {
+    public let entries: [KDriveProviderTimelineEntry]
+    public let nextCursor: KDriveProviderTimelineCursor?
+    public let hasMore: Bool
+
+    public init(
+        entries: [KDriveProviderTimelineEntry],
+        nextCursor: KDriveProviderTimelineCursor?,
+        hasMore: Bool
+    ) {
+        self.entries = entries
+        self.nextCursor = nextCursor
+        self.hasMore = hasMore
+    }
+}
+
 public protocol KDriveProviderEventStoring: Sendable {
     func saveConflict(_ event: KDriveConflictEvent) async throws
     func recordActivity(_ event: KDriveProviderActivityEvent) async throws
@@ -231,6 +301,14 @@ public protocol KDriveProviderEventStoring: Sendable {
     func recentActivity(domainIdentifier: String?, outcome: KDriveProviderActivityOutcome?, limit: Int) async throws -> [KDriveProviderActivityEvent]
     func removeActivityAndResolvedConflicts(domainIdentifier: String?) async throws
     func removeEvents(domainIdentifier: String) async throws
+}
+
+public protocol KDriveProviderEventTimelinePaging: Sendable {
+    func timelinePage(
+        filter: KDriveProviderTimelineFilter,
+        before cursor: KDriveProviderTimelineCursor?,
+        limit: Int
+    ) async throws -> KDriveProviderTimelinePage
 }
 
 public struct KDriveProviderEventDomainStatistics: Equatable, Sendable {
@@ -283,7 +361,7 @@ public protocol KDriveProviderEventPruning: Sendable {
     func pruneActivityEvents(maximumCount: Int) async throws
 }
 
-public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveProviderEventStatisticsProviding, KDriveProviderEventObserving, KDriveProviderEventPruning, KDriveProviderEventExporting {
+public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging, KDriveProviderEventStatisticsProviding, KDriveProviderEventObserving, KDriveProviderEventPruning, KDriveProviderEventExporting {
     private let database: Connection
     private let maximumActivityEventCount: Int
     private var eventChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
@@ -359,6 +437,73 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
 
         return try database.prepare(query.order(ProviderEventSchema.occurredAt.desc).limit(rowLimit))
             .map(Self.activityEvent(from:))
+    }
+
+    public func timelinePage(
+        filter: KDriveProviderTimelineFilter,
+        before cursor: KDriveProviderTimelineCursor?,
+        limit: Int
+    ) throws -> KDriveProviderTimelinePage {
+        let pageSize = max(0, limit)
+        guard pageSize > 0 else {
+            return KDriveProviderTimelinePage(entries: [], nextCursor: nil, hasMore: false)
+        }
+
+        let queryLimit = pageSize + 1
+        var conflictQuery = ProviderEventSchema.conflictEvents
+        var activityQuery = ProviderEventSchema.activityEvents
+            .filter(ProviderEventSchema.relatedConflictID == nil)
+
+        if filter == .errorsAndConflicts {
+            activityQuery = activityQuery.filter(
+                ProviderEventSchema.outcome == KDriveProviderActivityOutcome.failure.rawValue
+            )
+        }
+
+        if let cursor {
+            let cursorDate = cursor.date.timeIntervalSince1970
+            let cursorID = cursor.eventID.uuidString
+            conflictQuery = conflictQuery.filter(Self.timelineCursorPredicate(
+                date: ProviderEventSchema.effectiveConflictDate,
+                id: ProviderEventSchema.id,
+                kind: .conflict,
+                beforeDate: cursorDate,
+                beforeKind: cursor.kind,
+                beforeID: cursorID
+            ))
+            activityQuery = activityQuery.filter(Self.timelineCursorPredicate(
+                date: ProviderEventSchema.occurredAt,
+                id: ProviderEventSchema.id,
+                kind: .activity,
+                beforeDate: cursorDate,
+                beforeKind: cursor.kind,
+                beforeID: cursorID
+            ))
+        }
+
+        let conflicts = try database.prepare(
+            conflictQuery
+                .order(ProviderEventSchema.effectiveConflictDate.desc, ProviderEventSchema.id.desc)
+                .limit(queryLimit)
+        ).map(Self.conflictEvent(from:))
+        let activity = try database.prepare(
+            activityQuery
+                .order(ProviderEventSchema.occurredAt.desc, ProviderEventSchema.id.desc)
+                .limit(queryLimit)
+        ).map(Self.activityEvent(from:))
+
+        let merged = (
+            conflicts.map(KDriveProviderTimelineEntry.conflict)
+                + activity.map(KDriveProviderTimelineEntry.activity)
+        ).sorted(by: Self.isTimelineEntryNewer)
+        let entries = Array(merged.prefix(pageSize))
+        let hasMore = merged.count > pageSize
+
+        return KDriveProviderTimelinePage(
+            entries: entries,
+            nextCursor: hasMore ? entries.last?.cursor : nil,
+            hasMore: hasMore
+        )
     }
 
     public func eventStatistics(domainIdentifiers: Set<String>) throws -> [KDriveProviderEventDomainStatistics] {
@@ -531,11 +676,14 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
 
         try database.execute("CREATE INDEX IF NOT EXISTS conflict_events_domainIdentifier_idx ON conflict_events(domainIdentifier)")
         try database.execute("CREATE INDEX IF NOT EXISTS conflict_events_detectedAt_idx ON conflict_events(detectedAt)")
+        try database.execute("CREATE INDEX IF NOT EXISTS conflict_events_timeline_idx ON conflict_events(COALESCE(resolvedAt, detectedAt) DESC, id DESC)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_domainIdentifier_idx ON provider_activity_events(domainIdentifier)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_occurredAt_idx ON provider_activity_events(occurredAt)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_relatedConflictID_idx ON provider_activity_events(relatedConflictID)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_outcome_idx ON provider_activity_events(outcome)")
         try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_correlationID_idx ON provider_activity_events(correlationID)")
+        try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_timeline_idx ON provider_activity_events(occurredAt DESC, id DESC) WHERE relatedConflictID IS NULL")
+        try database.execute("CREATE INDEX IF NOT EXISTS provider_activity_events_failure_timeline_idx ON provider_activity_events(outcome, occurredAt DESC, id DESC) WHERE relatedConflictID IS NULL")
     }
 
     private static func migrateActivityEvents(on database: Connection) throws {
@@ -731,6 +879,41 @@ public actor KDriveProviderEventSQLiteStore: KDriveProviderEventStoring, KDriveP
         return rhs
     }
 
+    private static func timelineCursorPredicate(
+        date: SQLite.Expression<Double>,
+        id: SQLite.Expression<String>,
+        kind: KDriveProviderTimelineCursor.Kind,
+        beforeDate: Double,
+        beforeKind: KDriveProviderTimelineCursor.Kind,
+        beforeID: String
+    ) -> SQLite.Expression<Bool> {
+        let earlierDate = date < beforeDate
+        let sameDate = date == beforeDate
+
+        if kind.rawValue < beforeKind.rawValue {
+            return earlierDate || sameDate
+        }
+        if kind.rawValue > beforeKind.rawValue {
+            return earlierDate
+        }
+        return earlierDate || (sameDate && id < beforeID)
+    }
+
+    private static func isTimelineEntryNewer(
+        _ lhs: KDriveProviderTimelineEntry,
+        than rhs: KDriveProviderTimelineEntry
+    ) -> Bool {
+        let lhsCursor = lhs.cursor
+        let rhsCursor = rhs.cursor
+        if lhsCursor.date != rhsCursor.date {
+            return lhsCursor.date > rhsCursor.date
+        }
+        if lhsCursor.kind != rhsCursor.kind {
+            return lhsCursor.kind.rawValue > rhsCursor.kind.rawValue
+        }
+        return lhsCursor.eventID.uuidString > rhsCursor.eventID.uuidString
+    }
+
     private static func setters(for event: KDriveConflictEvent) -> [Setter] {
         [
             ProviderEventSchema.id <- event.id.uuidString,
@@ -875,6 +1058,9 @@ private enum ProviderEventSchema {
     static let id = Expression<String>("id")
     static let detectedAt = Expression<Double>("detectedAt")
     static let resolvedAt = Expression<Double?>("resolvedAt")
+    static let effectiveConflictDate = SQLite.Expression<Double>(
+        literal: "COALESCE(\"resolvedAt\", \"detectedAt\")"
+    )
     static let occurredAt = Expression<Double>("occurredAt")
     static let domainIdentifier = Expression<String>("domainIdentifier")
     static let driveID = Expression<Int>("driveID")

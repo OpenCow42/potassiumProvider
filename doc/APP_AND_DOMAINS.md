@@ -22,7 +22,8 @@ The app handles:
   and sanitized provider activity
 - revealing each configured drive through its File Provider user-visible URL
 - requesting an immediate working-set refresh for one configured drive
-- showing Setup for account and drive configuration
+- showing Setup for account and drive configuration through dedicated account
+  and drive-management destinations
 
 On macOS, the app runs as an accessory menu bar app: it hides its Dock icon and
 keeps an atom status item visible while the process is running. Clicking the
@@ -30,9 +31,26 @@ status item reveals the setup window, and right-clicking it opens a menu with a
 close option. Closing the setup window does not quit the app.
 
 The main window has three tabs: Status, Setup, and Activities. Status is the
-first tab and becomes the default once at least one File Provider domain is
-configured. If no drives are configured, the app opens on Setup by default while
-leaving the empty Status dashboard available.
+default tab and is a read-only dashboard. Account and drive actions live under
+Setup rather than on the dashboard. Switching tabs uses the same short
+slide-and-fade motion as Setup navigation; Reduce Motion removes the horizontal
+movement and keeps a brief fade.
+
+Setup uses a three-level navigation hierarchy:
+
+1. Setup lists connected accounts and summarizes discovered and configured
+   drive counts.
+2. An account screen owns rename, drive refresh, logout, and the account's drive
+   list.
+3. Each drive opens a dedicated management screen for its File Provider and,
+   on macOS, known-folder actions.
+
+Account creation has its own destination. Infomaniak OAuth is the primary path;
+manual access-token entry remains available in an Advanced section for
+development. While stored state is being restored, Setup shows an explicit
+loading row instead of briefly presenting the empty-account state. Setup errors
+appear in a nonmodal, dismissible banner so background refreshes do not interrupt
+navigation with a transient alert.
 
 The Status dashboard only uses local/provider-safe state: local account records,
 configured domain records, currently loaded kDrive summaries, SQLite listing
@@ -40,12 +58,11 @@ snapshot aggregates, and sanitized activity/conflict counts. It does not fetch
 remote account profile data, quotas, OAuth token details, private links, or file
 contents.
 
-Each drive card has a Show in Finder button on macOS or Show in Files on iOS and
-visionOS. The app asks that domain's `NSFileProviderManager` for the root
-container's user-visible URL and opens it through the system. Sync Now signals
-the domain's working-set enumerator, then refreshes the local Status dashboard
-after File Provider accepts the request. These controls do not enumerate files
-or bypass the extension.
+Each configured drive's management screen has a Show in Finder button on macOS
+or Show in Files on iOS and visionOS. The app asks that domain's
+`NSFileProviderManager` for the root container's user-visible URL and opens it
+through the system. Sync Now signals the domain's working-set enumerator. These
+controls do not enumerate files or bypass the extension.
 
 The app does not enumerate files itself. File listing is handled by the File
 Provider extension after the system asks for an enumerator. Each extension
@@ -69,6 +86,12 @@ per saved account that has a usable local token and no drives loaded yet. Missin
 tokens and expired non-refreshable tokens are skipped silently so the account can
 be refreshed manually or reconnected without creating repeated setup-page
 errors.
+
+An account's drive list is the union of current remote discovery and stored
+domain configurations. A configured drive therefore remains manageable when
+remote discovery is unavailable or no longer returns that drive. Its detail
+screen uses the saved drive name and explicitly marks remote details as
+unavailable.
 
 ## Domain Configuration
 
@@ -102,7 +125,8 @@ The add flow is:
 1. The user adds an account through OAuth or by saving a manual access token.
 2. The app creates a local account record and saves the token under that account.
 3. The app loads kDrives for that account through `PotassiumKDriveService.listDrives()`.
-4. The user chooses a discovered drive row for that account.
+4. The user opens a discovered drive and chooses **Add to Files** on its
+   management screen.
 5. `PotassiumProviderAppModel.addDomain()` creates a
    `ProviderDomainConfiguration` whose display name is derived from the drive
    name and, when needed, the account display name.
@@ -123,9 +147,9 @@ system's registered display name.
 
 ## Desktop & Documents On macOS
 
-On macOS 15 or later, a configured drive row can opt in to Apple's known-folder
-feature. This is not arbitrary-folder sync: Apple currently permits Desktop and
-Documents to be claimed only together.
+On macOS 15 or later, a configured drive's management screen can opt in to
+Apple's known-folder feature. This is not arbitrary-folder sync: Apple currently
+permits Desktop and Documents to be claimed only together.
 
 The app resolves the existing root-level kDrive directory named `Private` and
 uses its item identifier as the common parent for `Private/Desktop` and
@@ -142,6 +166,12 @@ matching control to stop syncing both folders through `releaseKnownFolders`.
 
 ## Removing A Domain
 
+Removal is initiated from the drive-management screen and requires explicit
+confirmation. The confirmation identifies the provider-local state being
+cleared and states that remote kDrive files are not deleted. After successful
+removal, a remotely discovered drive stays on screen in its unconfigured state
+and can be added again.
+
 The remove flow is:
 
 1. On macOS, the app refreshes live known-folder state and releases Desktop and
@@ -156,14 +186,29 @@ The remove flow is:
 Removing a domain only removes provider state from this app. It does not delete
 remote kDrive files.
 
+## Configured Drive Actions
+
+A configured drive's management screen owns all direct File Provider actions:
+
+- show the domain root in Finder on macOS or Files on other platforms
+- request a fresh working-set sync
+- remove the drive from Files
+- enable, repair, or stop Desktop & Documents sync on supported macOS versions
+
+Only one mutating or provider-management action can run for a drive at a time.
+The screen disables conflicting controls and shows operation progress. Drive
+discovery refresh remains account-scoped even when requested from a drive
+screen.
+
 ## Logging Out One Account
 
-Independent logout first removes every File Provider domain tied to that
-account, including domain JSON, snapshots, activity/conflict rows, and thumbnail
-cache entries. On macOS this includes releasing any known folders owned by those
-domains; a release failure stops logout. Only after domain cleanup succeeds does
-the app delete that account's keychain token and account JSON. Domains and tokens
-for other accounts are left untouched.
+Independent logout is confirmed from the account screen. It first removes every
+File Provider domain tied to that account, including domain JSON, snapshots,
+activity/conflict rows, and thumbnail cache entries. On macOS this includes
+releasing any known folders owned by those domains; a release failure stops
+logout. Only after domain cleanup succeeds does the app delete that account's
+keychain token and account JSON. Domains and tokens for other accounts are left
+untouched, and remote kDrive files are never deleted by logout.
 
 For development, `scripts/uninstall-file-provider.sh` can perform the same
 domain-detach path outside the UI. It runs the signed macOS app with a hidden

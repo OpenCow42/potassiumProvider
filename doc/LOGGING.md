@@ -45,6 +45,18 @@ conflict rows remain until a user action or domain cleanup removes them. The
 existing Clear action removes all activity rows and automatically resolved
 conflicts, preserving unresolved conflict state.
 
+The Activities screen pages over this retained history in batches of 50. This
+only limits UI decoding and rendering; it does not reduce retention or support
+export coverage. Live notifications refresh and merge the newest page, and
+ordinary scrolling does not resolve File Provider item URLs.
+
+Timeline actions expose model-backed availability and repeat those guards inside
+the action methods. Destructive Clear cannot overlap loading, Refresh, or
+Export, while the read-only Refresh and Export operations may overlap. Action
+errors are displayed independently from initial-load and paging errors, and all
+operation progress state is cleared after success, failure, cancellation, or a
+superseded filter generation.
+
 ## Support Export
 
 The Activities toolbar exports a JSON document via the system file picker. Each
@@ -52,6 +64,9 @@ export receives a fresh salt and pseudonymizes domain, drive, item, correlation,
 and request identifiers. It omits names, paths, staged-upload paths, and raw
 conflict identifiers. Summaries and diagnostic text are scrubbed of known item
 values, URLs, and paths before export.
+
+On macOS, the containing app enables sandboxed user-selected file read/write
+access so the save panel can create the support log at the chosen destination.
 
 The document includes event timestamps, operation kinds, outcomes, severities,
 sanitized summaries, numeric error codes, duration, network operation, HTTP
