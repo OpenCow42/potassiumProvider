@@ -25,3 +25,12 @@ jobs:
             -scheme potassiumProvider \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Run unit tests on macOS
+        run: |
+          xcodebuild test \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider \
+            -destination 'platform=macOS' \
+            MACOSX_DEPLOYMENT_TARGET=26.4 \
+            CODE_SIGNING_ALLOWED=NO

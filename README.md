@@ -101,7 +101,7 @@ xcodebuild build \
   -destination 'generic/platform=visionOS'
 ```
 
-Run tests:
+Run unit tests:
 
 ```sh
 xcodebuild test \
@@ -110,7 +110,7 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17'
 ```
 
-Run tests on Mac as well:
+Run unit tests on Mac as well:
 
 ```sh
 xcodebuild test \
@@ -119,7 +119,7 @@ xcodebuild test \
   -destination 'platform=macOS'
 ```
 
-Run tests on visionOS as well:
+Run unit tests on visionOS as well:
 
 ```sh
 xcodebuild test \
@@ -128,16 +128,9 @@ xcodebuild test \
   -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro'
 ```
 
-If the full scheme stalls during simulator/UI-test cleanup, this has previously
-worked more reliably:
-
-```sh
-xcodebuild test \
-  -project potassiumProvider.xcodeproj \
-  -scheme potassiumProvider \
-  -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
-  -parallel-testing-enabled NO
-```
+The shared scheme's Test action contains `potassiumProviderTests` only. UI
+automation remains a separate Xcode test-target workflow and does not run in
+the command-line matrix above.
 
 Use `xcodebuild -showdestinations` to copy exact Mac or visionOS destinations if
 local Xcode requires a more specific variant.
