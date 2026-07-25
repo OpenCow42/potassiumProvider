@@ -20,6 +20,8 @@ The app handles:
 - logging out one account without touching other accounts
 - showing a Status dashboard for configured accounts, drives, cached snapshots,
   and sanitized provider activity
+- revealing each configured drive through its File Provider user-visible URL
+- requesting an immediate working-set refresh for one configured drive
 - showing Setup for account and drive configuration
 
 On macOS, the app runs as an accessory menu bar app: it hides its Dock icon and
@@ -37,6 +39,13 @@ configured domain records, currently loaded kDrive summaries, SQLite listing
 snapshot aggregates, and sanitized activity/conflict counts. It does not fetch
 remote account profile data, quotas, OAuth token details, private links, or file
 contents.
+
+Each drive card has a Show in Finder button on macOS or Show in Files on iOS and
+visionOS. The app asks that domain's `NSFileProviderManager` for the root
+container's user-visible URL and opens it through the system. Sync Now signals
+the domain's working-set enumerator, then refreshes the local Status dashboard
+after File Provider accepts the request. These controls do not enumerate files
+or bypass the extension.
 
 The app does not enumerate files itself. File listing is handled by the File
 Provider extension after the system asks for an enumerator. Each extension

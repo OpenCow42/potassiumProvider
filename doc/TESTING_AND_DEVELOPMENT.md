@@ -9,6 +9,7 @@ source of truth.
 - Scheme: `potassiumProvider`
 - App target: `potassiumProvider`
 - File Provider extension target: `potassiumProviderFileProvider`
+- File Provider UI extension target: `potassiumProviderActions`
 - Shared framework target: `PotassiumProviderCore`
 - Unit test target: `potassiumProviderTests`
 - UI test target: `potassiumProviderUITests`
@@ -178,7 +179,25 @@ git diff --check
 
 Also verify that links from the root `README.md` point to existing files.
 
-## 0.2.0 Manual Release Gates
+## 0.3.0 Manual Action Gates
+
+Use a development account without customer data. On macOS Finder, iOS Files,
+and visionOS Files:
+
+1. Verify favorite/unfavorite, duplicate, and restore actions appear only for
+   valid single-item states and their results appear without relaunching.
+2. Verify trashed items cannot be renamed or trashed again, can be restored,
+   and can still be permanently deleted.
+3. Verify Download Now and Remove Download are system-provided for normal files
+   and folders.
+4. Create public and password-protected links, update options, copy/share the
+   URL, and disable the link. Inspect activity export and unified logs to ensure
+   the URL and password never appear.
+5. Page a document's version history and restore a version as a collision-safe
+   copy in its current parent. Confirm the current file is unchanged.
+6. Exercise Show in Finder/Files and Sync Now for every configured drive.
+
+## 0.2.0 Transfer Gates
 
 Run these checks on macOS with a development File Provider domain and a test
 kDrive account. Do not use customer data.

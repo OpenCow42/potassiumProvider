@@ -27,7 +27,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
                 let itemPage = try await self.listItems(runtime: loadedRuntime, startingAt: page)
-                observer.didEnumerate(itemPage.items.map { FileProviderItem(remoteItem: $0, rootFileID: loadedRuntime.configuration.rootFileID) })
+                let enumeratesTrash = self.containerItemIdentifier == .trashContainer
+                observer.didEnumerate(itemPage.items.map {
+                    FileProviderItem(
+                        remoteItem: $0,
+                        rootFileID: loadedRuntime.configuration.rootFileID,
+                        isTrashed: enumeratesTrash
+                    )
+                })
                 FileProviderLog.enumeration.info("enumerateItems success container(\(self.containerItemIdentifier.rawValue, privacy: .public)) count(\(itemPage.items.count, privacy: .public)) nextCursorPresent(\(itemPage.nextCursor != nil, privacy: .public)) driveID(\(loadedRuntime.configuration.driveID, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
                     kind: .enumeration,
@@ -684,7 +691,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
 
     private func emit(_ changes: KDriveSnapshotChangeSet, to observer: NSFileProviderChangeObserver, rootFileID: Int) {
         if changes.updatedItems.isEmpty == false {
-            observer.didUpdate(changes.updatedItems.map { FileProviderItem(remoteItem: $0, rootFileID: rootFileID) })
+            let enumeratesTrash = containerItemIdentifier == .trashContainer
+            observer.didUpdate(changes.updatedItems.map {
+                FileProviderItem(remoteItem: $0, rootFileID: rootFileID, isTrashed: enumeratesTrash)
+            })
         }
 
         if changes.deletedItemIDs.isEmpty == false {

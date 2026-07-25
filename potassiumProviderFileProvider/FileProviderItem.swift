@@ -3,6 +3,13 @@ import Foundation
 import PotassiumProviderCore
 import UniformTypeIdentifiers
 
+enum FileProviderItemUserInfoKey {
+    static let isDirectory = "isDirectory"
+    static let isFavorite = "isFavorite"
+    static let isTrashed = "isTrashed"
+    static let isRoot = "isRoot"
+}
+
 final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
     let itemIdentifier: NSFileProviderItemIdentifier
     let parentItemIdentifier: NSFileProviderItemIdentifier
@@ -13,6 +20,14 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
     let creationDate: Date?
     let contentModificationDate: Date?
     let capabilities: NSFileProviderItemCapabilities
+    #if !os(macOS)
+    let isTrashed: Bool
+    #endif
+    let isUploaded: Bool
+    #if os(macOS)
+    let contentPolicy: NSFileProviderContentPolicy
+    #endif
+    let userInfo: [AnyHashable: Any]?
 
     init(configuration: ProviderDomainConfiguration) {
         self.itemIdentifier = .rootContainer
@@ -27,14 +42,33 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
         self.creationDate = configuration.createdAt
         self.contentModificationDate = configuration.updatedAt
         self.capabilities = [.allowsContentEnumerating, .allowsAddingSubItems, .allowsReading]
+        #if !os(macOS)
+        self.isTrashed = false
+        #endif
+        self.isUploaded = true
+        #if os(macOS)
+        self.contentPolicy = .downloadLazily
+        #endif
+        self.userInfo = [
+            FileProviderItemUserInfoKey.isDirectory: true,
+            FileProviderItemUserInfoKey.isFavorite: false,
+            FileProviderItemUserInfoKey.isTrashed: false,
+            FileProviderItemUserInfoKey.isRoot: true,
+        ]
         super.init()
     }
 
-    init(remoteItem: KDriveRemoteItem, rootFileID: Int = ProviderConstants.defaultRootFileID) {
+    init(
+        remoteItem: KDriveRemoteItem,
+        rootFileID: Int = ProviderConstants.defaultRootFileID,
+        isTrashed: Bool = false
+    ) {
         self.itemIdentifier = NSFileProviderItemIdentifier(KDriveItemIdentifier.item(remoteItem.id).rawValue)
-        self.parentItemIdentifier = remoteItem.parentID == rootFileID
-            ? .rootContainer
-            : NSFileProviderItemIdentifier(KDriveItemIdentifier.item(remoteItem.parentID).rawValue)
+        self.parentItemIdentifier = isTrashed
+            ? .trashContainer
+            : remoteItem.parentID == rootFileID
+                ? .rootContainer
+                : NSFileProviderItemIdentifier(KDriveItemIdentifier.item(remoteItem.parentID).rawValue)
         self.filename = remoteItem.name
         self.contentType = remoteItem.contentType
         self.itemVersion = NSFileProviderItemVersion(
@@ -44,26 +78,52 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
         self.documentSize = remoteItem.size.map(NSNumber.init(value:))
         self.creationDate = remoteItem.createdAt
         self.contentModificationDate = remoteItem.modifiedAt
+        #if !os(macOS)
+        self.isTrashed = isTrashed
+        #endif
+        self.isUploaded = true
+        #if os(macOS)
+        self.contentPolicy = .downloadLazily
+        #endif
+        var userInfo: [AnyHashable: Any] = [
+            FileProviderItemUserInfoKey.isDirectory: remoteItem.isDirectory,
+            FileProviderItemUserInfoKey.isTrashed: isTrashed,
+            FileProviderItemUserInfoKey.isRoot: false,
+        ]
+        if let isFavorite = remoteItem.isFavorite {
+            userInfo[FileProviderItemUserInfoKey.isFavorite] = isFavorite
+        }
+        self.userInfo = userInfo
 
-        if remoteItem.isDirectory {
-            self.capabilities = [
+        if isTrashed {
+            self.capabilities = [.allowsReading, .allowsDeleting]
+        } else if remoteItem.isDirectory {
+            var capabilities: NSFileProviderItemCapabilities = [
                 .allowsContentEnumerating,
                 .allowsAddingSubItems,
                 .allowsReading,
                 .allowsRenaming,
                 .allowsReparenting,
                 .allowsTrashing,
-                .allowsDeleting
+                .allowsDeleting,
             ]
+            #if !os(macOS)
+            capabilities.insert(.allowsEvicting)
+            #endif
+            self.capabilities = capabilities
         } else {
-            self.capabilities = [
+            var capabilities: NSFileProviderItemCapabilities = [
                 .allowsReading,
                 .allowsWriting,
                 .allowsRenaming,
                 .allowsReparenting,
                 .allowsTrashing,
-                .allowsDeleting
+                .allowsDeleting,
             ]
+            #if !os(macOS)
+            capabilities.insert(.allowsEvicting)
+            #endif
+            self.capabilities = capabilities
         }
 
         super.init()

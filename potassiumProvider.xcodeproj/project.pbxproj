@@ -20,6 +20,8 @@
 		D00000072FF9000000000007 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = D00001042FF9000000000004 /* SQLite */; };
 		D10000012FFB000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
 		D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E20000012FFC000000000001 /* PotassiumProviderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000312FF9000000000001 /* PotassiumProviderCore.framework */; };
+		E20000022FFC000000000002 /* potassiumProviderActions.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E20000312FFC000000000001 /* potassiumProviderActions.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,6 +67,20 @@
 			remoteGlobalIDString = D00000612FF9000000000001;
 			remoteInfo = PotassiumProviderCore;
 		};
+		E20000112FFC000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E20000612FFC000000000001;
+			remoteInfo = potassiumProviderActions;
+		};
+		E20000122FFC000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C098427E2FF847AD00CB8B7E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D00000612FF9000000000001;
+			remoteInfo = PotassiumProviderCore;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -86,6 +102,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				D10000022FFB000000000002 /* potassiumProviderFileProvider.appex in Embed App Extensions */,
+				E20000022FFC000000000002 /* potassiumProviderActions.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -98,6 +115,7 @@
 		C098429D2FF847B000CB8B7E /* potassiumProviderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = potassiumProviderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D00000312FF9000000000001 /* PotassiumProviderCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = PotassiumProviderCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = potassiumProviderFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E20000312FFC000000000001 /* potassiumProviderActions.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = potassiumProviderActions.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -124,6 +142,11 @@
 		D10000412FFB000000000001 /* potassiumProviderFileProvider */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = potassiumProviderFileProvider;
+			sourceTree = "<group>";
+		};
+		E20000412FFC000000000001 /* potassiumProviderActions */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = potassiumProviderActions;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -175,6 +198,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E20000512FFC000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E20000012FFC000000000001 /* PotassiumProviderCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -184,6 +215,7 @@
 				C09842882FF847AD00CB8B7E /* potassiumProvider */,
 				D00000412FF9000000000001 /* PotassiumProviderCore */,
 				D10000412FFB000000000001 /* potassiumProviderFileProvider */,
+				E20000412FFC000000000001 /* potassiumProviderActions */,
 				C09842962FF847B000CB8B7E /* potassiumProviderTests */,
 				C09842A02FF847B000CB8B7E /* potassiumProviderUITests */,
 				C09842872FF847AD00CB8B7E /* Products */,
@@ -196,6 +228,7 @@
 				C09842862FF847AD00CB8B7E /* potassiumProvider.app */,
 				D00000312FF9000000000001 /* PotassiumProviderCore.framework */,
 				D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */,
+				E20000312FFC000000000001 /* potassiumProviderActions.appex */,
 				C09842932FF847B000CB8B7E /* potassiumProviderTests.xctest */,
 				C098429D2FF847B000CB8B7E /* potassiumProviderUITests.xctest */,
 			);
@@ -230,6 +263,7 @@
 			dependencies = (
 				D00000712FF9000000000001 /* PBXTargetDependency */,
 				D10000712FFB000000000001 /* PBXTargetDependency */,
+				E20000712FFC000000000001 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C09842882FF847AD00CB8B7E /* potassiumProvider */,
@@ -342,6 +376,29 @@
 			productReference = D10000312FFB000000000001 /* potassiumProviderFileProvider.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		E20000612FFC000000000001 /* potassiumProviderActions */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E20000912FFC000000000001 /* Build configuration list for PBXNativeTarget "potassiumProviderActions" */;
+			buildPhases = (
+				E20000532FFC000000000003 /* Sources */,
+				E20000512FFC000000000001 /* Frameworks */,
+				E20000522FFC000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E20000722FFC000000000002 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E20000412FFC000000000001 /* potassiumProviderActions */,
+			);
+			name = potassiumProviderActions;
+			packageProductDependencies = (
+			);
+			productName = potassiumProviderActions;
+			productReference = E20000312FFC000000000001 /* potassiumProviderActions.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -369,6 +426,9 @@
 					D10000612FFB000000000001 = {
 						CreatedOnToolsVersion = 26.5;
 					};
+					E20000612FFC000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+					};
 				};
 			};
 			buildConfigurationList = C09842812FF847AD00CB8B7E /* Build configuration list for PBXProject "potassiumProvider" */;
@@ -393,6 +453,7 @@
 				C09842852FF847AD00CB8B7E /* potassiumProvider */,
 				D00000612FF9000000000001 /* PotassiumProviderCore */,
 				D10000612FFB000000000001 /* potassiumProviderFileProvider */,
+				E20000612FFC000000000001 /* potassiumProviderActions */,
 				C09842922FF847B000CB8B7E /* potassiumProviderTests */,
 				C098429C2FF847B000CB8B7E /* potassiumProviderUITests */,
 			);
@@ -429,6 +490,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		D10000522FFB000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E20000522FFC000000000002 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -473,6 +541,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E20000532FFC000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -505,6 +580,16 @@
 			isa = PBXTargetDependency;
 			target = D00000612FF9000000000001 /* PotassiumProviderCore */;
 			targetProxy = D10000122FFB000000000002 /* PBXContainerItemProxy */;
+		};
+		E20000712FFC000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E20000612FFC000000000001 /* potassiumProviderActions */;
+			targetProxy = E20000112FFC000000000001 /* PBXContainerItemProxy */;
+		};
+		E20000722FFC000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D00000612FF9000000000001 /* PotassiumProviderCore */;
+			targetProxy = E20000122FFC000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -633,7 +718,7 @@
 				CODE_SIGN_ENTITLEMENTS = Config/potassiumProvider.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -655,7 +740,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -681,7 +766,7 @@
 				CODE_SIGN_ENTITLEMENTS = Config/potassiumProvider.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -703,7 +788,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -727,12 +812,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProviderTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -755,12 +840,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProviderTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -782,12 +867,12 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProviderUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -809,12 +894,12 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProviderUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -838,7 +923,7 @@
 				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -857,7 +942,7 @@
 					"@loader_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.PotassiumProviderCore;
@@ -887,7 +972,7 @@
 				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -906,7 +991,7 @@
 					"@loader_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.PotassiumProviderCore;
@@ -936,7 +1021,7 @@
 				CODE_SIGN_ENTITLEMENTS = Config/potassiumProviderFileProvider.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				ENABLE_APP_SANDBOX = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -951,20 +1036,21 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
 				SUPPORTS_MACCATALYST = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Debug;
 		};
@@ -975,7 +1061,7 @@
 				CODE_SIGN_ENTITLEMENTS = Config/potassiumProviderFileProvider.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 2LST6WT4P6;
 				ENABLE_APP_SANDBOX = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
@@ -990,20 +1076,101 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
-				MARKETING_VERSION = 0.2.1;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
 				SUPPORTS_MACCATALYST = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Release;
+		};
+		E20000812FFC000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/potassiumProviderActions.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 2LST6WT4P6;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/potassiumProviderActionsInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 0.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider.Actions;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Debug;
+		};
+		E20000822FFC000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/potassiumProviderActions.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 2LST6WT4P6;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/potassiumProviderActionsInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 0.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.weavee.potassiumProvider.Actions;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.5;
 			};
 			name = Release;
 		};
@@ -1060,6 +1227,15 @@
 			buildConfigurations = (
 				D10000812FFB000000000001 /* Debug */,
 				D10000822FFB000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E20000912FFC000000000001 /* Build configuration list for PBXNativeTarget "potassiumProviderActions" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E20000812FFC000000000001 /* Debug */,
+				E20000822FFC000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

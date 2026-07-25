@@ -17,6 +17,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var loadingDriveAccountIdentifiers: Set<String> = []
     @Published private(set) var knownFolderSyncStatesByDomainIdentifier: [String: ProviderKnownFolderSyncState] = [:]
     @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
+    @Published private(set) var activeDomainActionIdentifiers: Set<String> = []
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -117,6 +118,10 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     func isChangingKnownFolderSync(for configuration: ProviderDomainConfiguration) -> Bool {
         knownFolderTransitionDomainIdentifiers.contains(configuration.domainIdentifier)
+    }
+
+    func isPerformingDomainAction(_ domainIdentifier: String) -> Bool {
+        activeDomainActionIdentifiers.contains(domainIdentifier)
     }
 
     func selectedDriveID(for accountIdentifier: String) -> Int? {
@@ -409,6 +414,51 @@ final class PotassiumProviderAppModel: ObservableObject {
         #endif
     }
 
+    func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async -> URL? {
+        guard beginDomainAction(for: configuration) else { return nil }
+        defer { activeDomainActionIdentifiers.remove(configuration.domainIdentifier) }
+
+        do {
+            let url = try await domainRegistrar.userVisibleRootURL(for: configuration)
+            errorMessage = nil
+            return url
+        } catch {
+            await recordAppFailure(
+                kind: .domainManagement,
+                summary: "Could not show the File Provider domain.",
+                error: error,
+                category: .fileProvider
+            )
+            #if os(macOS)
+            errorMessage = "Could not show \(configuration.displayName) in Finder: \(error.localizedDescription)"
+            #else
+            errorMessage = "Could not show \(configuration.displayName) in Files: \(error.localizedDescription)"
+            #endif
+            statusMessage = nil
+            return nil
+        }
+    }
+
+    func syncNow(_ configuration: ProviderDomainConfiguration) async {
+        guard beginDomainAction(for: configuration) else { return }
+        defer { activeDomainActionIdentifiers.remove(configuration.domainIdentifier) }
+
+        do {
+            try await domainRegistrar.signalWorkingSet(for: configuration)
+            statusMessage = "Requested a fresh sync for \(configuration.displayName)."
+            errorMessage = nil
+        } catch {
+            await recordAppFailure(
+                kind: .changeSync,
+                summary: "Could not request a fresh provider sync.",
+                error: error,
+                category: .fileProvider
+            )
+            errorMessage = "Could not sync \(configuration.displayName): \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
     func logoutAccount(_ account: ProviderAccount) async {
         do {
             let accountDomains = domains(for: account.accountIdentifier)
@@ -619,6 +669,10 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     private func beginKnownFolderTransition(for configuration: ProviderDomainConfiguration) -> Bool {
         knownFolderTransitionDomainIdentifiers.insert(configuration.domainIdentifier).inserted
+    }
+
+    private func beginDomainAction(for configuration: ProviderDomainConfiguration) -> Bool {
+        activeDomainActionIdentifiers.insert(configuration.domainIdentifier).inserted
     }
 
     private func refreshKnownFolderSyncStates() async throws {

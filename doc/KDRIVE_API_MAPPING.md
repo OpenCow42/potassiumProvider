@@ -4,6 +4,9 @@ The app talks to kDrive through `PotassiumKDriveService`, which implements the
 local `KDriveFileProviding` protocol. `PotassiumKDriveService` wraps
 potassiumChannel's typed `KDriveService` and request builders.
 
+Action-only operations are separated behind `KDriveContextActionProviding` so
+the existing File Provider mutation protocol remains unchanged.
+
 ## Operation Map
 
 | Provider operation | Local method | potassiumChannel call | Visible endpoint |
@@ -27,6 +30,17 @@ potassiumChannel's typed `KDriveService` and request builders.
 | Move | `moveItem(...)` | `moveFile` | `POST /3/drive/{driveId}/files/{fileId}/move/{destinationDirectoryId}` |
 | Trash | `trashItem(...)` | `trashFileV2` | `DELETE /2/drive/{driveId}/files/{fileId}` |
 | Permanently delete trashed item | `deleteTrashedItem(...)` | `removeTrashedFile` | `DELETE /2/drive/{driveId}/trash/{fileId}` |
+| Favorite/unfavorite | `setFavorite(...)` | `favoriteFile` / `unfavoriteFile` | typed kDrive favorite endpoints |
+| Duplicate in place | `duplicateItem(...)` | `duplicateFile` | `POST /3/drive/{driveId}/files/{fileId}/duplicate` |
+| Read trashed metadata | `trashedItem(...)` | `getTrashedFile` | typed kDrive trash metadata endpoint |
+| Check restore parent | `existingFileIDs(...)` | `checkFilesExistence` | typed kDrive existence endpoint |
+| Restore from trash | `restoreTrashedItem(...)` | `restoreTrashedFile` | typed kDrive trash restore endpoint |
+| Read share link | `shareLink(...)` | `getFileShareLink` | `GET /2/drive/{driveId}/files/{fileId}/link` |
+| Create share link | `createShareLink(...)` | `createFileShareLink` | `POST /2/drive/{driveId}/files/{fileId}/link` |
+| Update share link | `updateShareLink(...)` | `updateFileShareLink` | `PUT /2/drive/{driveId}/files/{fileId}/link` |
+| Disable share link | `deleteShareLink(...)` | `deleteFileShareLink` | `DELETE /2/drive/{driveId}/files/{fileId}/link` |
+| List versions | `fileVersions(...)` | nondeprecated `listFileVersions` | `GET /3/drive/{driveId}/files/{fileId}/versions` |
+| Restore version as copy | `restoreFileVersion(...)` | `restoreFileVersionToDirectory` | `POST /3/drive/{driveId}/files/{fileId}/versions/{versionId}/restore/{destinationDirectoryId}` |
 
 Some mutation endpoint paths are abstracted behind potassiumChannel service
 methods in this app. The table names the local operation and service call so the

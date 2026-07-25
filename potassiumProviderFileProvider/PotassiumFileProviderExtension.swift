@@ -12,8 +12,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
     static let maximumConcurrentContentFetches = 4
     private static let contentTransferLimiter = AsyncOperationLimiter(maxConcurrentOperations: 1)
 
-    private let domain: NSFileProviderDomain
-    private let manager: NSFileProviderManager
+    let domain: NSFileProviderDomain
+    let manager: NSFileProviderManager
     private let temporaryDirectoryURL: URL
     private var remotePollingTask: Task<Void, Never>?
 
@@ -714,20 +714,20 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         )
     }
 
-    private func containerIdentifiers(forFileIDs fileIDs: [Int?], rootFileID: Int) -> [NSFileProviderItemIdentifier] {
+    func containerIdentifiers(forFileIDs fileIDs: [Int?], rootFileID: Int) -> [NSFileProviderItemIdentifier] {
         fileIDs.compactMap { fileID in
             fileID.map { self.containerIdentifier(forFileID: $0, rootFileID: rootFileID) }
         }
     }
 
-    private func containerIdentifier(forFileID fileID: Int, rootFileID: Int) -> NSFileProviderItemIdentifier {
+    func containerIdentifier(forFileID fileID: Int, rootFileID: Int) -> NSFileProviderItemIdentifier {
         if fileID == rootFileID {
             return .rootContainer
         }
         return NSFileProviderItemIdentifier(KDriveItemIdentifier.item(fileID).rawValue)
     }
 
-    private func invalidateCachedSnapshotsAndSignal(
+    func invalidateCachedSnapshotsAndSignal(
         runtime: FileProviderRuntime,
         containerIdentifiers: [NSFileProviderItemIdentifier]
     ) async {
@@ -755,6 +755,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 )
             }
 
+        }
+        for containerIdentifier in uniqueIdentifiers where containerIdentifier != .workingSet {
+            await signalEnumerator(for: containerIdentifier, runtime: runtime)
         }
         await signalWorkingSet(runtime: runtime)
     }

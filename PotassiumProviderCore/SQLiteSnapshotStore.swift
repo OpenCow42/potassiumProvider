@@ -14,6 +14,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         let database = try Connection(databaseURL.path)
         try Self.configure(database)
         try Self.createTables(on: database)
+        try Self.migrateFavoriteMetadata(on: database)
         try Self.migrateLegacySnapshots(on: database)
         self.database = database
     }
@@ -861,6 +862,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             table.column(Schema.path)
             table.column(Schema.size)
             table.column(Schema.mimeType)
+            table.column(Schema.isFavorite)
             table.column(Schema.createdAt)
             table.column(Schema.modifiedAt)
             table.column(Schema.itemUpdatedAt)
@@ -904,6 +906,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             table.column(GenerationSchema.path)
             table.column(GenerationSchema.size)
             table.column(GenerationSchema.mimeType)
+            table.column(GenerationSchema.isFavorite)
             table.column(GenerationSchema.createdAt)
             table.column(GenerationSchema.modifiedAt)
             table.column(GenerationSchema.itemUpdatedAt)
@@ -947,6 +950,28 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             table.column(WorkingSetSchema.deletedItemIDsJSON)
             table.column(WorkingSetSchema.changeCompletedAt)
         })
+    }
+
+    private static func migrateFavoriteMetadata(on database: Connection) throws {
+        if try tableHasColumn("isFavorite", table: "snapshot_items", database: database) == false {
+            try database.run(Schema.snapshotItems.addColumn(Schema.isFavorite))
+        }
+        if try tableHasColumn("isFavorite", table: "snapshot_generation_items", database: database) == false {
+            try database.run(GenerationSchema.items.addColumn(GenerationSchema.isFavorite))
+        }
+    }
+
+    private static func tableHasColumn(
+        _ column: String,
+        table: String,
+        database: Connection
+    ) throws -> Bool {
+        for row in try database.prepare("PRAGMA table_info(\(table))") {
+            if row[1] as? String == column {
+                return true
+            }
+        }
+        return false
     }
 
     private static func migrateLegacySnapshots(on database: Connection) throws {
@@ -1052,6 +1077,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             Schema.path <- item.path,
             Schema.size <- item.size,
             Schema.mimeType <- item.mimeType,
+            Schema.isFavorite <- item.isFavorite,
             Schema.createdAt <- item.createdAt?.timeIntervalSince1970,
             Schema.modifiedAt <- item.modifiedAt.timeIntervalSince1970,
             Schema.itemUpdatedAt <- item.updatedAt.timeIntervalSince1970,
@@ -1079,6 +1105,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             GenerationSchema.path <- item.path,
             GenerationSchema.size <- item.size,
             GenerationSchema.mimeType <- item.mimeType,
+            GenerationSchema.isFavorite <- item.isFavorite,
             GenerationSchema.createdAt <- item.createdAt?.timeIntervalSince1970,
             GenerationSchema.modifiedAt <- item.modifiedAt.timeIntervalSince1970,
             GenerationSchema.itemUpdatedAt <- item.updatedAt.timeIntervalSince1970,
@@ -1096,6 +1123,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             path: row[Schema.path],
             size: row[Schema.size],
             mimeType: row[Schema.mimeType],
+            isFavorite: row[Schema.isFavorite],
             createdAt: row[Schema.createdAt].map { Date(timeIntervalSince1970: $0) },
             modifiedAt: Date(timeIntervalSince1970: row[Schema.modifiedAt]),
             updatedAt: Date(timeIntervalSince1970: row[Schema.itemUpdatedAt])
@@ -1113,6 +1141,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             path: row[GenerationSchema.path],
             size: row[GenerationSchema.size],
             mimeType: row[GenerationSchema.mimeType],
+            isFavorite: row[GenerationSchema.isFavorite],
             createdAt: row[GenerationSchema.createdAt].map { Date(timeIntervalSince1970: $0) },
             modifiedAt: Date(timeIntervalSince1970: row[GenerationSchema.modifiedAt]),
             updatedAt: Date(timeIntervalSince1970: row[GenerationSchema.itemUpdatedAt])
@@ -1235,6 +1264,7 @@ private enum Schema {
     static let path = Expression<String?>("path")
     static let size = Expression<Int?>("size")
     static let mimeType = Expression<String?>("mimeType")
+    static let isFavorite = Expression<Bool?>("isFavorite")
     static let createdAt = Expression<Double?>("createdAt")
     static let modifiedAt = Expression<Double>("modifiedAt")
     static let itemUpdatedAt = Expression<Double>("itemUpdatedAt")
@@ -1265,6 +1295,7 @@ private enum GenerationSchema {
     static let path = Expression<String?>("path")
     static let size = Expression<Int?>("size")
     static let mimeType = Expression<String?>("mimeType")
+    static let isFavorite = Expression<Bool?>("isFavorite")
     static let createdAt = Expression<Double?>("createdAt")
     static let modifiedAt = Expression<Double>("modifiedAt")
     static let itemUpdatedAt = Expression<Double>("itemUpdatedAt")

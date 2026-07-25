@@ -692,6 +692,16 @@ private extension KDriveProviderActivityKind {
             return "Drive Discovery"
         case .domainManagement:
             return "Domain Management"
+        case .favorite:
+            return "Favorite"
+        case .duplicate:
+            return "Duplicate"
+        case .restore:
+            return "Restore"
+        case .shareLink:
+            return "Share Link"
+        case .versionRestore:
+            return "Version Restore"
         }
     }
 
@@ -727,6 +737,16 @@ private extension KDriveProviderActivityKind {
             return "externaldrive.badge.questionmark"
         case .domainManagement:
             return "folder.badge.gearshape"
+        case .favorite:
+            return "star"
+        case .duplicate:
+            return "plus.square.on.square"
+        case .restore:
+            return "arrow.uturn.backward"
+        case .shareLink:
+            return "link"
+        case .versionRestore:
+            return "clock.arrow.trianglehead.counterclockwise.rotate.90"
         }
     }
 }

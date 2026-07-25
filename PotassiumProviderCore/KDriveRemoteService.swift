@@ -3,9 +3,12 @@ import OSLog
 import PotassiumChannelCore
 import PotassiumKDrive
 
-public protocol KDriveFileProviding: Sendable {
-    func listDrives() async throws -> [KDriveDriveSummary]
+public protocol KDriveItemMetadataProviding: Sendable {
     func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem
+}
+
+public protocol KDriveFileProviding: KDriveItemMetadataProviding {
+    func listDrives() async throws -> [KDriveDriveSummary]
     func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
     func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage
     func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage
@@ -141,7 +144,7 @@ public enum KDriveUploadConflictStrategy: String, Sendable {
     case rename
 }
 
-public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemoteProviding {
+public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemoteProviding, KDriveContextActionProviding {
     private let apiClient: InfomaniakAPIClient
     private let driveClient: InfomaniakAPIClient
     private let service: KDriveService
@@ -460,6 +463,214 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         }
     }
 
+    public func setFavorite(driveID: Int, fileID: Int, isFavorite: Bool) async throws {
+        _ = try await performNetworkOperation(isFavorite ? "favoriteItem" : "unfavoriteItem") {
+            if isFavorite {
+                try await service.favoriteFile(driveId: driveID, fileId: fileID)
+            } else {
+                try await service.unfavoriteFile(driveId: driveID, fileId: fileID)
+            }
+        }
+    }
+
+    public func duplicateItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
+        try await performNetworkOperation("duplicateItem") {
+            try await service.duplicateFile(driveId: driveID, fileId: fileID).data.remoteItem
+        }
+    }
+
+    public func trashedItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
+        try await performNetworkOperation("trashedItem") {
+            try await service.getTrashedFile(driveId: driveID, fileId: fileID).data.remoteItem
+        }
+    }
+
+    public func existingFileIDs(driveID: Int, fileIDs: [Int]) async throws -> Set<Int> {
+        guard fileIDs.isEmpty == false else { return [] }
+        return try await performNetworkOperation("existingFileIDs") {
+            Set(try await service.checkFilesExistence(driveId: driveID, fileIds: fileIDs).data.lazy
+                .filter(\.result)
+                .map(\.id))
+        }
+    }
+
+    public func restoreTrashedItem(driveID: Int, fileID: Int, destinationParentID: Int) async throws {
+        _ = try await performNetworkOperation("restoreTrashedItem") {
+            try await service.restoreTrashedFile(
+                driveId: driveID,
+                fileId: fileID,
+                destinationDirectoryId: destinationParentID
+            )
+        }
+    }
+
+    public func shareLink(driveID: Int, fileID: Int) async throws -> KDriveShareLinkSummary? {
+        do {
+            return try await performNetworkOperation("shareLink") {
+                try Self.shareLinkSummary(
+                    try await service.getFileShareLink(driveId: driveID, fileId: fileID).data
+                )
+            }
+        } catch APIClientError.unacceptableStatusCode(let statusCode, _) where statusCode == 404 {
+            return nil
+        }
+    }
+
+    public func createShareLink(
+        driveID: Int,
+        fileID: Int,
+        configuration: KDriveShareLinkConfiguration
+    ) async throws -> KDriveShareLinkSummary {
+        guard configuration.isValid else {
+            throw KDriveContextActionError.passwordRequired
+        }
+        return try await performNetworkOperation("createShareLink") {
+            let link = try await service.createFileShareLink(
+                driveId: driveID,
+                fileId: fileID,
+                options: Self.createShareLinkOptions(configuration)
+            ).data
+            return try Self.shareLinkSummary(link)
+        }
+    }
+
+    public func updateShareLink(
+        driveID: Int,
+        fileID: Int,
+        configuration: KDriveShareLinkConfiguration
+    ) async throws -> KDriveShareLinkSummary {
+        _ = try await performNetworkOperation("updateShareLink") {
+            try await service.updateFileShareLink(
+                driveId: driveID,
+                fileId: fileID,
+                options: Self.updateShareLinkOptions(configuration)
+            )
+        }
+        guard let link = try await shareLink(driveID: driveID, fileID: fileID) else {
+            throw KDriveContextActionError.invalidShareLinkURL
+        }
+        return link
+    }
+
+    public func deleteShareLink(driveID: Int, fileID: Int) async throws {
+        _ = try await performNetworkOperation("deleteShareLink") {
+            try await service.deleteFileShareLink(driveId: driveID, fileId: fileID)
+        }
+    }
+
+    public func fileVersions(
+        driveID: Int,
+        fileID: Int,
+        page: Int,
+        pageSize: Int
+    ) async throws -> KDriveFileVersionPage {
+        try await performNetworkOperation("fileVersions") {
+            let response = try await service.listFileVersions(
+                driveId: driveID,
+                fileId: fileID,
+                page: page,
+                perPage: pageSize,
+                total: true,
+                orderBy: "created_at",
+                order: "desc"
+            )
+            let resolvedPage = response.page ?? page
+            let versions = response.data.map { version in
+                KDriveFileVersionSummary(
+                    id: version.id,
+                    createdAt: Date(timeIntervalSince1970: TimeInterval(version.createdAt)),
+                    modifiedAt: version.lastModifiedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    size: version.size,
+                    mimeType: version.mimeType,
+                    editorDisplayName: Self.displayName(for: version.updatedBy),
+                    isKeptForever: version.keepForever
+                )
+            }
+            let hasMore = response.pages.map { resolvedPage < $0 } ?? (versions.count == pageSize)
+            return KDriveFileVersionPage(versions: versions, page: resolvedPage, hasMore: hasMore)
+        }
+    }
+
+    public func restoreFileVersion(
+        driveID: Int,
+        fileID: Int,
+        versionID: Int,
+        destinationParentID: Int,
+        name: String
+    ) async throws -> KDriveRemoteItem {
+        let restoredID = try await performNetworkOperation("restoreFileVersion") {
+            try await service.restoreFileVersionToDirectory(
+                driveId: driveID,
+                fileId: fileID,
+                versionId: versionID,
+                destinationDirectoryId: destinationParentID,
+                options: RestoreKDriveFileVersionToDirectoryOptions(name: name)
+            ).data.id
+        }
+        return try await item(driveID: driveID, fileID: restoredID)
+    }
+
+    private static func createShareLinkOptions(
+        _ configuration: KDriveShareLinkConfiguration
+    ) -> CreateKDriveFileShareLinkOptions {
+        CreateKDriveFileShareLinkOptions(
+            right: configuration.access.rawValue,
+            canComment: configuration.allowsComments,
+            canDownload: configuration.allowsDownload,
+            canEdit: configuration.allowsEditing,
+            canRequestAccess: configuration.allowsAccessRequests,
+            canSeeInfo: configuration.showsFileInformation,
+            canSeeStats: configuration.showsStatistics,
+            password: configuration.access == .password ? configuration.password : nil,
+            validUntil: configuration.validUntil.map(unixTimestamp)
+        )
+    }
+
+    private static func updateShareLinkOptions(
+        _ configuration: KDriveShareLinkConfiguration
+    ) -> UpdateKDriveFileShareLinkOptions {
+        UpdateKDriveFileShareLinkOptions(
+            canComment: configuration.allowsComments,
+            canDownload: configuration.allowsDownload,
+            canEdit: configuration.allowsEditing,
+            canRequestAccess: configuration.allowsAccessRequests,
+            canSeeInfo: configuration.showsFileInformation,
+            canSeeStats: configuration.showsStatistics,
+            password: configuration.access == .password ? configuration.password : nil,
+            right: configuration.access.rawValue,
+            validUntil: configuration.validUntil.map(unixTimestamp)
+        )
+    }
+
+    private static func shareLinkSummary(_ link: KDriveShareLink) throws -> KDriveShareLinkSummary {
+        guard let url = URL(string: link.url) else {
+            throw KDriveContextActionError.invalidShareLinkURL
+        }
+        let access = KDriveShareLinkConfiguration.Access(rawValue: link.right) ?? .public
+        return KDriveShareLinkSummary(
+            url: url,
+            configuration: KDriveShareLinkConfiguration(
+                access: access,
+                validUntil: link.validUntil.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                allowsDownload: link.capabilities.canDownload,
+                allowsComments: link.capabilities.canComment,
+                allowsEditing: link.capabilities.canEdit,
+                allowsAccessRequests: link.capabilities.canRequestAccess,
+                showsFileInformation: link.capabilities.canSeeInfo,
+                showsStatistics: link.capabilities.canSeeStats
+            ),
+            viewCount: link.views
+        )
+    }
+
+    private static func displayName(for user: KDriveUser) -> String {
+        if let displayName = user.displayName, displayName.isEmpty == false {
+            return displayName
+        }
+        let components = [user.firstName, user.lastName].compactMap { $0 }.filter { $0.isEmpty == false }
+        return components.isEmpty ? "Unknown editor" : components.joined(separator: " ")
+    }
+
     private func performNetworkOperation<Value>(
         _ operation: String,
         _ work: () async throws -> Value
@@ -587,6 +798,7 @@ extension KDriveFileItem {
             path: path,
             size: size,
             mimeType: mimeType,
+            isFavorite: isFavorite,
             createdAt: createdAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
             modifiedAt: Date(timeIntervalSince1970: TimeInterval(lastModifiedAt)),
             updatedAt: Date(timeIntervalSince1970: TimeInterval(updatedAt))

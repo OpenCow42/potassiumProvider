@@ -81,7 +81,8 @@ Listing snapshots use three active tables:
 - commit timestamp
 
 `snapshot_generation_items` stores the ordered item metadata for a particular
-generation. Its primary key is domain, container, generation, and item ID.
+generation, including nullable `isFavorite` state. Its primary key is domain,
+container, generation, and item ID.
 
 The active generation and its two predecessors are retained. That keeps item
 and change page tokens stable while a newer snapshot commits, while deliberately
@@ -91,6 +92,10 @@ The following legacy tables remain present solely for safe in-place migration.
 Initialization transactionally moves each legacy container into generation 1
 and deletes the migrated legacy rows without changing the working-set, conflict,
 or activity tables:
+
+Before that migration, initialization adds nullable `isFavorite` columns to
+both legacy and generation item tables when upgrading an older database.
+Existing rows remain `NULL`, preserving backward compatibility.
 
 `container_snapshots`:
 
@@ -116,6 +121,7 @@ or activity tables:
 - `path`
 - `size`
 - `mimeType`
+- nullable `isFavorite`
 - `createdAt`
 - `modifiedAt`
 - `itemUpdatedAt`
@@ -206,6 +212,7 @@ SQLite caches metadata needed to enumerate and diff containers:
 - parent IDs
 - type/status
 - size and MIME type
+- nullable kDrive favorite state
 - timestamps used for File Provider versions
 - advanced-listing cursor state
 - whether the container has been fully enumerated
@@ -233,6 +240,7 @@ SQLite does not cache:
 - pending local operations
 - kDrive version history
 - private kDrive web URLs
+- share-link passwords and returned share URLs
 
 File bytes returned from `fetchContents` are written to File Provider temporary
 storage and handed back to the system.
@@ -253,6 +261,11 @@ links.
 The Activities support-log export is a separate redacted JSON view of this data.
 It pseudonymizes identifiers with a fresh per-export salt and omits filenames,
 paths, staged-upload paths, and raw identifiers. See [Logging](LOGGING.md).
+
+The contextual share-link panel keeps the entered password and returned URL in
+memory only. Activity rows record sanitized action summaries, never link
+material or passwords. Version-history pages are also transient and are not
+cached in SQLite.
 
 ## Snapshot Replacement
 

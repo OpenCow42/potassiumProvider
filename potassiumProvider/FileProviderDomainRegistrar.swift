@@ -10,6 +10,8 @@ protocol ProviderDomainRegistering {
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState]
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws
     func releaseKnownFolders(for configuration: ProviderDomainConfiguration) async throws
+    func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL
+    func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws
 }
 
 enum ProviderKnownFolderSyncState: Equatable, Sendable {
@@ -30,6 +32,14 @@ extension ProviderDomainRegistering {
 
     func releaseKnownFolders(for configuration: ProviderDomainConfiguration) async throws {
         throw ProviderKnownFolderRegistrationError.unsupportedPlatform
+    }
+
+    func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL {
+        throw ProviderKnownFolderRegistrationError.managerUnavailable(configuration.domainIdentifier)
+    }
+
+    func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {
+        throw ProviderKnownFolderRegistrationError.managerUnavailable(configuration.domainIdentifier)
     }
 }
 
@@ -118,6 +128,24 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
         #endif
     }
 
+    func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL {
+        let manager = try await manager(for: configuration)
+        return try await manager.getUserVisibleURL(for: .rootContainer)
+    }
+
+    func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {
+        let manager = try await manager(for: configuration)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            manager.signalEnumerator(for: .workingSet) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     func makeDomain(for configuration: ProviderDomainConfiguration) -> NSFileProviderDomain {
         let domain = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(rawValue: configuration.domainIdentifier),
@@ -143,6 +171,7 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
         )
         return locations
     }
+    #endif
 
     private func manager(for configuration: ProviderDomainConfiguration) async throws -> NSFileProviderManager {
         let identifier = NSFileProviderDomainIdentifier(rawValue: configuration.domainIdentifier)
@@ -166,7 +195,6 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
             }
         }
     }
-    #endif
 }
 
 enum ProviderKnownFolderRegistrationError: Error, Equatable, LocalizedError, Sendable {
