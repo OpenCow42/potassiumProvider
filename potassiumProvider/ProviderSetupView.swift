@@ -135,6 +135,7 @@ struct ProviderSetupView: View {
             }
         }
         .navigationTitle("Setup")
+        .providerNavigationAnimation(animatesInitialAppearance: false)
         .task(id: setupAutoLoadTaskID) {
             await model.loadDrivesForAccountsIfPossible()
         }
@@ -160,6 +161,7 @@ struct ProviderSetupView: View {
         switch route {
         case .addAccount:
             ProviderAddAccountView(model: model)
+                .providerNavigationAnimation()
         case .account(let accountIdentifier):
             ProviderAccountManagementView(
                 model: model,
@@ -167,8 +169,10 @@ struct ProviderSetupView: View {
             ) {
                 path.removeAll()
             }
+            .providerNavigationAnimation()
         case .drive(let key):
             ProviderDriveManagementView(model: model, key: key)
+                .providerNavigationAnimation()
         }
     }
 
@@ -823,6 +827,12 @@ private extension ProviderAccountAuthenticationKind {
 }
 
 private extension View {
+    func providerNavigationAnimation(animatesInitialAppearance: Bool = true) -> some View {
+        modifier(ProviderNavigationAnimationModifier(
+            animatesInitialAppearance: animatesInitialAppearance
+        ))
+    }
+
     @ViewBuilder
     func platformPasswordEntry() -> some View {
         #if canImport(UIKit)
@@ -833,5 +843,53 @@ private extension View {
         #else
         self
         #endif
+    }
+}
+
+private struct ProviderNavigationAnimationModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let animatesInitialAppearance: Bool
+
+    @State private var hasAppeared = false
+    @State private var isVisible = false
+    @State private var horizontalDirection: CGFloat = 1
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .offset(x: reduceMotion ? 0 : horizontalDirection * 28)
+            .onAppear {
+                let shouldAnimate = hasAppeared || animatesInitialAppearance
+                hasAppeared = true
+
+                if shouldAnimate {
+                    withAnimation(navigationAnimation) {
+                        isVisible = true
+                        horizontalDirection = 0
+                    }
+                } else {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        isVisible = true
+                        horizontalDirection = 0
+                    }
+                }
+            }
+            .onDisappear {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    isVisible = false
+                    horizontalDirection = -1
+                }
+            }
+    }
+
+    private var navigationAnimation: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.16)
+            : .snappy(duration: 0.3, extraBounce: 0)
     }
 }
