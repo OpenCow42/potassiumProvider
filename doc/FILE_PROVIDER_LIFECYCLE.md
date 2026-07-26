@@ -28,9 +28,16 @@ stored in app-group JSON or SQLite.
 
 The extension adopts `NSFileProviderKnownFolderSupporting` on macOS.
 `getKnownFolderLocations` resolves the existing root-level kDrive directory
-named `Private`, then returns `Desktop` and `Documents` locations with that
-directory as their shared parent. It returns locations only for the folders
-requested by macOS. A missing or non-directory `Private` item fails closed.
+named `Private`, then resolves or creates its exact
+`Private/<current Mac name>` child and returns `Desktop` and `Documents`
+locations with that namespace as their shared parent. It returns locations only
+for the folders requested by macOS. Missing, non-directory, or ambiguous
+parents fail closed.
+
+For compatibility, an active domain whose stored configuration predates the
+machine namespace continues to return `Private` itself. Once released, the next
+claim upgrades that domain to the machine namespace. The transition does not
+move or delete remote data.
 
 Apple's [`NSFileProviderKnownFolderSupporting`](https://developer.apple.com/documentation/fileprovider/nsfileproviderknownfoldersupporting)
 documentation is the source of truth for this callback and transition behavior.

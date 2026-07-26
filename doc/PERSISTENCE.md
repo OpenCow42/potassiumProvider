@@ -49,6 +49,11 @@ configuration JSON after the File Provider domain is removed.
 
 macOS Desktop & Documents activation is not persisted here or in SQLite. The app
 derives it from each registered `NSFileProviderDomain.replicatedKnownFolders`.
+Domain JSON does persist `knownFolderLayout`, which distinguishes the legacy
+direct-`Private` parent from the current `Private/<current Mac name>` parent.
+This is a compatibility marker, not a cached activation state or a pinned
+remote namespace identifier. JSON without the field decodes as
+`legacyPrivate`; newly created configurations default to `machineNamespace`.
 
 Legacy domain JSON that does not contain `accountIdentifier` decodes to the fixed
 `legacy-account` local account. The app rewrites those configurations during

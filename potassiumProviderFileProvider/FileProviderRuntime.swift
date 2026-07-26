@@ -76,13 +76,7 @@ struct FileProviderRuntime: Sendable {
 
     static func loadConfiguration(domain: NSFileProviderDomain) async throws -> ProviderDomainConfiguration {
         FileProviderLog.runtime.debug("load configuration for domain(\(domain.identifier.rawValue, privacy: .public)) from app group")
-        let configurationStore: DomainConfigurationFileStore
-        do {
-            configurationStore = try DomainConfigurationFileStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
-        } catch {
-            FileProviderLog.runtime.error("failed to open app group configuration store for domain(\(domain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
+        let configurationStore = try makeConfigurationStore(domain: domain)
 
         guard let configuration = try await configurationStore.configuration(domainIdentifier: domain.identifier.rawValue) else {
             FileProviderLog.runtime.error("missing configuration for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
@@ -90,6 +84,21 @@ struct FileProviderRuntime: Sendable {
         }
         FileProviderLog.runtime.debug("loaded configuration for domain(\(configuration.domainIdentifier, privacy: .public)) driveID(\(configuration.driveID, privacy: .public)) displayName(\(configuration.displayName, privacy: .private))")
         return configuration
+    }
+
+    static func markMachineNamespaceLayout(domain: NSFileProviderDomain) async throws {
+        let configurationStore = try makeConfigurationStore(domain: domain)
+        guard var configuration = try await configurationStore.configuration(
+            domainIdentifier: domain.identifier.rawValue
+        ) else {
+            throw NSFileProviderError(.notAuthenticated)
+        }
+        guard configuration.knownFolderLayout != .machineNamespace else {
+            return
+        }
+        configuration.knownFolderLayout = .machineNamespace
+        configuration.updatedAt = Date()
+        try await configurationStore.save(configuration)
     }
 
     static func makeSnapshotStore() throws -> any KDriveSnapshotStoring {
@@ -115,6 +124,19 @@ struct FileProviderRuntime: Sendable {
         } catch {
             FileProviderLog.runtime.error("failed to open provider event store in app group: \(error.localizedDescription, privacy: .public)")
             return nil
+        }
+    }
+
+    private static func makeConfigurationStore(
+        domain: NSFileProviderDomain
+    ) throws -> DomainConfigurationFileStore {
+        do {
+            return try DomainConfigurationFileStore(
+                appGroupIdentifier: ProviderConstants.appGroupIdentifier
+            )
+        } catch {
+            FileProviderLog.runtime.error("failed to open app group configuration store for domain(\(domain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
 }

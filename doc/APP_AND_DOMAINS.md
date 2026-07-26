@@ -151,11 +151,18 @@ On macOS 15 or later, a configured drive's management screen can opt in to
 Apple's known-folder feature. This is not arbitrary-folder sync: Apple currently
 permits Desktop and Documents to be claimed only together.
 
-The app resolves the existing root-level kDrive directory named `Private` and
-uses its item identifier as the common parent for `Private/Desktop` and
-`Private/Documents`. The `Private` directory must already exist and be a
-directory. File Provider reuses directory children with the recommended names
-or creates them when absent; invalid or colliding locations fail the claim.
+The app resolves the existing root-level kDrive directory named `Private`,
+sanitizes the current macOS computer name, and reuses or creates the exact
+directory `Private/<current Mac name>`. That machine namespace is the common
+parent for `Desktop` and `Documents`. The `Private` directory must already
+exist and be a directory. A file collision or multiple exact namespace matches
+fail the claim instead of selecting an arbitrary item.
+
+The namespace follows the Mac's current name; its remote identifier is not
+pinned locally. Macs with the same sanitized name deliberately share the same
+namespace. Names are Unicode-normalized, path separators and control characters
+are replaced, and long names receive a deterministic suffix while remaining
+within kDrive's 255-byte limit.
 
 Claiming begins only from the app's explicit control and presents Apple's user
 consent UI. Cancellation leaves the previous state unchanged. The extension's
@@ -163,6 +170,12 @@ consent UI. Cancellation leaves the previous state unchanged. The extension's
 initiates a switch outside that claim call. The app reads live state from the
 registered domain, refreshes it when domain state changes, and provides a
 matching control to stop syncing both folders through `releaseKnownFolders`.
+
+Stored domain configurations include a known-folder layout marker. Legacy JSON
+without the marker decodes to the old direct-`Private` layout. An already active
+legacy claim remains there without moving or deleting remote data. Stopping and
+re-enabling it, or a new system-initiated claim while inactive, upgrades it to
+the current machine namespace.
 
 ## Removing A Domain
 

@@ -48,6 +48,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let snapshotStore: (any KDriveSnapshotStoring)?
     private let eventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
+    private let computerNameProvider: @Sendable () throws -> String
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
     private var fileProviderDomainChangeCancellable: AnyCancellable?
 
@@ -63,7 +64,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         initialAccounts: [ProviderAccount] = [],
         initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
         initialDomains: [ProviderDomainConfiguration] = [],
-        fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) }
+        fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) },
+        computerNameProvider: @escaping @Sendable () throws -> String = { try KDriveMachineNamespaceName.current() }
     ) {
         self.accountStore = accountStore ?? Self.makeDefaultAccountStore()
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
@@ -73,6 +75,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
+        self.computerNameProvider = computerNameProvider
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
         domains = initialDomains
@@ -142,6 +145,17 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     func isChangingKnownFolderSync(for configuration: ProviderDomainConfiguration) -> Bool {
         knownFolderTransitionDomainIdentifiers.contains(configuration.domainIdentifier)
+    }
+
+    func knownFolderRemotePath(for configuration: ProviderDomainConfiguration) -> String {
+        let state = knownFolderSyncState(for: configuration)
+        if configuration.knownFolderLayout == .legacyPrivate, state != .inactive {
+            return "/Private"
+        }
+        guard let namespaceName = try? computerNameProvider() else {
+            return "/Private/<this Mac>"
+        }
+        return "/Private/\(namespaceName)"
     }
 
     func activeDriveAction(for key: ProviderDriveKey) -> ProviderDriveAction? {
@@ -408,19 +422,45 @@ final class PotassiumProviderAppModel: ObservableObject {
         guard beginKnownFolderTransition(.enablingKnownFolders, for: configuration) else { return }
         defer { endKnownFolderTransition(for: configuration) }
 
+        var namespacedConfiguration = configuration
+        var didClaimKnownFolders = false
         do {
             let token = try await usableToken(accountIdentifier: configuration.accountIdentifier)
             let remote = fileProviderFactory(token.accessToken)
-            let parentFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
+            let privateFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
                 driveID: configuration.driveID,
                 rootFileID: configuration.rootFileID,
                 remote: remote
             )
-            try await domainRegistrar.claimKnownFolders(for: configuration, parentFileID: parentFileID)
+            let namespace = try await KDriveMachineNamespaceResolver.resolveOrCreate(
+                driveID: configuration.driveID,
+                privateDirectoryFileID: privateFileID,
+                computerName: try computerNameProvider(),
+                remote: remote
+            )
+
+            namespacedConfiguration.knownFolderLayout = .machineNamespace
+            namespacedConfiguration.updatedAt = Date()
+            try await domainStore.save(namespacedConfiguration)
+            replaceDomainConfiguration(namespacedConfiguration)
+
+            try await domainRegistrar.claimKnownFolders(
+                for: namespacedConfiguration,
+                parentFileID: namespace.fileID
+            )
+            didClaimKnownFolders = true
             try await refreshKnownFolderSyncStates()
-            statusMessage = "Desktop and Documents now sync with \(configuration.displayName) in kDrive /private."
+            statusMessage = "Desktop and Documents now sync with \(configuration.displayName) in kDrive /Private/\(namespace.name)."
             errorMessage = nil
         } catch {
+            if didClaimKnownFolders == false, namespacedConfiguration != configuration {
+                do {
+                    try await domainStore.save(configuration)
+                    replaceDomainConfiguration(configuration)
+                } catch {
+                    Self.log.error("failed to restore known-folder layout for domain(\(configuration.domainIdentifier, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                }
+            }
             try? await refreshKnownFolderSyncStates()
             guard isUserCancellation(error) == false else { return }
             await recordAppFailure(
@@ -429,7 +469,7 @@ final class PotassiumProviderAppModel: ObservableObject {
                 error: error,
                 category: .fileProvider
             )
-            errorMessage = "Could not sync Desktop and Documents with kDrive /private: \(error.localizedDescription)"
+            errorMessage = "Could not sync Desktop and Documents with this Mac's kDrive namespace: \(error.localizedDescription)"
             statusMessage = nil
         }
         #endif
@@ -750,6 +790,15 @@ final class PotassiumProviderAppModel: ObservableObject {
     private func endKnownFolderTransition(for configuration: ProviderDomainConfiguration) {
         knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier)
         endDriveAction(for: driveKey(for: configuration))
+    }
+
+    private func replaceDomainConfiguration(_ configuration: ProviderDomainConfiguration) {
+        guard let index = domains.firstIndex(where: {
+            $0.domainIdentifier == configuration.domainIdentifier
+        }) else {
+            return
+        }
+        domains[index] = configuration
     }
 
     private func refreshKnownFolderSyncStates() async throws {

@@ -576,7 +576,7 @@ private struct ProviderDriveManagementView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("macOS will stop replicating both folders with kDrive. Remote files in /private are not deleted.")
+            Text("macOS will stop replicating both folders with kDrive. Remote files in \(knownFolderRemotePath) are not deleted.")
         }
         #endif
     }
@@ -595,6 +595,13 @@ private struct ProviderDriveManagementView: View {
 
     private var isBusy: Bool {
         activeAction != nil || model.isLoadingDrives(for: key.accountIdentifier)
+    }
+
+    private var knownFolderRemotePath: String {
+        guard let configuration = descriptor?.configuration else {
+            return "/Private/<this Mac>"
+        }
+        return model.knownFolderRemotePath(for: configuration)
     }
 
     private func driveForm(_ descriptor: ProviderDriveDescriptor) -> some View {
@@ -735,9 +742,10 @@ private struct ProviderDriveManagementView: View {
     #if os(macOS)
     private func knownFolderSection(_ configuration: ProviderDomainConfiguration) -> some View {
         let state = model.knownFolderSyncState(for: configuration)
+        let remotePath = model.knownFolderRemotePath(for: configuration)
         return Section {
             LabeledContent("Status", value: knownFolderStatusTitle(state))
-            Text(knownFolderDetail(state))
+            Text(knownFolderDetail(state, remotePath: remotePath))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -768,7 +776,7 @@ private struct ProviderDriveManagementView: View {
         } header: {
             Text("Desktop & Documents")
         } footer: {
-            Text("macOS manages Desktop and Documents together under kDrive /private.")
+            Text("macOS manages Desktop and Documents together under kDrive \(remotePath).")
         }
     }
 
@@ -785,14 +793,17 @@ private struct ProviderDriveManagementView: View {
         }
     }
 
-    private func knownFolderDetail(_ state: ProviderKnownFolderSyncState) -> String {
+    private func knownFolderDetail(
+        _ state: ProviderKnownFolderSyncState,
+        remotePath: String
+    ) -> String {
         switch state {
         case .active:
-            "Desktop and Documents sync with /private/Desktop and /private/Documents."
+            "Desktop and Documents sync with \(remotePath)/Desktop and \(remotePath)/Documents."
         case .partial:
             "Only part of the known-folder configuration is active. Stop syncing, then enable it again to repair the setup."
         case .inactive:
-            "Sync both folders with this drive’s existing /private directory."
+            "Sync both folders in this drive’s \(remotePath) directory."
         case .unavailable:
             "The live File Provider known-folder state could not be read."
         }

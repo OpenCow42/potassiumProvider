@@ -50,7 +50,8 @@ flowchart LR
   user-triggered claim/release, domain removal, and independent account logout.
 - The File Provider extension owns Apple's runtime callbacks and maps those
   callbacks to `KDriveFileProviding` operations. On macOS it also maps Desktop
-  and Documents to the selected drive's root-level `Private` directory.
+  and Documents to `Private/<current Mac name>` on the selected drive, while
+  preserving active legacy domains that still point directly at `Private`.
 - `PotassiumProviderCore` owns typed provider models, persistence protocols,
   OAuth utilities, and the `PotassiumKDriveService` adapter.
 - `potassiumChannel` owns the typed request builders and service calls for

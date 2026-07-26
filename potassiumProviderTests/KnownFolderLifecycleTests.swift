@@ -7,7 +7,7 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct KnownFolderLifecycleTests {
-    @Test func enablingSyncClaimsDesktopAndDocumentsUnderPrivateDirectory() async throws {
+    @Test func enablingSyncClaimsDesktopAndDocumentsUnderMacNamespace() async throws {
         let registrar = RecordingKnownFolderRegistrar(state: .inactive)
         try await withContext(registrar: registrar) { context in
             registrar.resetEvents()
@@ -15,19 +15,26 @@ struct KnownFolderLifecycleTests {
             await context.model.enableKnownFolderSync(for: context.configuration)
 
             #expect(registrar.events == [
-                .claim(domainIdentifier: context.configuration.domainIdentifier, parentFileID: 77),
+                .claim(domainIdentifier: context.configuration.domainIdentifier, parentFileID: 88),
                 .refreshStates,
             ])
             #expect(context.model.knownFolderSyncState(for: context.configuration) == .active)
             #expect(context.model.isChangingKnownFolderSync(for: context.configuration) == false)
             #expect(context.model.errorMessage == nil)
-            #expect(context.model.statusMessage?.contains("kDrive /private") == true)
+            #expect(context.model.statusMessage?.contains("kDrive /Private/Studio Mac") == true)
+            let storedConfiguration = try #require(
+                try await context.domainStore.configuration(
+                    domainIdentifier: context.configuration.domainIdentifier
+                )
+            )
+            #expect(storedConfiguration.knownFolderLayout == .machineNamespace)
         }
     }
 
     @Test func disablingSyncReleasesKnownFoldersAndRefreshesState() async throws {
         let registrar = RecordingKnownFolderRegistrar(state: .active)
         try await withContext(registrar: registrar) { context in
+            #expect(context.model.knownFolderRemotePath(for: context.configuration) == "/Private")
             registrar.resetEvents()
 
             await context.model.disableKnownFolderSync(for: context.configuration)
@@ -37,8 +44,32 @@ struct KnownFolderLifecycleTests {
                 .refreshStates,
             ])
             #expect(context.model.knownFolderSyncState(for: context.configuration) == .inactive)
+            #expect(
+                context.model.knownFolderRemotePath(for: context.configuration)
+                    == "/Private/Studio Mac"
+            )
             #expect(context.model.isChangingKnownFolderSync(for: context.configuration) == false)
             #expect(context.model.errorMessage == nil)
+        }
+    }
+
+    @Test func failedClaimRestoresLegacyLayoutMarker() async throws {
+        let registrar = RecordingKnownFolderRegistrar(
+            state: .inactive,
+            claimError: KnownFolderLifecycleTestError.claimFailed
+        )
+        try await withContext(registrar: registrar) { context in
+            await context.model.enableKnownFolderSync(for: context.configuration)
+
+            let storedConfiguration = try #require(
+                try await context.domainStore.configuration(
+                    domainIdentifier: context.configuration.domainIdentifier
+                )
+            )
+            #expect(storedConfiguration.knownFolderLayout == .legacyPrivate)
+            #expect(context.model.domains.first?.knownFolderLayout == .legacyPrivate)
+            #expect(context.model.knownFolderSyncState(for: context.configuration) == .inactive)
+            #expect(context.model.errorMessage?.contains("Could not sync") == true)
         }
     }
 
@@ -172,7 +203,8 @@ struct KnownFolderLifecycleTests {
             displayName: "Test Drive",
             driveID: 42,
             driveName: "Test Drive",
-            rootFileID: 1
+            rootFileID: 1,
+            knownFolderLayout: .legacyPrivate
         )
         try await accountStore.save(account)
         try await domainStore.save(configuration)
@@ -200,7 +232,8 @@ struct KnownFolderLifecycleTests {
             snapshotStore: snapshotStore,
             eventStore: eventStore,
             automaticallyReloadStoredState: false,
-            fileProviderFactory: { _ in remote }
+            fileProviderFactory: { _ in remote },
+            computerNameProvider: { "Studio Mac" }
         )
         await model.reloadStoredState()
         #expect(model.knownFolderSyncState(for: configuration) == registrar.state)
@@ -240,10 +273,16 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
 
     private(set) var events: [Event] = []
     private(set) var state: ProviderKnownFolderSyncState
+    private let claimError: Error?
     private let releaseError: Error?
 
-    init(state: ProviderKnownFolderSyncState, releaseError: Error? = nil) {
+    init(
+        state: ProviderKnownFolderSyncState,
+        claimError: Error? = nil,
+        releaseError: Error? = nil
+    ) {
         self.state = state
+        self.claimError = claimError
         self.releaseError = releaseError
     }
 
@@ -272,6 +311,9 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
             domainIdentifier: configuration.domainIdentifier,
             parentFileID: parentFileID
         ))
+        if let claimError {
+            throw claimError
+        }
         state = .active
     }
 
@@ -285,10 +327,16 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
 }
 
 private enum KnownFolderLifecycleTestError: LocalizedError {
+    case claimFailed
     case releaseFailed
 
     var errorDescription: String? {
-        "The test release failed."
+        switch self {
+        case .claimFailed:
+            "The test claim failed."
+        case .releaseFailed:
+            "The test release failed."
+        }
     }
 }
 
@@ -309,24 +357,19 @@ private struct KnownFolderLifecycleRemote: KDriveFileProviding {
         cursor: String?,
         limit: Int
     ) async throws -> KDriveItemPage {
-        KDriveItemPage(
-            items: [KDriveRemoteItem(
+        let items: [KDriveRemoteItem]
+        if folderID == 1 {
+            items = [remoteItem(
                 id: privateDirectoryFileID,
                 name: KDrivePrivateDirectoryResolver.directoryName,
-                type: "dir",
-                status: "ok",
                 driveID: driveID,
                 parentID: folderID,
-                path: "/private",
-                size: nil,
-                mimeType: nil,
-                createdAt: nil,
-                modifiedAt: Date(timeIntervalSince1970: 1),
-                updatedAt: Date(timeIntervalSince1970: 1)
-            )],
-            nextCursor: nil,
-            hasMore: false
-        )
+                path: "/Private"
+            )]
+        } else {
+            items = []
+        }
+        return KDriveItemPage(items: items, nextCursor: nil, hasMore: false)
     }
 
     func listAdvancedDirectory(
@@ -372,7 +415,13 @@ private struct KnownFolderLifecycleRemote: KDriveFileProviding {
     }
 
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem {
-        throw KnownFolderLifecycleTestError.releaseFailed
+        remoteItem(
+            id: 88,
+            name: name,
+            driveID: driveID,
+            parentID: parentID,
+            path: "/Private/\(name)"
+        )
     }
 
     func renameItem(driveID: Int, fileID: Int, name: String) async throws {
@@ -389,6 +438,29 @@ private struct KnownFolderLifecycleRemote: KDriveFileProviding {
 
     func deleteTrashedItem(driveID: Int, fileID: Int) async throws {
         throw KnownFolderLifecycleTestError.releaseFailed
+    }
+
+    private func remoteItem(
+        id: Int,
+        name: String,
+        driveID: Int,
+        parentID: Int,
+        path: String
+    ) -> KDriveRemoteItem {
+        KDriveRemoteItem(
+            id: id,
+            name: name,
+            type: "dir",
+            status: "ok",
+            driveID: driveID,
+            parentID: parentID,
+            path: path,
+            size: nil,
+            mimeType: nil,
+            createdAt: nil,
+            modifiedAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
     }
 }
 #endif
