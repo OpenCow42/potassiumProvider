@@ -1381,6 +1381,15 @@ struct PotassiumProviderCoreTests {
         #expect(authRejection.recovery == .notAuthenticated)
         #expect(serverRejection.recovery == .serverUnreachable)
         #expect(validationRejection.recovery == .cannotSynchronize)
+        let rateLimitRejection = try #require(KDriveRemoteErrorClassifier.apiRejection(
+            from: APIClientError.unacceptableStatusCode(
+                429,
+                body: "Too Many Requests",
+                metadata: APIResponseMetadata(retryAfter: "30")
+            )
+        ))
+        #expect(rateLimitRejection.retryAfter == "30")
+        #expect(rateLimitRejection.recovery == .serverUnreachable)
         #expect(KDriveRemoteErrorClassifier.apiRejection(from: NSError(domain: NSURLErrorDomain, code: -1009)) == nil)
     }
 

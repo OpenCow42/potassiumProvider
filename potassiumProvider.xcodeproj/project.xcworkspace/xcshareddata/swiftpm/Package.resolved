@@ -1,13 +1,12 @@
 {
-  "originHash" : "613cbb0d4ce50189d97b72e2dc228bda845d46b491781fb0143dbeb79a057a19",
+  "originHash" : "4ca0a296a28bfdc2857c81a1f70f11cc9891a6c43de2f84a68c780c40bcf7fe3",
   "pins" : [
     {
       "identity" : "potassiumchannel",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/OpenCow42/potassiumChannel.git",
       "state" : {
-        "revision" : "8a6d236d69c381c17f334b66dd4075ef2e0b7d89",
-        "version" : "0.2.0"
+        "revision" : "fc41c4213060af2cf735d6a7381431487987097e"
       }
     },
     {

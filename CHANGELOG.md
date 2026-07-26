@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Read-style kDrive operations now recognize HTTP 429 responses and retry with
+  bounded, cancellation-aware backoff. Server-provided `Retry-After` values are
+  preferred; otherwise the provider uses jittered exponential delays.
+- Mutation requests remain single-attempt so an ambiguous response cannot
+  replay a server-side change.
+- Exhausted rate limits map to File Provider's recoverable
+  `.serverUnreachable` state and retain only sanitized diagnostics.
+
+### Dependency state
+
+- Requires the coordinated potassiumChannel 0.3.0 response-metadata API, which
+  preserves `Retry-After` without exposing arbitrary response headers.
+
 ## 0.3.0
 
 ### Added

@@ -148,12 +148,29 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     private let apiClient: InfomaniakAPIClient
     private let driveClient: InfomaniakAPIClient
     private let service: KDriveService
+    private let retryExecutor: KDriveRateLimitRetryExecutor
 
     public init(
         bearerToken: String,
         apiBaseURL: URL = ProviderConstants.apiBaseURL,
         driveBaseURL: URL = ProviderConstants.driveBaseURL,
         session: URLSession = .shared
+    ) {
+        self.init(
+            bearerToken: bearerToken,
+            apiBaseURL: apiBaseURL,
+            driveBaseURL: driveBaseURL,
+            session: session,
+            retryExecutor: .live
+        )
+    }
+
+    init(
+        bearerToken: String,
+        apiBaseURL: URL = ProviderConstants.apiBaseURL,
+        driveBaseURL: URL = ProviderConstants.driveBaseURL,
+        session: URLSession = .shared,
+        retryExecutor: KDriveRateLimitRetryExecutor
     ) {
         self.apiClient = InfomaniakAPIClient(
             configuration: APIClientConfiguration(baseURL: apiBaseURL, bearerToken: bearerToken),
@@ -164,10 +181,11 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             session: session
         )
         self.service = KDriveService(client: apiClient)
+        self.retryExecutor = retryExecutor
     }
 
     public func listDrives() async throws -> [KDriveDriveSummary] {
-        try await performNetworkOperation("listDrives") {
+        try await performNetworkOperation("listDrives", retryMode: .rateLimit) {
             let response = try await driveClient.send(APIRequest<InfomaniakResponse<KDriveInitPayload>>(
                 method: .get,
                 path: "/2/drive/init",
@@ -187,13 +205,13 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("item") {
+        try await performNetworkOperation("item", retryMode: .rateLimit) {
             try await service.getFile(driveId: driveID, fileId: fileID).data.remoteItem
         }
     }
 
     public func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
-        try await performNetworkOperation("listDirectory") {
+        try await performNetworkOperation("listDirectory", retryMode: .rateLimit) {
             let response = try await service.listDirectoryFiles(
                 driveId: driveID,
                 fileId: folderID,
@@ -207,7 +225,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         let orderBy = ["type", "name"]
         let orderFor = ["type": "asc", "name": "asc"]
 
-        return try await performNetworkOperation("listAdvancedDirectory") {
+        return try await performNetworkOperation("listAdvancedDirectory", retryMode: .rateLimit) {
             let response: CursorPaginatedInfomaniakResponse<KDriveAdvancedDirectoryListing>
             if let cursor {
                 response = try await service.continueAdvancedDirectoryListing(
@@ -245,7 +263,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
-        try await performNetworkOperation("listTrash") {
+        try await performNetworkOperation("listTrash", retryMode: .rateLimit) {
             let response = try await service.listTrashFiles(
                 driveId: driveID,
                 options: ListKDriveTrashOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
@@ -255,19 +273,25 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
-        try await performNetworkOperation("listWorkingSetRelevantItems") {
-            let latest = try await service.listLastModifiedFiles(driveId: driveID, limit: latestLimit).data
-            let favorites = try await service.listFavoriteFiles(driveId: driveID, limit: latestLimit).data
-            let myShared = try await service.listMySharedFiles(driveId: driveID, limit: latestLimit).data
-            let sharedWithMe = try await service.listSharedWithMeFiles(driveId: driveID, limit: latestLimit).data
-            var itemsByID: [Int: KDriveRemoteItem] = [:]
-            for item in latest + favorites + myShared + sharedWithMe {
-                itemsByID[item.id] = item.remoteItem
-            }
-            return itemsByID.values.sorted {
-                if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
-                return $0.id < $1.id
-            }
+        let latest = try await performNetworkOperation("listLastModifiedFiles", retryMode: .rateLimit) {
+            try await service.listLastModifiedFiles(driveId: driveID, limit: latestLimit).data
+        }
+        let favorites = try await performNetworkOperation("listFavoriteFiles", retryMode: .rateLimit) {
+            try await service.listFavoriteFiles(driveId: driveID, limit: latestLimit).data
+        }
+        let myShared = try await performNetworkOperation("listMySharedFiles", retryMode: .rateLimit) {
+            try await service.listMySharedFiles(driveId: driveID, limit: latestLimit).data
+        }
+        let sharedWithMe = try await performNetworkOperation("listSharedWithMeFiles", retryMode: .rateLimit) {
+            try await service.listSharedWithMeFiles(driveId: driveID, limit: latestLimit).data
+        }
+        var itemsByID: [Int: KDriveRemoteItem] = [:]
+        for item in latest + favorites + myShared + sharedWithMe {
+            itemsByID[item.id] = item.remoteItem
+        }
+        return itemsByID.values.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.id < $1.id
         }
     }
 
@@ -277,7 +301,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         since: Date
     ) async throws -> [KDrivePartialActivityResult] {
         guard fileIDs.isEmpty == false else { return [] }
-        return try await performNetworkOperation("listPartialActivities") {
+        return try await performNetworkOperation("listPartialActivities", retryMode: .rateLimit) {
             let response = try await service.listPartialFileActivities(
                 driveId: driveID,
                 options: ListKDrivePartialFileActivitiesOptions(
@@ -311,20 +335,30 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func downloadFileOperation(driveID: Int, fileID: Int) throws -> KDriveTransferOperation<Data> {
-        let operation = try service.downloadFile(driveId: driveID, fileId: fileID)
+        let progress = Progress(totalUnitCount: -1)
+        let controller = KDriveRetryingTransferController<Data>()
         return KDriveTransferOperation(
-            progress: operation.progress,
+            progress: progress,
             value: {
-                try await performNetworkOperation("downloadFile") {
-                    try await operation.value
+                try await performNetworkOperation("downloadFile", retryMode: .rateLimit) {
+                    let operation = try service.downloadFile(driveId: driveID, fileId: fileID)
+                    let transfer = KDriveTransferOperation(
+                        progress: operation.progress,
+                        value: { try await operation.value },
+                        cancellation: operation.cancel
+                    )
+                    try controller.install(transfer)
+                    progress.attachRetryAttempt(transfer.progress)
+                    defer { controller.clear(transfer) }
+                    return try await transfer.value
                 }
             },
-            cancellation: operation.cancel
+            cancellation: controller.cancel
         )
     }
 
     public func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
-        try await performNetworkOperation("thumbnail") {
+        try await performNetworkOperation("thumbnail", retryMode: .rateLimit) {
             try await service.getFileThumbnail(
                 driveId: driveID,
                 fileId: fileID,
@@ -480,14 +514,14 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func trashedItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("trashedItem") {
+        try await performNetworkOperation("trashedItem", retryMode: .rateLimit) {
             try await service.getTrashedFile(driveId: driveID, fileId: fileID).data.remoteItem
         }
     }
 
     public func existingFileIDs(driveID: Int, fileIDs: [Int]) async throws -> Set<Int> {
         guard fileIDs.isEmpty == false else { return [] }
-        return try await performNetworkOperation("existingFileIDs") {
+        return try await performNetworkOperation("existingFileIDs", retryMode: .rateLimit) {
             Set(try await service.checkFilesExistence(driveId: driveID, fileIds: fileIDs).data.lazy
                 .filter(\.result)
                 .map(\.id))
@@ -506,12 +540,12 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func shareLink(driveID: Int, fileID: Int) async throws -> KDriveShareLinkSummary? {
         do {
-            return try await performNetworkOperation("shareLink") {
+            return try await performNetworkOperation("shareLink", retryMode: .rateLimit) {
                 try Self.shareLinkSummary(
                     try await service.getFileShareLink(driveId: driveID, fileId: fileID).data
                 )
             }
-        } catch APIClientError.unacceptableStatusCode(let statusCode, _) where statusCode == 404 {
+        } catch APIClientError.unacceptableStatusCode(let statusCode, _, _) where statusCode == 404 {
             return nil
         }
     }
@@ -564,7 +598,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         page: Int,
         pageSize: Int
     ) async throws -> KDriveFileVersionPage {
-        try await performNetworkOperation("fileVersions") {
+        try await performNetworkOperation("fileVersions", retryMode: .rateLimit) {
             let response = try await service.listFileVersions(
                 driveId: driveID,
                 fileId: fileID,
@@ -673,6 +707,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     private func performNetworkOperation<Value>(
         _ operation: String,
+        retryMode: KDriveNetworkRetryMode = .none,
         _ work: () async throws -> Value
     ) async throws -> Value {
         let correlationID = UUID().uuidString
@@ -680,7 +715,16 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         ProviderLog.network.debug("network start operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public))")
 
         do {
-            let value = try await work()
+            let value: Value
+            switch retryMode {
+            case .none:
+                value = try await work()
+            case .rateLimit:
+                value = try await retryExecutor.perform(work) { retryNumber, delay in
+                    let delayMilliseconds = Int(delay.seconds * 1_000)
+                    ProviderLog.network.info("network throttled operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public)) retryNumber(\(retryNumber, privacy: .public)) delayMilliseconds(\(delayMilliseconds, privacy: .public)) delaySource(\(delay.source.rawValue, privacy: .public))")
+                }
+            }
             let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
             ProviderLog.network.info("network success operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public))")
             return value
@@ -700,15 +744,29 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
 public enum KDriveRemoteErrorClassifier {
     public static func apiRejection(from error: Error) -> KDriveRemoteAPIRejection? {
-        guard case let APIClientError.unacceptableStatusCode(statusCode, body) = error else {
+        guard case let APIClientError.unacceptableStatusCode(statusCode, body, metadata) = error else {
             return nil
         }
 
-        return KDriveRemoteAPIRejection(statusCode: statusCode, responseBody: body)
+        return KDriveRemoteAPIRejection(
+            statusCode: statusCode,
+            responseBody: body,
+            retryAfter: metadata.retryAfter
+        )
+    }
+
+    static func throttling(from error: Error) -> KDriveRemoteThrottling? {
+        guard let rejection = apiRejection(from: error), rejection.statusCode == 429 else {
+            return nil
+        }
+        return KDriveRemoteThrottling(
+            statusCode: rejection.statusCode,
+            retryAfter: rejection.retryAfter
+        )
     }
 
     public static func isInvalidCursor(_ error: Error) -> Bool {
-        guard case let APIClientError.unacceptableStatusCode(_, body) = error else {
+        guard case let APIClientError.unacceptableStatusCode(_, body, _) = error else {
             return false
         }
 
@@ -720,15 +778,20 @@ public enum KDriveRemoteErrorClassifier {
 public struct KDriveRemoteAPIRejection: Equatable, Sendable {
     public let statusCode: Int
     public let responseBody: String
+    public let retryAfter: String?
 
-    public init(statusCode: Int, responseBody: String) {
+    public init(statusCode: Int, responseBody: String, retryAfter: String? = nil) {
         self.statusCode = statusCode
         self.responseBody = responseBody
+        self.retryAfter = retryAfter
     }
 
     public var recovery: KDriveRemoteAPIRejectionRecovery {
         if statusCode == 401 {
             return .notAuthenticated
+        }
+        if statusCode == 429 {
+            return .serverUnreachable
         }
         if isInsufficientQuota {
             return .insufficientQuota
@@ -763,6 +826,59 @@ public struct KDriveRemoteAPIRejection: Equatable, Sendable {
             || lowercasedBody.contains("insufficient storage")
             || lowercasedBody.contains("not enough space")
             || lowercasedBody.contains("storage limit")
+    }
+}
+
+private enum KDriveNetworkRetryMode {
+    case none
+    case rateLimit
+}
+
+private final class KDriveRetryingTransferController<Output: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeOperation: KDriveTransferOperation<Output>?
+    private var isCancelled = false
+
+    func install(_ operation: KDriveTransferOperation<Output>) throws {
+        let shouldCancel = lock.withLock {
+            if isCancelled {
+                return true
+            }
+            activeOperation = operation
+            return false
+        }
+        if shouldCancel {
+            operation.cancel()
+            throw CancellationError()
+        }
+    }
+
+    func clear(_ operation: KDriveTransferOperation<Output>) {
+        lock.withLock {
+            if activeOperation === operation {
+                activeOperation = nil
+            }
+        }
+    }
+
+    func cancel() {
+        let operation = lock.withLock {
+            isCancelled = true
+            let operation = activeOperation
+            activeOperation = nil
+            return operation
+        }
+        operation?.cancel()
+    }
+}
+
+private extension Progress {
+    func attachRetryAttempt(_ child: Progress) {
+        if totalUnitCount < 0, child.totalUnitCount >= 0 {
+            totalUnitCount = max(child.totalUnitCount, 1)
+        }
+        let pendingUnits = max(totalUnitCount, 1)
+        addChild(child, withPendingUnitCount: pendingUnits)
     }
 }
 
