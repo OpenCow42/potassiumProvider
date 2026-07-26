@@ -77,6 +77,17 @@ struct PotassiumProviderCoreTests {
 
         #expect(configuration.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
         #expect(configuration.driveID == 42)
+        #expect(configuration.knownFolderLayout == .legacyPrivate)
+    }
+
+    @Test func newDomainConfigurationUsesMachineNamespaceKnownFolderLayout() {
+        let configuration = ProviderDomainConfiguration(
+            displayName: "Work Drive",
+            driveID: 42,
+            driveName: "Work Drive"
+        )
+
+        #expect(configuration.knownFolderLayout == .machineNamespace)
     }
 
     @Test func inMemoryTokenStoreScopesTokensAndMigratesLegacyToken() async throws {

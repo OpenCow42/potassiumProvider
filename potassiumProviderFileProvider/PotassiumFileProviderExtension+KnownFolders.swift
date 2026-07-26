@@ -24,8 +24,28 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
                     rootFileID: runtime.configuration.rootFileID,
                     remote: runtime.remote
                 )
+                let parentFileID: Int
+                let usesActiveLegacyLayout =
+                    runtime.configuration.knownFolderLayout == .legacyPrivate
+                    && self.fileProviderDomain.replicatedKnownFolders.isEmpty == false
+                if usesActiveLegacyLayout {
+                    parentFileID = privateFileID
+                } else {
+                    let namespace = try await KDriveMachineNamespaceResolver.resolveOrCreate(
+                        driveID: runtime.configuration.driveID,
+                        privateDirectoryFileID: privateFileID,
+                        computerName: try KDriveMachineNamespaceName.current(),
+                        remote: runtime.remote
+                    )
+                    parentFileID = namespace.fileID
+                    if runtime.configuration.knownFolderLayout == .legacyPrivate {
+                        try await FileProviderRuntime.markMachineNamespaceLayout(
+                            domain: self.fileProviderDomain
+                        )
+                    }
+                }
                 let parentIdentifier = NSFileProviderItemIdentifier(
-                    KDriveItemIdentifier.item(privateFileID).rawValue
+                    KDriveItemIdentifier.item(parentFileID).rawValue
                 )
                 let locations = NSFileProviderKnownFolderLocations()
                 if requestsDesktop {
@@ -41,16 +61,18 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
                     )
                 }
 
-                FileProviderLog.replicatedExtension.info("resolved known folders under kDrive Private item(\(privateFileID, privacy: .public)) for domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public))")
+                FileProviderLog.replicatedExtension.info("resolved known folders under kDrive parent item(\(parentFileID, privacy: .public)) for domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public))")
                 completionHandler(locations, nil)
             } catch {
                 let mappedError: Error
-                if error is KDrivePrivateDirectoryResolutionError {
+                if error is KDrivePrivateDirectoryResolutionError
+                    || error is KDriveMachineNamespaceResolutionError
+                    || error is KDriveMachineNamespaceNameError {
                     mappedError = NSFileProviderError(.cannotSynchronize)
                 } else {
                     mappedError = providerErrorMapping(error).mappedError
                 }
-                FileProviderLog.replicatedExtension.error("failed to resolve kDrive Private location for known folders in domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                FileProviderLog.replicatedExtension.error("failed to resolve the kDrive known-folder location for domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .private)")
                 completionHandler(nil, mappedError)
             }
         }

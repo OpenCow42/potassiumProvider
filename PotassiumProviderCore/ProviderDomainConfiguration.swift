@@ -5,6 +5,14 @@ public enum ProviderAccountAuthenticationKind: String, Codable, Equatable, Senda
     case manualAccessToken
 }
 
+public enum ProviderKnownFolderLayout: String, Codable, Equatable, Sendable {
+    /// The pre-namespace layout that places Desktop and Documents directly in `Private`.
+    case legacyPrivate
+
+    /// The current layout that places Desktop and Documents below `Private/<Mac name>`.
+    case machineNamespace
+}
+
 public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
     public var id: String { accountIdentifier }
 
@@ -139,6 +147,7 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     public var driveID: Int
     public var driveName: String
     public var rootFileID: Int
+    public var knownFolderLayout: ProviderKnownFolderLayout
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -149,6 +158,7 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         driveID: Int,
         driveName: String,
         rootFileID: Int = ProviderConstants.defaultRootFileID,
+        knownFolderLayout: ProviderKnownFolderLayout = .machineNamespace,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -158,6 +168,7 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         self.driveID = driveID
         self.driveName = driveName
         self.rootFileID = rootFileID
+        self.knownFolderLayout = knownFolderLayout
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -186,6 +197,7 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         case driveID
         case driveName
         case rootFileID
+        case knownFolderLayout
         case createdAt
         case updatedAt
     }
@@ -200,6 +212,10 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         driveName = try container.decode(String.self, forKey: .driveName)
         rootFileID = try container.decodeIfPresent(Int.self, forKey: .rootFileID)
             ?? ProviderConstants.defaultRootFileID
+        knownFolderLayout = try container.decodeIfPresent(
+            ProviderKnownFolderLayout.self,
+            forKey: .knownFolderLayout
+        ) ?? .legacyPrivate
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }

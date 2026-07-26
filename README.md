@@ -144,8 +144,10 @@ local Xcode requires a more specific variant.
 - SQLite snapshots cache metadata only. File contents and thumbnails are not
   stored there.
 - On macOS 15 or later, Desktop & Documents sync is an explicit, experimental
-  opt-in that always handles both folders together under the selected kDrive's
-  existing root-level `Private` directory.
+  opt-in that always handles both folders together under
+  `Private/<current Mac name>` on the selected kDrive. Existing active domains
+  created before this layout remain directly under `Private` until sync is
+  stopped and enabled again.
 
 ## License
 
