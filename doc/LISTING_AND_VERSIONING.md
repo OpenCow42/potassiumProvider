@@ -226,3 +226,9 @@ Stale content replacement preserves both by uploading the local bytes as a
 renamed conflict copy. Stale rename, move, trash, and permanent delete requests
 are blocked before the server is mutated. See [Conflicts](CONFLICTS.md) for the
 remaining limitations.
+
+Encrypted domains rebuild enumeration and working-set deltas from decrypted
+local vault generations and poll only opaque journal containers. Their
+`NSFileProviderItemVersion` values are 32-byte logical content and metadata
+revision digests. Logical version history is retained inside encrypted item
+records and does not use kDrive version endpoints.

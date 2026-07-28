@@ -19,6 +19,37 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
         Task {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
+                if let vault = runtime.encryptedVault {
+                    _ = try await vault.synchronize()
+                    let privateFolder = try await self.resolveVaultFolder(
+                        named: "Private",
+                        parentID: nil,
+                        vault: vault
+                    )
+                    let namespaceFolder = try await self.resolveVaultFolder(
+                        named: try KDriveMachineNamespaceName.current(),
+                        parentID: privateFolder.id,
+                        vault: vault
+                    )
+                    let parentIdentifier = NSFileProviderItemIdentifier(
+                        namespaceFolder.id.fileProviderIdentifier
+                    )
+                    let locations = NSFileProviderKnownFolderLocations()
+                    if requestsDesktop {
+                        locations.desktopLocation = NSFileProviderKnownFolderLocations.Location(
+                            parentItemIdentifier: parentIdentifier,
+                            filename: "Desktop"
+                        )
+                    }
+                    if requestsDocuments {
+                        locations.documentsLocation = NSFileProviderKnownFolderLocations.Location(
+                            parentItemIdentifier: parentIdentifier,
+                            filename: "Documents"
+                        )
+                    }
+                    completionHandler(locations, nil)
+                    return
+                }
                 let privateFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
                     driveID: runtime.configuration.driveID,
                     rootFileID: runtime.configuration.rootFileID,
@@ -76,6 +107,33 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
                 completionHandler(nil, mappedError)
             }
         }
+    }
+
+    private func resolveVaultFolder(
+        named filename: String,
+        parentID: VaultItemIdentifier?,
+        vault: any EncryptedVaultProviding
+    ) async throws -> VaultItem {
+        var cursor: String?
+        repeat {
+            let page = try await vault.children(
+                of: parentID,
+                trashed: false,
+                cursor: cursor,
+                limit: 200
+            )
+            if let folder = page.items.first(where: {
+                $0.isDirectory && $0.filename == filename
+            }) {
+                return folder
+            }
+            cursor = page.nextCursor
+        } while cursor != nil
+        return try await vault.createDirectory(
+            parentID: parentID,
+            filename: filename,
+            createdAt: Date()
+        )
     }
 }
 #endif

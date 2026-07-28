@@ -1,5 +1,7 @@
 import PotassiumProviderCore
 import SwiftUI
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 enum ProviderSetupRoute: Hashable {
     case addAccount
@@ -15,10 +17,23 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
     let accountIdentifier: String
     let driveID: Int
     let remote: KDriveDriveSummary?
-    let configuration: ProviderDomainConfiguration?
+    let configurations: [ProviderDomainConfiguration]
+
+    var configuration: ProviderDomainConfiguration? {
+        configurations.first(where: { $0.encryptionMode == .opaqueVaultV1 })
+            ?? configurations.first
+    }
+
+    var encryptedConfiguration: ProviderDomainConfiguration? {
+        configurations.first { $0.encryptionMode == .opaqueVaultV1 }
+    }
+
+    var legacyConfigurations: [ProviderDomainConfiguration] {
+        configurations.filter { $0.encryptionMode == .legacyPlaintext }
+    }
 
     var name: String {
-        remote?.name ?? configuration?.driveName ?? "kDrive \(driveID)"
+        remote?.name ?? configurations.first?.driveName ?? "kDrive \(driveID)"
     }
 
     var role: String? {
@@ -36,7 +51,7 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
     }
 
     var isConfigured: Bool {
-        configuration != nil
+        configurations.isEmpty == false
     }
 
     var remoteDetailsAreAvailable: Bool {
@@ -48,10 +63,7 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
         drives: [KDriveDriveSummary],
         configurations: [ProviderDomainConfiguration]
     ) -> [ProviderDriveDescriptor] {
-        var configurationsByDriveID: [Int: ProviderDomainConfiguration] = [:]
-        for configuration in configurations where configurationsByDriveID[configuration.driveID] == nil {
-            configurationsByDriveID[configuration.driveID] = configuration
-        }
+        let configurationsByDriveID = Dictionary(grouping: configurations, by: \.driveID)
 
         var seenDriveIDs: Set<Int> = []
         var descriptors = drives.compactMap { drive -> ProviderDriveDescriptor? in
@@ -60,18 +72,18 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
                 accountIdentifier: accountIdentifier,
                 driveID: drive.id,
                 remote: drive,
-                configuration: configurationsByDriveID[drive.id]
+                configurations: configurationsByDriveID[drive.id] ?? []
             )
         }
 
-        descriptors.append(contentsOf: configurations
-            .filter { seenDriveIDs.insert($0.driveID).inserted }
-            .map {
+        descriptors.append(contentsOf: configurationsByDriveID
+            .filter { seenDriveIDs.insert($0.key).inserted }
+            .map { driveID, configurations in
                 ProviderDriveDescriptor(
                     accountIdentifier: accountIdentifier,
-                    driveID: $0.driveID,
+                    driveID: driveID,
                     remote: nil,
-                    configuration: $0
+                    configurations: configurations
                 )
             })
         return descriptors
@@ -520,6 +532,8 @@ private struct ProviderDriveManagementView: View {
 
     @State private var isRemovalConfirmationPresented = false
     @State private var isStopSyncConfirmationPresented = false
+    @State private var isOpenVaultPresented = false
+    @State private var isForgetKeyPresented = false
 
     var body: some View {
         Group {
@@ -564,6 +578,23 @@ private struct ProviderDriveManagementView: View {
         } message: {
             Text("This removes the File Provider domain, cached snapshots, activities, conflicts, and other provider-local state. Remote kDrive files are not deleted.")
         }
+        .sheet(isPresented: pendingVaultBinding) {
+            VaultRecoveryConfirmationView(model: model)
+        }
+        .sheet(isPresented: $isOpenVaultPresented) {
+            if let drive = descriptor?.remote {
+                VaultOpenView(
+                    model: model,
+                    accountIdentifier: key.accountIdentifier,
+                    drive: drive
+                )
+            }
+        }
+        .sheet(isPresented: $isForgetKeyPresented) {
+            if let configuration = descriptor?.encryptedConfiguration {
+                VaultForgetKeyView(model: model, configuration: configuration)
+            }
+        }
         #if os(macOS)
         .confirmationDialog(
             "Stop syncing Desktop and Documents?",
@@ -595,6 +626,17 @@ private struct ProviderDriveManagementView: View {
 
     private var isBusy: Bool {
         activeAction != nil || model.isLoadingDrives(for: key.accountIdentifier)
+    }
+
+    private var pendingVaultBinding: Binding<Bool> {
+        Binding(
+            get: { model.pendingVaultProvisioning != nil },
+            set: { isPresented in
+                if isPresented == false, model.pendingVaultProvisioning != nil {
+                    Task { await model.cancelEncryptedVaultProvisioning() }
+                }
+            }
+        )
     }
 
     private var knownFolderRemotePath: String {
@@ -637,27 +679,48 @@ private struct ProviderDriveManagementView: View {
                         .foregroundStyle(descriptor.isConfigured ? .green : .secondary)
                 }
 
-                if descriptor.configuration == nil, let remote = descriptor.remote {
+                if descriptor.encryptedConfiguration == nil, let remote = descriptor.remote {
                     Button {
                         Task {
-                            await model.addDomain(
+                            await model.prepareEncryptedVault(
                                 accountIdentifier: key.accountIdentifier,
                                 drive: remote
                             )
                         }
                     } label: {
                         actionLabel(
-                            title: "Add to Files",
-                            systemImage: "folder.badge.plus",
+                            title: "Create Encrypted Vault",
+                            systemImage: "lock.square.stack",
                             action: .addingToFiles
                         )
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isBusy)
-                    .accessibilityIdentifier("drive.addToFiles")
+                    .disabled(isBusy || model.encryptedVaultsEnabled == false)
+                    .accessibilityIdentifier("drive.createEncryptedVault")
+
+                    Button("Open Existing Vault", systemImage: "key.viewfinder") {
+                        isOpenVaultPresented = true
+                    }
+                    .disabled(isBusy || model.encryptedVaultsEnabled == false)
+                    .accessibilityIdentifier("drive.openEncryptedVault")
+
+                    if model.encryptedVaultsEnabled == false {
+                        Label(
+                            "Encrypted vault creation is behind the security-review feature gate.",
+                            systemImage: "checkmark.shield"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    }
                 }
 
                 if let configuration = descriptor.configuration {
+                    LabeledContent(
+                        "Storage",
+                        value: configuration.encryptionMode == .opaqueVaultV1
+                            ? "End-to-end encrypted vault"
+                            : "Legacy plaintext migration source"
+                    )
                     Button {
                         Task {
                             if let url = await model.userVisibleRootURL(for: configuration) {
@@ -693,6 +756,29 @@ private struct ProviderDriveManagementView: View {
                     }
                     .disabled(isBusy)
                     .accessibilityIdentifier("drive.syncNow")
+
+                    if configuration.encryptionMode == .opaqueVaultV1 {
+                        Button("Forget Key on This Device", systemImage: "key.slash") {
+                            isForgetKeyPresented = true
+                        }
+                        .disabled(isBusy)
+                    }
+                }
+            }
+
+            if descriptor.legacyConfigurations.isEmpty == false {
+                Section {
+                    ForEach(descriptor.legacyConfigurations) { configuration in
+                        Label(
+                            "\(configuration.displayName) stores readable names, metadata, and contents on kDrive.",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text("Migration Sources")
+                } footer: {
+                    Text("Legacy domains remain available while encrypted migration is verified. Source purge is a separate destructive workflow.")
                 }
             }
 
@@ -868,6 +954,192 @@ private struct ProviderSetupErrorBanner: View {
         .padding()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("setup.errorBanner")
+    }
+}
+
+private struct VaultRecoveryConfirmationView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmation = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if let kit = model.pendingVaultProvisioning?.recoveryKit.encoded {
+                        VaultRecoveryQRCode(value: kit)
+                            .frame(maxWidth: .infinity)
+                        Text(kit)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("vault.recoveryKit")
+                    }
+                } header: {
+                    Text("One-time Recovery Kit")
+                } footer: {
+                    Text("Save this offline. It is never uploaded, logged, or automatically exported. Losing every device key and this kit makes the vault unrecoverable.")
+                }
+
+                Section("Confirm") {
+                    TextEditor(text: $confirmation)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 110)
+                        .accessibilityIdentifier("vault.recoveryConfirmation")
+                    Text("Paste the complete recovery kit to prove you saved it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Save Recovery Kit")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        Task {
+                            await model.cancelEncryptedVaultProvisioning()
+                            dismiss()
+                        }
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create Vault") {
+                        Task {
+                            await model.confirmEncryptedVault(
+                                recoveryKitConfirmation: confirmation
+                            )
+                            if model.pendingVaultProvisioning == nil {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(confirmation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .interactiveDismissDisabled()
+        .frame(minWidth: 520, minHeight: 620)
+    }
+}
+
+private struct VaultOpenView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    let accountIdentifier: String
+    let drive: KDriveDriveSummary
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var recoveryKit = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $recoveryKit)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 150)
+                        .accessibilityIdentifier("vault.openRecoveryKit")
+                } header: {
+                    Text("Recovery Kit")
+                } footer: {
+                    Text("The kit is used locally to authenticate the bootstrap and checkpoint. It is not uploaded or saved.")
+                }
+            }
+            .navigationTitle("Open Encrypted Vault")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Open") {
+                        Task {
+                            await model.openEncryptedVault(
+                                accountIdentifier: accountIdentifier,
+                                drive: drive,
+                                recoveryKitText: recoveryKit
+                            )
+                            if model.errorMessage == nil {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(recoveryKit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .frame(minWidth: 500, minHeight: 360)
+    }
+}
+
+private struct VaultForgetKeyView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    let configuration: ProviderDomainConfiguration
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var recoveryKit = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $recoveryKit)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 150)
+                } header: {
+                    Text("Recovery Confirmation")
+                } footer: {
+                    Text("This deletes only the unwrapped vault key on this device. Domain removal, logout, and uninstall do not delete it.")
+                }
+            }
+            .navigationTitle("Forget Vault Key")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Forget Key", role: .destructive) {
+                        Task {
+                            await model.forgetVaultKey(
+                                for: configuration,
+                                recoveryKitConfirmation: recoveryKit
+                            )
+                            if model.errorMessage == nil {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(recoveryKit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .frame(minWidth: 500, minHeight: 360)
+    }
+}
+
+private struct VaultRecoveryQRCode: View {
+    let value: String
+
+    var body: some View {
+        if let image = Self.image(value) {
+            Image(decorative: image, scale: 1)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 220, height: 220)
+                .accessibilityLabel("Recovery kit QR code")
+        }
+    }
+
+    private static func image(_ value: String) -> CGImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(
+            by: CGAffineTransform(scaleX: 8, y: 8)
+        ) else {
+            return nil
+        }
+        return CIContext(options: [.useSoftwareRenderer: false]).createCGImage(
+            output,
+            from: output.extent
+        )
     }
 }
 

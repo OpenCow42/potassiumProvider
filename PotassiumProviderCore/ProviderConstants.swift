@@ -4,6 +4,7 @@ public enum ProviderConstants {
     public static let appGroupIdentifier = "group.net.weavee.potassiumProvider"
     public static let keychainAccessGroup = "2LST6WT4P6.net.weavee.potassiumProvider"
     public static let keychainService = "net.weavee.potassiumProvider.kDrive"
+    public static let vaultKeychainService = "net.weavee.potassiumProvider.vault"
     public static let keychainAccount = "oauthToken"
     public static let legacyAccountIdentifier = "legacy-account"
     public static let logSubsystem = "net.weavee.potassiumProvider"
@@ -14,4 +15,5 @@ public enum ProviderConstants {
     public static let defaultRootFileID = 1
     public static let apiBaseURL = URL(string: "https://api.infomaniak.com")!
     public static let driveBaseURL = URL(string: "https://api.kdrive.infomaniak.com")!
+    public static let encryptedVaultFeatureFlag = "EncryptedVaultsEnabled"
 }

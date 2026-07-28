@@ -26,6 +26,18 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    _ = try await vault.synchronize()
+                    let vaultPage = try await self.listVaultItems(
+                        vault: vault,
+                        startingAt: page
+                    )
+                    observer.didEnumerate(vaultPage.items.map(FileProviderItem.init(vaultItem:)))
+                    observer.finishEnumerating(
+                        upTo: FileProviderPageCodec.page(from: vaultPage.nextCursor)
+                    )
+                    return
+                }
                 let itemPage = try await self.listItems(runtime: loadedRuntime, startingAt: page)
                 let enumeratesTrash = self.containerItemIdentifier == .trashContainer
                 observer.didEnumerate(itemPage.items.map {
@@ -66,6 +78,17 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 let configuration = try await FileProviderRuntime.loadConfiguration(domain: domain)
                 domainIdentifier = configuration.domainIdentifier
                 driveID = configuration.driveID
+                if configuration.encryptionMode == .opaqueVaultV1 {
+                    let runtime = try await FileProviderRuntime.load(domain: domain)
+                    guard let vault = runtime.encryptedVault else {
+                        throw NSFileProviderError(.notAuthenticated)
+                    }
+                    let frontier = try await vault.synchronize()
+                    completionHandler(FileProviderPageCodec.anchor(
+                        from: frontier.anchorString
+                    ))
+                    return
+                }
                 let snapshotStore = try FileProviderRuntime.makeSnapshotStore()
                 if self.containerItemIdentifier == .workingSet {
                     let stateStore = try FileProviderRuntime.makeWorkingSetStateStore()
@@ -122,6 +145,32 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    guard let requestedAnchor else {
+                        throw NSFileProviderError(.syncAnchorExpired)
+                    }
+                    let changes = try await vault.changes(
+                        since: requestedAnchor,
+                        scope: try self.vaultChangeScope()
+                    )
+                    if changes.updated.isEmpty == false {
+                        observer.didUpdate(
+                            changes.updated.map(FileProviderItem.init(vaultItem:))
+                        )
+                    }
+                    if changes.deleted.isEmpty == false {
+                        observer.didDeleteItems(withIdentifiers: changes.deleted.map {
+                            NSFileProviderItemIdentifier($0.fileProviderIdentifier)
+                        })
+                    }
+                    observer.finishEnumeratingChanges(
+                        upTo: FileProviderPageCodec.anchor(
+                            from: changes.frontier.anchorString
+                        ),
+                        moreComing: false
+                    )
+                    return
+                }
                 try await self.validateContainer(runtime: loadedRuntime)
                 if self.containerItemIdentifier == .workingSet {
                     try await self.enumerateWorkingSetChanges(
@@ -210,6 +259,66 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         default:
             return containerItemIdentifier.rawValue
         }
+    }
+
+    private func listVaultItems(
+        vault: any EncryptedVaultProviding,
+        startingAt page: NSFileProviderPage
+    ) async throws -> VaultItemPage {
+        let cursor = FileProviderPageCodec.cursor(from: page)
+        if containerItemIdentifier == .workingSet {
+            let items = try await vault.workingSet(limit: 1_000)
+            return VaultItemPage(items: items, nextCursor: nil)
+        }
+        if containerItemIdentifier == .rootContainer {
+            return try await vault.children(
+                of: nil,
+                trashed: false,
+                cursor: cursor,
+                limit: 200
+            )
+        }
+        if containerItemIdentifier == .trashContainer {
+            return try await vault.children(
+                of: nil,
+                trashed: true,
+                cursor: cursor,
+                limit: 200
+            )
+        }
+        guard let parentID = VaultItemIdentifier(
+            fileProviderIdentifier: containerItemIdentifier.rawValue
+        ) else {
+            throw NSFileProviderError(.noSuchItem)
+        }
+        let parent = try await vault.item(parentID)
+        guard parent.isDirectory else {
+            throw NSFileProviderError(.noSuchItem)
+        }
+        return try await vault.children(
+            of: parentID,
+            trashed: false,
+            cursor: cursor,
+            limit: 200
+        )
+    }
+
+    private func vaultChangeScope() throws -> VaultChangeScope {
+        if containerItemIdentifier == .workingSet {
+            return .workingSet
+        }
+        if containerItemIdentifier == .rootContainer {
+            return .children(parentID: nil)
+        }
+        if containerItemIdentifier == .trashContainer {
+            return .trash
+        }
+        guard let parentID = VaultItemIdentifier(
+            fileProviderIdentifier: containerItemIdentifier.rawValue
+        ) else {
+            throw NSFileProviderError(.noSuchItem)
+        }
+        return .children(parentID: parentID)
     }
 
     private func recordFailure(

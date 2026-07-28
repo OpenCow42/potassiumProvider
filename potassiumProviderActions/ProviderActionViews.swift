@@ -17,6 +17,17 @@ struct ProviderActionRootView: View {
                         systemImage: "exclamationmark.triangle",
                         description: Text(error)
                     )
+                } else if let item = model.vaultItem {
+                    switch model.mode {
+                    case .shareLink:
+                        ContentUnavailableView(
+                            "Encrypted Sharing Unavailable",
+                            systemImage: "person.crop.circle.badge.xmark",
+                            description: Text("Recipient-key sharing is not supported for encrypted vaults in version 1.")
+                        )
+                    case .versionHistory:
+                        VaultVersionHistoryActionView(model: model, item: item)
+                    }
                 } else if let item = model.item {
                     switch model.mode {
                     case .shareLink:
@@ -49,6 +60,80 @@ struct ProviderActionRootView: View {
             return "Share kDrive Link"
         case .versionHistory:
             return "Version History"
+        }
+    }
+}
+
+private struct VaultVersionHistoryActionView: View {
+    @ObservedObject var model: ProviderActionViewModel
+    let item: VaultItem
+    @State private var pendingRestore: VaultVersion?
+
+    var body: some View {
+        List {
+            Section {
+                Label(item.filename, systemImage: item.isDirectory ? "folder" : "doc")
+                    .lineLimit(2)
+            }
+
+            if model.vaultVersions.isEmpty {
+                ContentUnavailableView(
+                    "No Previous Versions",
+                    systemImage: "clock",
+                    description: Text("The encrypted logical history has no prior revisions.")
+                )
+            } else {
+                Section("Encrypted Versions") {
+                    ForEach(model.vaultVersions) { version in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(
+                                    version.modifiedAt,
+                                    format: .dateTime.year().month().day().hour().minute()
+                                )
+                                .font(.headline)
+                                Text(ByteCountFormatter.string(
+                                    fromByteCount: version.plaintextSize,
+                                    countStyle: .file
+                                ))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Restore") { pendingRestore = version }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+
+            if model.isWorking {
+                ProgressView()
+            } else if let error = model.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+            } else if let message = model.message {
+                Label(message, systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .confirmationDialog(
+            "Restore this encrypted version?",
+            isPresented: Binding(
+                get: { pendingRestore != nil },
+                set: { if $0 == false { pendingRestore = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let version = pendingRestore {
+                Button("Restore Version") {
+                    pendingRestore = nil
+                    Task { await model.restore(version) }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingRestore = nil }
+        } message: {
+            Text("The current revision remains in encrypted logical version history.")
         }
     }
 }

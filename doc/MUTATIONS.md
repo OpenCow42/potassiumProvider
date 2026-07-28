@@ -145,3 +145,11 @@ Normal folder metadata eventually reconciles through advanced listing:
 
 Root, working set, and trash reconcile through full legacy listing plus local
 diff.
+
+## Encrypted-domain mutations
+
+Encrypted domains stream content into a new random-key ciphertext object first;
+a fixed-size authenticated transaction is published last as the visibility
+point. Create, modify, move, rename, favorite, duplicate, trash, restore, purge,
+and version restore operate on logical UUID items. Retry uses the opaque object
+token for idempotency. See [Encrypted Vault Format v1](ENCRYPTED_VAULT.md).

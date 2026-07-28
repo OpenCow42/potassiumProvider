@@ -24,6 +24,55 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
                 }
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    guard let vaultItemID = VaultItemIdentifier(
+                        fileProviderIdentifier: selectedIdentifier.rawValue
+                    ),
+                    let action = ProviderDirectContextAction(
+                        rawValue: actionIdentifier.rawValue
+                    ) else {
+                        throw NSFileProviderError(.noSuchItem)
+                    }
+                    let current = try await vault.item(vaultItemID)
+                    let updated: VaultItem
+                    switch action {
+                    case .addFavorite, .removeFavorite:
+                        updated = try await vault.modify(
+                            itemID: vaultItemID,
+                            baseContentRevision: current.contentRevision,
+                            baseMetadataRevision: current.metadataRevision,
+                            parentID: current.parentID,
+                            filename: current.filename,
+                            favorite: action == .addFavorite,
+                            plaintextURL: nil,
+                            modifiedAt: current.modifiedAt
+                        )
+                    case .duplicate:
+                        updated = try await vault.duplicate(itemID: vaultItemID)
+                    case .restoreFromTrash:
+                        updated = try await vault.restore(
+                            itemID: vaultItemID,
+                            parentID: current.parentID
+                        )
+                    }
+                    await self.signalEncryptedMutation(
+                        runtime: loadedRuntime,
+                        parentIDs: [current.parentID, updated.parentID],
+                        includesTrash: action == .restoreFromTrash
+                    )
+                    await ProviderEventRecorder.recordActivity(
+                        kind: Self.activityKind(for: action),
+                        runtime: loadedRuntime,
+                        itemIdentifier: updated.id.fileProviderIdentifier,
+                        itemName: nil,
+                        itemPath: nil,
+                        summary: "Performed an encrypted vault action."
+                    )
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(nil)
+                    }
+                    return
+                }
                 let parsedIdentifier = try KDriveItemIdentifier(rawValue: selectedIdentifier.rawValue)
                 guard let fileID = parsedIdentifier.fileID(
                     rootFileID: loadedRuntime.configuration.rootFileID

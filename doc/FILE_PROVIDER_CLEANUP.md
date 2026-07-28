@@ -98,6 +98,12 @@ key if it still exists.
 - may use the File Provider remove-all fallback if domain listing failed and
   targeted removal by saved configuration also fails.
 
+All reset modes deliberately retain encrypted-vault root keys, device
+identities, and trusted rollback frontiers in the Data Protection Keychain.
+Deleting account/OAuth credentials is not authorization to make an encrypted
+vault unrecoverable. Use the app's separate “Forget Key on This Device” action,
+which requires the matching recovery kit.
+
 ## Safety Boundary
 
 The cleanup script does not delete remote kDrive files.

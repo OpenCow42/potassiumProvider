@@ -211,3 +211,13 @@ kDrive account. Do not use customer data.
 Automated `AsyncOperationLimiter` tests cover the concurrency cap, cancellation
 while waiting, and permit release after errors. These manual checks cover the
 Finder presentation and process RSS behavior that unit tests cannot establish.
+
+## Encrypted vault gates
+
+Run cryptographic known-answer, envelope/frame tamper, fixed transaction,
+randomized DAG replay, Merkle/rollback, streaming cancellation, migration
+interruption, recovery, and request-leakage tests before enabling the
+development flag. Capture all mocked requests and reject known logical names,
+paths, types, dates, hashes, device names, or plaintext bytes. Benchmark 100,000
+items, 10,000 siblings, and multi-gigabyte files. Independent review with all
+high-severity findings resolved is required before default enablement.

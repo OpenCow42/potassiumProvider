@@ -33,6 +33,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
     @Published private(set) var activeDriveActions: [ProviderDriveKey: ProviderDriveAction] = [:]
     @Published private(set) var isReloadingStoredState = false
+    @Published private(set) var pendingVaultProvisioning: PendingVaultProvisioning?
+    @Published private(set) var encryptedVaultsEnabled: Bool
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -48,7 +50,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let snapshotStore: (any KDriveSnapshotStoring)?
     private let eventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
+    private let objectStoreFactory: (Int, String) -> any KDriveObjectStoreProviding
+    private let vaultKeyStore: any VaultKeyStoring
+    private let vaultDeviceIdentityStore: any VaultDeviceIdentityStoring
     private let computerNameProvider: @Sendable () throws -> String
+    private var pendingVaultAccountIdentifier: String?
+    private var pendingVaultDriveName: String?
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
     private var fileProviderDomainChangeCancellable: AnyCancellable?
 
@@ -65,6 +72,14 @@ final class PotassiumProviderAppModel: ObservableObject {
         initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
         initialDomains: [ProviderDomainConfiguration] = [],
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) },
+        objectStoreFactory: @escaping (Int, String) -> any KDriveObjectStoreProviding = {
+            PotassiumKDriveObjectStore(driveID: $0, bearerToken: $1)
+        },
+        vaultKeyStore: (any VaultKeyStoring)? = nil,
+        vaultDeviceIdentityStore: (any VaultDeviceIdentityStoring)? = nil,
+        encryptedVaultsEnabled: Bool = UserDefaults.standard.bool(
+            forKey: ProviderConstants.encryptedVaultFeatureFlag
+        ),
         computerNameProvider: @escaping @Sendable () throws -> String = { try KDriveMachineNamespaceName.current() }
     ) {
         self.accountStore = accountStore ?? Self.makeDefaultAccountStore()
@@ -75,6 +90,15 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
+        self.objectStoreFactory = objectStoreFactory
+        let defaultVaultKeyStore = KeychainVaultKeyStore(
+            accessGroup: ProviderConstants.keychainAccessGroup
+        )
+        self.vaultKeyStore = vaultKeyStore ?? defaultVaultKeyStore
+        self.vaultDeviceIdentityStore = vaultDeviceIdentityStore
+            ?? (vaultKeyStore as? any VaultDeviceIdentityStoring)
+            ?? defaultVaultKeyStore
+        self.encryptedVaultsEnabled = encryptedVaultsEnabled
         self.computerNameProvider = computerNameProvider
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
@@ -393,6 +417,160 @@ final class PotassiumProviderAppModel: ObservableObject {
         await addDomain(accountIdentifier: accountIdentifier)
     }
 
+    /// Creates the randomized remote vault and exposes its one-time recovery
+    /// kit in memory. No domain is registered and no key is committed to the
+    /// Keychain until `confirmEncryptedVault` succeeds.
+    func prepareEncryptedVault(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary
+    ) async {
+        guard encryptedVaultsEnabled else {
+            errorMessage = "Encrypted vaults are disabled until the format passes the configured security-review gate."
+            statusMessage = nil
+            return
+        }
+        guard pendingVaultProvisioning == nil else {
+            errorMessage = "Finish or cancel the current vault setup first."
+            return
+        }
+        let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: drive.id)
+        guard beginDriveAction(.addingToFiles, for: key) else { return }
+        defer { endDriveAction(for: key) }
+
+        do {
+            let token = try await usableToken(accountIdentifier: accountIdentifier)
+            let service = VaultProvisioningService(
+                objectStore: objectStoreFactory(drive.id, token.accessToken),
+                keyStore: vaultKeyStore
+            )
+            let pending = try await service.prepareNewVault(driveID: drive.id)
+            pendingVaultAccountIdentifier = accountIdentifier
+            pendingVaultDriveName = drive.name
+            pendingVaultProvisioning = pending
+            errorMessage = nil
+            statusMessage = "Save the recovery kit and confirm it before the encrypted domain is registered."
+        } catch {
+            errorMessage = "Could not prepare the encrypted vault: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func confirmEncryptedVault(recoveryKitConfirmation: String) async {
+        guard let pending = pendingVaultProvisioning,
+              let accountIdentifier = pendingVaultAccountIdentifier,
+              let driveName = pendingVaultDriveName else {
+            errorMessage = "There is no pending encrypted vault to confirm."
+            return
+        }
+        let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: pending.driveID)
+        guard beginDriveAction(.addingToFiles, for: key) else { return }
+        defer { endDriveAction(for: key) }
+
+        do {
+            let token = try await usableToken(accountIdentifier: accountIdentifier)
+            let service = VaultProvisioningService(
+                objectStore: objectStoreFactory(pending.driveID, token.accessToken),
+                keyStore: vaultKeyStore
+            )
+            let vaultConfiguration = try await service.confirm(
+                pending,
+                recoveryKitConfirmation: recoveryKitConfirmation
+            )
+            try await registerEncryptedDomain(
+                accountIdentifier: accountIdentifier,
+                driveID: pending.driveID,
+                driveName: driveName,
+                vaultConfiguration: vaultConfiguration
+            )
+            clearPendingVault()
+            statusMessage = "Created the encrypted vault and added it to Files."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not confirm the encrypted vault: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func cancelEncryptedVaultProvisioning() async {
+        guard let pending = pendingVaultProvisioning,
+              let accountIdentifier = pendingVaultAccountIdentifier else {
+            clearPendingVault()
+            return
+        }
+        if let token = try? await usableToken(accountIdentifier: accountIdentifier) {
+            let service = VaultProvisioningService(
+                objectStore: objectStoreFactory(pending.driveID, token.accessToken),
+                keyStore: vaultKeyStore
+            )
+            await service.cancel(pending)
+        }
+        clearPendingVault()
+        statusMessage = "Cancelled encrypted-vault setup."
+    }
+
+    func openEncryptedVault(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary,
+        recoveryKitText: String
+    ) async {
+        guard encryptedVaultsEnabled else {
+            errorMessage = "Encrypted vaults are disabled until the format passes the configured security-review gate."
+            return
+        }
+        let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: drive.id)
+        guard beginDriveAction(.addingToFiles, for: key) else { return }
+        defer { endDriveAction(for: key) }
+
+        do {
+            let token = try await usableToken(accountIdentifier: accountIdentifier)
+            let service = VaultProvisioningService(
+                objectStore: objectStoreFactory(drive.id, token.accessToken),
+                keyStore: vaultKeyStore
+            )
+            let vaultConfiguration = try await service.openExistingVault(
+                recoveryKitText: recoveryKitText,
+                expectedDriveID: drive.id
+            )
+            try await registerEncryptedDomain(
+                accountIdentifier: accountIdentifier,
+                driveID: drive.id,
+                driveName: drive.name,
+                vaultConfiguration: vaultConfiguration
+            )
+            statusMessage = "Opened the encrypted vault on this device."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not open the encrypted vault: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    /// Normal logout and domain removal deliberately retain the device key.
+    /// This separate destructive action requires the matching recovery kit and
+    /// preserves the rollback checkpoint so a later import can still alarm.
+    func forgetVaultKey(
+        for configuration: ProviderDomainConfiguration,
+        recoveryKitConfirmation: String
+    ) async {
+        guard let vault = configuration.vault else {
+            errorMessage = "The selected domain is not an encrypted vault."
+            return
+        }
+        do {
+            let kit = try VaultRecoveryKit(encoded: recoveryKitConfirmation)
+            guard kit.vaultID == vault.vaultIdentifier,
+                  kit.driveID == configuration.driveID else {
+                throw VaultProvisioningError.recoveryConfirmationMismatch
+            }
+            try await vaultKeyStore.deleteRootKey(vaultID: vault.vaultIdentifier)
+            statusMessage = "Forgot this vault key on this device. The recovery kit is required to unlock it again."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not forget the vault key: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
     func removeDomain(_ configuration: ProviderDomainConfiguration) async {
         let key = driveKey(for: configuration)
         guard beginDriveAction(.removingFromFiles, for: key) else { return }
@@ -424,33 +602,60 @@ final class PotassiumProviderAppModel: ObservableObject {
 
         var namespacedConfiguration = configuration
         var didClaimKnownFolders = false
+        var plaintextNamespaceName: String?
         do {
             let token = try await usableToken(accountIdentifier: configuration.accountIdentifier)
-            let remote = fileProviderFactory(token.accessToken)
-            let privateFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
-                driveID: configuration.driveID,
-                rootFileID: configuration.rootFileID,
-                remote: remote
-            )
-            let namespace = try await KDriveMachineNamespaceResolver.resolveOrCreate(
-                driveID: configuration.driveID,
-                privateDirectoryFileID: privateFileID,
-                computerName: try computerNameProvider(),
-                remote: remote
-            )
-
             namespacedConfiguration.knownFolderLayout = .machineNamespace
             namespacedConfiguration.updatedAt = Date()
             try await domainStore.save(namespacedConfiguration)
             replaceDomainConfiguration(namespacedConfiguration)
 
-            try await domainRegistrar.claimKnownFolders(
-                for: namespacedConfiguration,
-                parentFileID: namespace.fileID
-            )
+            if configuration.encryptionMode == .opaqueVaultV1 {
+                let vault = try await makeEncryptedVaultService(
+                    configuration: namespacedConfiguration,
+                    accessToken: token.accessToken
+                )
+                _ = try await vault.synchronize()
+                let privateFolder = try await resolveOrCreateVaultFolder(
+                    named: "Private",
+                    parentID: nil,
+                    vault: vault
+                )
+                let namespace = try await resolveOrCreateVaultFolder(
+                    named: try computerNameProvider(),
+                    parentID: privateFolder.id,
+                    vault: vault
+                )
+                try await domainRegistrar.claimKnownFolders(
+                    for: namespacedConfiguration,
+                    parentItemIdentifier: namespace.id.fileProviderIdentifier
+                )
+            } else {
+                let remote = fileProviderFactory(token.accessToken)
+                let privateFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
+                    driveID: configuration.driveID,
+                    rootFileID: configuration.rootFileID,
+                    remote: remote
+                )
+                let namespace = try await KDriveMachineNamespaceResolver.resolveOrCreate(
+                    driveID: configuration.driveID,
+                    privateDirectoryFileID: privateFileID,
+                    computerName: try computerNameProvider(),
+                    remote: remote
+                )
+                plaintextNamespaceName = namespace.name
+                try await domainRegistrar.claimKnownFolders(
+                    for: namespacedConfiguration,
+                    parentFileID: namespace.fileID
+                )
+            }
             didClaimKnownFolders = true
             try await refreshKnownFolderSyncStates()
-            statusMessage = "Desktop and Documents now sync with \(configuration.displayName) in kDrive /Private/\(namespace.name)."
+            if configuration.encryptionMode == .opaqueVaultV1 {
+                statusMessage = "Desktop and Documents now sync with \(configuration.displayName)."
+            } else {
+                statusMessage = "Desktop and Documents now sync with \(configuration.displayName) in kDrive /Private/\(plaintextNamespaceName ?? "<this Mac>")."
+            }
             errorMessage = nil
         } catch {
             if didClaimKnownFolders == false, namespacedConfiguration != configuration {
@@ -719,6 +924,108 @@ final class PotassiumProviderAppModel: ObservableObject {
         return Data(base64Encoded: payload)
     }
 
+    private func registerEncryptedDomain(
+        accountIdentifier: String,
+        driveID: Int,
+        driveName: String,
+        vaultConfiguration: ProviderVaultConfiguration
+    ) async throws {
+        guard domains.contains(where: {
+            $0.vault?.vaultIdentifier == vaultConfiguration.vaultIdentifier
+        }) == false else {
+            throw VaultDomainRegistrationError.vaultAlreadyRegistered
+        }
+
+        let now = Date()
+        let configuration = ProviderDomainConfiguration(
+            accountIdentifier: accountIdentifier,
+            displayName: "\(ProviderDomainConfiguration.finderDisplayName(forDriveName: driveName)) — Encrypted",
+            driveID: driveID,
+            driveName: driveName,
+            knownFolderLayout: .machineNamespace,
+            encryptionMode: .opaqueVaultV1,
+            vault: vaultConfiguration,
+            createdAt: now,
+            updatedAt: now
+        )
+
+        try await domainStore.save(configuration)
+        do {
+            let synchronizedState = try await synchronizedDomainConfigurations()
+            domains = synchronizedState.configurations
+            if let registrationError = synchronizedState.registrationError {
+                throw registrationError
+            }
+            try await refreshKnownFolderSyncStates()
+        } catch {
+            await rollbackFailedDomainAddition(configuration)
+            throw error
+        }
+    }
+
+    private func makeEncryptedVaultService(
+        configuration: ProviderDomainConfiguration,
+        accessToken: String
+    ) async throws -> any EncryptedVaultProviding {
+        guard let vaultConfiguration = configuration.vault,
+              let rootKey = try await vaultKeyStore.loadRootKey(
+                vaultID: vaultConfiguration.vaultIdentifier
+              ) else {
+            throw EncryptedVaultError.missingKey
+        }
+        let deviceID = try await vaultDeviceIdentityStore.loadOrCreateDeviceID(
+            vaultID: vaultConfiguration.vaultIdentifier
+        )
+        let localStore = try VaultSQLiteStore(
+            appGroupIdentifier: ProviderConstants.appGroupIdentifier,
+            domainIdentifier: configuration.domainIdentifier,
+            vaultID: vaultConfiguration.vaultIdentifier,
+            rootKey: rootKey,
+            keyEpoch: vaultConfiguration.keyEpoch
+        )
+        return try EncryptedVaultService(
+            configuration: configuration,
+            rootKey: rootKey,
+            deviceID: deviceID,
+            objectStore: objectStoreFactory(configuration.driveID, accessToken),
+            localStore: localStore,
+            keyStore: vaultKeyStore
+        )
+    }
+
+    private func resolveOrCreateVaultFolder(
+        named filename: String,
+        parentID: VaultItemIdentifier?,
+        vault: any EncryptedVaultProviding
+    ) async throws -> VaultItem {
+        var cursor: String?
+        repeat {
+            let page = try await vault.children(
+                of: parentID,
+                trashed: false,
+                cursor: cursor,
+                limit: 200
+            )
+            if let item = page.items.first(where: {
+                $0.isDirectory && $0.filename == filename
+            }) {
+                return item
+            }
+            cursor = page.nextCursor
+        } while cursor != nil
+        return try await vault.createDirectory(
+            parentID: parentID,
+            filename: filename,
+            createdAt: Date()
+        )
+    }
+
+    private func clearPendingVault() {
+        pendingVaultProvisioning = nil
+        pendingVaultAccountIdentifier = nil
+        pendingVaultDriveName = nil
+    }
+
     private func removeDomainAndLocalState(_ configuration: ProviderDomainConfiguration) async throws {
         try await releaseKnownFoldersBeforeRemovingDomain(configuration)
         try await domainRegistrar.removeDomain(for: configuration)
@@ -983,7 +1290,11 @@ final class PotassiumProviderAppModel: ObservableObject {
         accounts: [String: ProviderAccount]
     ) -> [String: String] {
         let baseNames = Dictionary(uniqueKeysWithValues: configurations.map {
-            ($0.domainIdentifier, ProviderDomainConfiguration.finderDisplayName(forDriveName: $0.driveName))
+            let driveName = ProviderDomainConfiguration.finderDisplayName(forDriveName: $0.driveName)
+            let displayName = $0.encryptionMode == .opaqueVaultV1
+                ? "\(driveName) — Encrypted"
+                : driveName
+            return ($0.domainIdentifier, displayName)
         })
         let groupedByBaseName = Dictionary(grouping: configurations) { configuration in
             baseNames[configuration.domainIdentifier]?.localizedLowercase ?? configuration.driveName.localizedLowercase
@@ -1134,6 +1445,14 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
         case .expiredToken:
             return "The saved access token has expired. Reconnect to kDrive."
         }
+    }
+}
+
+private enum VaultDomainRegistrationError: Error, LocalizedError {
+    case vaultAlreadyRegistered
+
+    var errorDescription: String? {
+        "This encrypted vault is already registered on this device."
     }
 }
 

@@ -114,3 +114,13 @@ both "invalid" and "cursor".
 The partial-activity request is batched at 200 identifiers and uses the last
 durable successful-poll watermark. It includes create, delete, trash, restore,
 update, rename, move, favorite, and share actions relevant to working-set state.
+
+## Opaque vault mapping
+
+Encrypted domains use only random-container create/list, file-backed ciphertext
+upload/download, and physical ciphertext deletion. Upload fields contain a
+random `.bin` name, random client token, conflict-as-error, numeric container
+ID, byte count, and `application/octet-stream`. Logical names, paths, MIME
+types, dates, hashes, device names, favorites, shares, and versions are never
+sent through this boundary. Latest/favorite/shared/activity/preview/thumbnail
+endpoints are not called for encrypted items.

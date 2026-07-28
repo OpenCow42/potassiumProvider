@@ -25,6 +25,12 @@ data.
   state, validation, and remaining manual release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
+- [Encrypted Vault Format v1](doc/ENCRYPTED_VAULT.md): threat model, leakage,
+  key custody, binary formats, opaque synchronization, rollback behavior, and
+  the security-review feature gate.
+- [Encrypted Vault Migration](doc/ENCRYPTED_VAULT_MIGRATION.md): resumable
+  encrypted migration journal, verification-before-purge invariant, and
+  Desktop/Documents cutover.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
   File Provider domain registration, and macOS Desktop & Documents controls.
 - [Authentication](doc/AUTHENTICATION.md): OAuth PKCE, manual token entry,
@@ -139,6 +145,8 @@ local Xcode requires a more specific variant.
 
 - Do not commit bearer tokens, refresh tokens, account identifiers, private
   links, or user data.
+- Encrypted vaults are experimental and disabled by default pending independent
+  cryptographic review. The feature flag is not a production-readiness claim.
 - The current conflict handling delegates many decisions to kDrive. Read
   [Conflicts](doc/CONFLICTS.md) before relying on it for important files.
 - SQLite snapshots cache metadata only. File contents and thumbnails are not

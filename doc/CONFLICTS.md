@@ -351,3 +351,10 @@ listing state, and stale existing-item mutations. The provider is still not a
 full conflict-safe sync engine until pending operations, broader staged uploads,
 explicit create collision handling, stronger server version tokens, and local
 name-collision policy are in place.
+
+Those limitations describe legacy plaintext domains. Encrypted domains replay
+an authenticated transaction DAG in canonical order, preserve concurrent
+content edits as deterministic conflict copies, merge independent
+content/metadata changes, reject stale deletion, protect concurrent children,
+and retain sibling collisions with deterministic suffixes. Encrypted conflict
+rows are opaque. See [Encrypted Vault Format v1](ENCRYPTED_VAULT.md).

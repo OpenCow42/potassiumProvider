@@ -56,6 +56,11 @@ fixed local legacy account, copies the old token into `oauthToken:legacy-account
 deletes the old single-token key, and rewrites legacy domain configuration JSON
 with the account identifier.
 
+Encrypted vault root keys use a separate Keychain service and accounts keyed by
+vault UUID. They use the shared access group, Data Protection Keychain,
+`AfterFirstUnlockThisDeviceOnly`, and no synchronization. The recovery secret is
+not stored. See [Encrypted Vault Format v1](ENCRYPTED_VAULT.md).
+
 ## Manual Access Token Path
 
 The app also supports a manual access token. This creates a token value with:

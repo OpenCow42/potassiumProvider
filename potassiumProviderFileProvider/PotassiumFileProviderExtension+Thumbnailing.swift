@@ -1,8 +1,11 @@
 import FileProvider
 import Foundation
+import ImageIO
 import InfomaniakConcurrency
 import OSLog
 import PotassiumProviderCore
+import QuickLookThumbnailing
+import UniformTypeIdentifiers
 
 extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
     public func fetchThumbnails(
@@ -69,6 +72,35 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
     ) async throws {
         try Task.checkCancellation()
         do {
+            if let vault = runtime.encryptedVault {
+                guard let identifier = VaultItemIdentifier(
+                    fileProviderIdentifier: itemIdentifier.rawValue
+                ) else {
+                    perThumbnailCompletionHandler(itemIdentifier, nil, nil)
+                    return
+                }
+                let item = try await vault.item(identifier)
+                guard item.isDirectory == false else {
+                    perThumbnailCompletionHandler(itemIdentifier, nil, nil)
+                    return
+                }
+                let plaintextURL = temporaryDirectoryURL
+                    .appendingPathComponent("thumbnail-\(UUID().uuidString)")
+                    .appendingPathExtension((item.filename as NSString).pathExtension)
+                defer { try? FileManager.default.removeItem(at: plaintextURL) }
+                _ = try await vault.fetchContent(
+                    itemID: identifier,
+                    expectedRevision: item.contentRevision,
+                    to: plaintextURL
+                )
+                let data = try await localThumbnailData(
+                    fileURL: plaintextURL,
+                    dimensions: dimensions
+                )
+                try Task.checkCancellation()
+                perThumbnailCompletionHandler(itemIdentifier, data, nil)
+                return
+            }
             let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
             guard case let .item(fileID) = identifier else {
                 perThumbnailCompletionHandler(itemIdentifier, nil, nil)
@@ -106,6 +138,45 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
             FileProviderLog.replicatedExtension.error("fetchThumbnail(for:\(itemIdentifier.rawValue, privacy: .public)) failed: \(mappedError.localizedDescription, privacy: .public)")
             perThumbnailCompletionHandler(itemIdentifier, nil, mappedError)
         }
+    }
+
+    private func localThumbnailData(
+        fileURL: URL,
+        dimensions: KDriveThumbnailDimensions
+    ) async throws -> Data? {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: fileURL,
+            size: CGSize(width: dimensions.width, height: dimensions.height),
+            scale: 1,
+            representationTypes: .thumbnail
+        )
+        let representation = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<QLThumbnailRepresentation?, Error>) in
+            QLThumbnailGenerator.shared.generateBestRepresentation(
+                for: request
+            ) { representation, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: representation)
+                }
+            }
+        }
+        guard let image = representation?.cgImage else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return data as Data
     }
 }
 

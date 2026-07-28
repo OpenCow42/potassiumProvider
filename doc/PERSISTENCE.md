@@ -338,3 +338,13 @@ legacy/test-friendly implementation of `KDriveSnapshotStoring`. It is no longer
 the default store for the app or extension. No migration from old JSON snapshots
 is currently performed. The file store also honors conditional saves, which keeps
 tests and fallback callers aligned with SQLite behavior.
+
+## Encrypted vault state
+
+Encrypted domains use `EncryptedVaults.sqlite3` generations keyed by logical
+UUID strings and authenticated journal frontiers. Item and generation payloads
+are AEAD-encrypted with the vault local-state key. The resumable migration
+journal is an authenticated encrypted file. Activity and conflict rows retain
+only opaque `ev1:` identifiers and fixed summaries. Domain JSON stores
+non-secret vault locators, format version, and key epoch, never root or recovery
+keys.

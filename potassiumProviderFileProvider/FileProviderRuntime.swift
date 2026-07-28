@@ -18,6 +18,7 @@ struct FileProviderRuntime: Sendable {
     let snapshotStore: any KDriveSnapshotStoring
     let workingSetStateStore: any KDriveWorkingSetStateStoring
     let eventStore: (any KDriveProviderEventStoring)?
+    let encryptedVault: (any EncryptedVaultProviding)?
 
     private init(
         configuration: ProviderDomainConfiguration,
@@ -27,7 +28,8 @@ struct FileProviderRuntime: Sendable {
         workingSetRemote: any KDriveWorkingSetRemoteProviding,
         snapshotStore: any KDriveSnapshotStoring,
         workingSetStateStore: any KDriveWorkingSetStateStoring,
-        eventStore: (any KDriveProviderEventStoring)?
+        eventStore: (any KDriveProviderEventStoring)?,
+        encryptedVault: (any EncryptedVaultProviding)?
     ) {
         self.configuration = configuration
         self.token = token
@@ -37,6 +39,7 @@ struct FileProviderRuntime: Sendable {
         self.snapshotStore = snapshotStore
         self.workingSetStateStore = workingSetStateStore
         self.eventStore = eventStore
+        self.encryptedVault = encryptedVault
     }
 
     static func load(domain: NSFileProviderDomain) async throws -> FileProviderRuntime {
@@ -61,6 +64,56 @@ struct FileProviderRuntime: Sendable {
 
         let sqliteStore = try makeSQLiteStore()
         let remote = PotassiumKDriveService(bearerToken: token.accessToken)
+        let encryptedVault: (any EncryptedVaultProviding)?
+        if configuration.encryptionMode == .opaqueVaultV1 {
+            guard let vaultConfiguration = configuration.vault,
+                  vaultConfiguration.formatVersion == VaultFormat.currentVersion,
+                  vaultConfiguration.remoteLayout != nil else {
+                throw NSFileProviderError(.cannotSynchronize)
+            }
+            let keyStore = KeychainVaultKeyStore(
+                accessGroup: ProviderConstants.keychainAccessGroup
+            )
+            let rootKey: VaultKeyMaterial
+            do {
+                guard let loadedKey = try await keyStore.loadRootKey(
+                    vaultID: vaultConfiguration.vaultIdentifier
+                ) else {
+                    throw NSFileProviderError(.notAuthenticated)
+                }
+                rootKey = loadedKey
+            } catch is NSFileProviderError {
+                throw NSFileProviderError(.notAuthenticated)
+            } catch VaultKeyStoreError.unhandledStatus {
+                throw NSFileProviderError(.notAuthenticated)
+            } catch {
+                throw NSFileProviderError(.cannotSynchronize)
+            }
+            let deviceID = try await keyStore.loadOrCreateDeviceID(
+                vaultID: vaultConfiguration.vaultIdentifier
+            )
+            let localStore = try VaultSQLiteStore(
+                appGroupIdentifier: ProviderConstants.appGroupIdentifier,
+                domainIdentifier: configuration.domainIdentifier,
+                vaultID: vaultConfiguration.vaultIdentifier,
+                rootKey: rootKey,
+                keyEpoch: vaultConfiguration.keyEpoch
+            )
+            let objectStore = PotassiumKDriveObjectStore(
+                driveID: configuration.driveID,
+                bearerToken: token.accessToken
+            )
+            encryptedVault = try EncryptedVaultService(
+                configuration: configuration,
+                rootKey: rootKey,
+                deviceID: deviceID,
+                objectStore: objectStore,
+                localStore: localStore,
+                keyStore: keyStore
+            )
+        } else {
+            encryptedVault = nil
+        }
         FileProviderLog.runtime.debug("loaded runtime for domain(\(domain.identifier.rawValue, privacy: .public)) driveID(\(configuration.driveID, privacy: .public)) rootFileID(\(configuration.rootFileID, privacy: .public))")
         return FileProviderRuntime(
             configuration: configuration,
@@ -70,7 +123,8 @@ struct FileProviderRuntime: Sendable {
             workingSetRemote: remote,
             snapshotStore: sqliteStore,
             workingSetStateStore: sqliteStore,
-            eventStore: makeEventStore()
+            eventStore: makeEventStore(),
+            encryptedVault: encryptedVault
         )
     }
 
@@ -242,6 +296,43 @@ func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
             mappedError: mappedError,
             diagnostic: providerDiagnostic(
                 category: .snapshot,
+                originalError: error,
+                mappedError: mappedError
+            )
+        )
+    }
+
+    if error is VaultCryptoError ||
+        error is VaultJournalError ||
+        error is VaultLocalStoreError ||
+        error is VaultProvisioningError {
+        let mappedError = NSFileProviderError(.cannotSynchronize)
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: .storage,
+                originalError: error,
+                mappedError: mappedError
+            )
+        )
+    }
+
+    if let vaultError = error as? EncryptedVaultError {
+        let mappedError: NSFileProviderError
+        switch vaultError {
+        case .missingKey:
+            mappedError = NSFileProviderError(.notAuthenticated)
+        case .itemNotFound:
+            mappedError = NSFileProviderError(.noSuchItem)
+        case .syncAnchorExpired:
+            mappedError = NSFileProviderError(.syncAnchorExpired)
+        default:
+            mappedError = NSFileProviderError(.cannotSynchronize)
+        }
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: .storage,
                 originalError: error,
                 mappedError: mappedError
             )

@@ -13,6 +13,39 @@ public enum ProviderKnownFolderLayout: String, Codable, Equatable, Sendable {
     case machineNamespace
 }
 
+public enum ProviderEncryptionMode: String, Codable, Equatable, Sendable {
+    /// Compatibility mode for domains created before encrypted vault support.
+    case legacyPlaintext
+
+    /// Version 1 opaque, client-side encrypted vault.
+    case opaqueVaultV1
+}
+
+public struct ProviderVaultConfiguration: Codable, Equatable, Sendable {
+    public var vaultIdentifier: VaultIdentifier
+    public var vaultRootFileID: Int
+    public var vaultHeaderFileID: Int
+    public var formatVersion: UInt16
+    public var keyEpoch: UInt32
+    public var remoteLayout: VaultBootstrap.RemoteLayout?
+
+    public init(
+        vaultIdentifier: VaultIdentifier,
+        vaultRootFileID: Int,
+        vaultHeaderFileID: Int,
+        formatVersion: UInt16 = VaultFormat.currentVersion,
+        keyEpoch: UInt32 = VaultFormat.currentKeyEpoch,
+        remoteLayout: VaultBootstrap.RemoteLayout? = nil
+    ) {
+        self.vaultIdentifier = vaultIdentifier
+        self.vaultRootFileID = vaultRootFileID
+        self.vaultHeaderFileID = vaultHeaderFileID
+        self.formatVersion = formatVersion
+        self.keyEpoch = keyEpoch
+        self.remoteLayout = remoteLayout
+    }
+}
+
 public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
     public var id: String { accountIdentifier }
 
@@ -148,6 +181,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     public var driveName: String
     public var rootFileID: Int
     public var knownFolderLayout: ProviderKnownFolderLayout
+    public var encryptionMode: ProviderEncryptionMode
+    public var vault: ProviderVaultConfiguration?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -159,6 +194,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         driveName: String,
         rootFileID: Int = ProviderConstants.defaultRootFileID,
         knownFolderLayout: ProviderKnownFolderLayout = .machineNamespace,
+        encryptionMode: ProviderEncryptionMode = .legacyPlaintext,
+        vault: ProviderVaultConfiguration? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -169,6 +206,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         self.driveName = driveName
         self.rootFileID = rootFileID
         self.knownFolderLayout = knownFolderLayout
+        self.encryptionMode = encryptionMode
+        self.vault = vault
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -198,6 +237,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         case driveName
         case rootFileID
         case knownFolderLayout
+        case encryptionMode
+        case vault
         case createdAt
         case updatedAt
     }
@@ -216,6 +257,14 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
             ProviderKnownFolderLayout.self,
             forKey: .knownFolderLayout
         ) ?? .legacyPrivate
+        encryptionMode = try container.decodeIfPresent(
+            ProviderEncryptionMode.self,
+            forKey: .encryptionMode
+        ) ?? .legacyPlaintext
+        vault = try container.decodeIfPresent(
+            ProviderVaultConfiguration.self,
+            forKey: .vault
+        )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }

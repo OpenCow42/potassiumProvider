@@ -32,8 +32,10 @@ final class ProviderActionViewModel: ObservableObject {
     let itemIdentifier: NSFileProviderItemIdentifier
 
     @Published private(set) var item: KDriveRemoteItem?
+    @Published private(set) var vaultItem: VaultItem?
     @Published private(set) var shareLink: KDriveShareLinkSummary?
     @Published private(set) var versions: [KDriveFileVersionSummary] = []
+    @Published private(set) var vaultVersions: [VaultVersion] = []
     @Published private(set) var hasMoreVersions = false
     @Published private(set) var isLoading = true
     @Published private(set) var isWorking = false
@@ -64,6 +66,26 @@ final class ProviderActionViewModel: ObservableObject {
         defer { isLoading = false }
         do {
             let runtime = try await ProviderActionRuntime.load(domainIdentifier: domainIdentifier)
+            if let vault = runtime.encryptedVault {
+                guard let identifier = VaultItemIdentifier(
+                    fileProviderIdentifier: itemIdentifier.rawValue
+                ) else {
+                    throw ProviderActionRuntimeError.configurationUnavailable
+                }
+                _ = try await vault.synchronize()
+                let item = try await vault.item(identifier)
+                self.runtime = runtime
+                self.vaultItem = item
+                switch mode {
+                case .shareLink:
+                    throw EncryptedVaultError.unsupportedNativeSharing
+                case .versionHistory:
+                    vaultVersions = try await vault.versions(itemID: identifier)
+                        .sorted { $0.modifiedAt > $1.modifiedAt }
+                    hasMoreVersions = false
+                }
+                return
+            }
             let parsedIdentifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
             guard let fileID = parsedIdentifier.fileID(rootFileID: runtime.configuration.rootFileID) else {
                 throw ProviderActionRuntimeError.configurationUnavailable
@@ -196,6 +218,37 @@ final class ProviderActionViewModel: ObservableObject {
         }
     }
 
+    func restore(_ version: VaultVersion) async {
+        guard let runtime,
+              let vault = runtime.encryptedVault,
+              let currentItem = vaultItem else {
+            return
+        }
+        await performWork {
+            let restored = try await vault.restoreVersion(
+                itemID: currentItem.id,
+                contentRevision: version.contentRevision
+            )
+            self.vaultItem = restored
+            self.vaultVersions = try await vault.versions(itemID: restored.id)
+                .sorted { $0.modifiedAt > $1.modifiedAt }
+            self.message = "Restored the authenticated encrypted version."
+            try? await runtime.eventStore?.recordActivity(KDriveProviderActivityEvent(
+                domainIdentifier: self.domainIdentifier,
+                driveID: runtime.configuration.driveID,
+                kind: .versionRestore,
+                itemIdentifier: restored.id.fileProviderIdentifier,
+                itemName: nil,
+                itemPath: nil,
+                summary: "Restored an encrypted logical version."
+            ))
+            await self.signalEncryptedParentAndWorkingSet(
+                runtime: runtime,
+                parentID: restored.parentID
+            )
+        }
+    }
+
     func copyShareLink() {
         guard let url = shareLink?.url else { return }
         #if os(macOS)
@@ -266,6 +319,25 @@ final class ProviderActionViewModel: ObservableObject {
         }
     }
 
+    private func signalEncryptedParentAndWorkingSet(
+        runtime: ProviderActionRuntime,
+        parentID: VaultItemIdentifier?
+    ) async {
+        let domain = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: runtime.configuration.domainIdentifier),
+            displayName: runtime.configuration.displayName
+        )
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        let parentIdentifier = parentID.map {
+            NSFileProviderItemIdentifier($0.fileProviderIdentifier)
+        } ?? .rootContainer
+        for identifier in [parentIdentifier, .workingSet] {
+            await withCheckedContinuation { continuation in
+                manager.signalEnumerator(for: identifier) { _ in continuation.resume() }
+            }
+        }
+    }
+
     private func record(
         kind: KDriveProviderActivityKind,
         summary: String,
@@ -306,9 +378,10 @@ final class ProviderActionViewModel: ObservableObject {
             kind: kind,
             outcome: .failure,
             severity: .error,
-            itemIdentifier: item.map { KDriveItemIdentifier.item($0.id).rawValue },
-            itemName: item?.name,
-            itemPath: item?.path,
+            itemIdentifier: vaultItem?.id.fileProviderIdentifier
+                ?? item.map { KDriveItemIdentifier.item($0.id).rawValue },
+            itemName: vaultItem == nil ? item?.name : nil,
+            itemPath: vaultItem == nil ? item?.path : nil,
             summary: summary,
             diagnostic: KDriveProviderActivityErrorDiagnostic(
                 errorCategory: category,

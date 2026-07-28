@@ -9,6 +9,10 @@ protocol ProviderDomainRegistering {
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState]
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws
+    func claimKnownFolders(
+        for configuration: ProviderDomainConfiguration,
+        parentItemIdentifier: String
+    ) async throws
     func releaseKnownFolders(for configuration: ProviderDomainConfiguration) async throws
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws
@@ -27,6 +31,13 @@ extension ProviderDomainRegistering {
     }
 
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws {
+        throw ProviderKnownFolderRegistrationError.unsupportedPlatform
+    }
+
+    func claimKnownFolders(
+        for configuration: ProviderDomainConfiguration,
+        parentItemIdentifier: String
+    ) async throws {
         throw ProviderKnownFolderRegistrationError.unsupportedPlatform
     }
 
@@ -103,11 +114,27 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
 
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws {
         #if os(macOS)
-        let manager = try await manager(for: configuration)
-        let locations = Self.makeKnownFolderLocations(parentFileID: parentFileID)
-        let reason = "Keep your Desktop & Documents in sync with \(configuration.displayName) in kDrive."
+        try await claimKnownFolders(
+            for: configuration,
+            parentItemIdentifier: KDriveItemIdentifier.item(parentFileID).rawValue
+        )
+        #else
+        throw ProviderKnownFolderRegistrationError.unsupportedPlatform
+        #endif
+    }
 
-        Self.logger.info("claim known folders for domain(\(configuration.domainIdentifier, privacy: .public)) parentFileID(\(parentFileID, privacy: .public))")
+    func claimKnownFolders(
+        for configuration: ProviderDomainConfiguration,
+        parentItemIdentifier: String
+    ) async throws {
+        #if os(macOS)
+        let manager = try await manager(for: configuration)
+        let locations = Self.makeKnownFolderLocations(
+            parentItemIdentifier: NSFileProviderItemIdentifier(parentItemIdentifier)
+        )
+        let reason = "Keep your Desktop & Documents in sync with \(configuration.displayName)."
+
+        Self.logger.info("claim known folders for domain(\(configuration.domainIdentifier, privacy: .public))")
         try await manager.claimKnownFolders(locations, localizedReason: reason)
         Self.logger.info("claimed known folders for domain(\(configuration.domainIdentifier, privacy: .public))")
         #else
@@ -158,15 +185,16 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
     }
 
     #if os(macOS)
-    static func makeKnownFolderLocations(parentFileID: Int) -> NSFileProviderKnownFolderLocations {
-        let parentIdentifier = NSFileProviderItemIdentifier(KDriveItemIdentifier.item(parentFileID).rawValue)
+    static func makeKnownFolderLocations(
+        parentItemIdentifier: NSFileProviderItemIdentifier
+    ) -> NSFileProviderKnownFolderLocations {
         let locations = NSFileProviderKnownFolderLocations()
         locations.desktopLocation = NSFileProviderKnownFolderLocations.Location(
-            parentItemIdentifier: parentIdentifier,
+            parentItemIdentifier: parentItemIdentifier,
             filename: "Desktop"
         )
         locations.documentsLocation = NSFileProviderKnownFolderLocations.Location(
-            parentItemIdentifier: parentIdentifier,
+            parentItemIdentifier: parentItemIdentifier,
             filename: "Documents"
         )
         return locations

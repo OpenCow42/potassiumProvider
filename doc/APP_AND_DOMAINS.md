@@ -237,3 +237,12 @@ Manual access tokens are accepted for development and testing. Each manual token
 creates an independent local account and is saved in the same account-scoped
 token store as OAuth tokens. A manually entered token may not have a refresh
 token or expiration, so reconnecting may be required when it stops working.
+
+## Encrypted vault domains
+
+When the security-review feature flag is enabled, drive management offers
+Create Encrypted Vault and Open Existing Vault. Creation shows a one-time text
+and QR recovery kit and requires exact confirmation before saving the device
+key or registering the domain. Existing plaintext domains remain separately
+registered migration sources. Normal removal/logout retains vault keys; the
+separate Forget Key workflow requires the matching recovery kit.
