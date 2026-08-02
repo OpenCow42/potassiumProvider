@@ -42,6 +42,7 @@ struct ConflictLogView: View {
                     .padding(.vertical, 10)
                 }
                 timelineContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle("Activities")
             .toolbar { activityToolbar }
