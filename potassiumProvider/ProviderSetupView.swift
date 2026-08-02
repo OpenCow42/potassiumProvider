@@ -20,12 +20,13 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
     let configurations: [ProviderDomainConfiguration]
 
     var configuration: ProviderDomainConfiguration? {
-        configurations.first(where: { $0.encryptionMode == .opaqueVaultV1 })
+        configurations.first(where: { $0.encryptionMode == .opaqueVaultV2 })
+            ?? configurations.first(where: { $0.encryptionMode == .opaqueVaultV1 })
             ?? configurations.first
     }
 
     var encryptedConfiguration: ProviderDomainConfiguration? {
-        configurations.first { $0.encryptionMode == .opaqueVaultV1 }
+        configurations.first { $0.encryptionMode == .opaqueVaultV2 }
     }
 
     var legacyConfigurations: [ProviderDomainConfiguration] {
@@ -723,13 +724,11 @@ private struct ProviderDriveManagementView: View {
                     if model.encryptedVaultICloudKeychainEnabled {
                         ForEach(model.cloudAccessCandidates(driveID: remote.id)) { candidate in
                             Button {
-                                Task {
-                                    await model.openEncryptedVaultFromICloud(
-                                        accountIdentifier: key.accountIdentifier,
-                                        drive: remote,
-                                        vaultID: candidate.vaultID
-                                    )
-                                }
+                                model.prepareOpenEncryptedVaultFromICloud(
+                                    accountIdentifier: key.accountIdentifier,
+                                    drive: remote,
+                                    vaultID: candidate.vaultID
+                                )
                             } label: {
                                 Label {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -745,7 +744,7 @@ private struct ProviderDriveManagementView: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(isBusy)
+                            .disabled(isBusy || model.encryptedVaultsEnabled == false)
                             .accessibilityIdentifier("drive.openICloudVault")
                         }
 
@@ -792,10 +791,15 @@ private struct ProviderDriveManagementView: View {
                 if let configuration = descriptor.configuration {
                     LabeledContent(
                         "Storage",
-                        value: configuration.encryptionMode == .opaqueVaultV1
-                            ? "End-to-end encrypted vault"
-                            : "Legacy plaintext migration source"
+                        value: storageDescription(for: configuration)
                     )
+                    if configuration.encryptionMode == .opaqueVaultV1 {
+                        Label(
+                            "Experimental vault v1 is unsupported and is blocked from activation and mutation.",
+                            systemImage: "lock.trianglebadge.exclamationmark"
+                        )
+                        .foregroundStyle(.red)
+                    }
                     Button {
                         Task {
                             if let url = await model.userVisibleRootURL(for: configuration) {
@@ -817,7 +821,9 @@ private struct ProviderDriveManagementView: View {
                         )
                         #endif
                     }
-                    .disabled(isBusy)
+                    .disabled(
+                        isBusy || configuration.encryptionMode == .opaqueVaultV1
+                    )
                     .accessibilityIdentifier("drive.showInFiles")
 
                     Button {
@@ -829,7 +835,9 @@ private struct ProviderDriveManagementView: View {
                             action: .syncingNow
                         )
                     }
-                    .disabled(isBusy)
+                    .disabled(
+                        isBusy || configuration.encryptionMode == .opaqueVaultV1
+                    )
                     .accessibilityIdentifier("drive.syncNow")
 
                 }
@@ -849,14 +857,15 @@ private struct ProviderDriveManagementView: View {
                         .foregroundStyle(.orange)
                     }
                 } header: {
-                    Text("Migration Sources")
+                    Text("Legacy Plaintext Domains")
                 } footer: {
-                    Text("Legacy domains remain available while encrypted migration is verified. Source purge is a separate destructive workflow.")
+                    Text("Safe cross-vault migration and destructive source purge are not implemented. Legacy domains remain separate.")
                 }
             }
 
             #if os(macOS)
-            if let configuration = descriptor.configuration {
+            if let configuration = descriptor.configuration,
+               configuration.encryptionMode != .opaqueVaultV1 {
                 knownFolderSection(configuration)
             }
             #endif
@@ -1011,6 +1020,19 @@ private struct ProviderDriveManagementView: View {
         }
     }
 
+    private func storageDescription(
+        for configuration: ProviderDomainConfiguration
+    ) -> String {
+        switch configuration.encryptionMode {
+        case .legacyPlaintext:
+            "Legacy plaintext domain"
+        case .opaqueVaultV1:
+            "Unsupported experimental encrypted vault v1"
+        case .opaqueVaultV2:
+            "End-to-end encrypted vault v2"
+        }
+    }
+
     #if os(macOS)
     private func knownFolderSection(_ configuration: ProviderDomainConfiguration) -> some View {
         let state = model.knownFolderSyncState(for: configuration)
@@ -1058,7 +1080,7 @@ private struct ProviderDriveManagementView: View {
         } header: {
             Text("Desktop & Documents")
         } footer: {
-            Text(configuration.encryptionMode == .opaqueVaultV1
+            Text(configuration.encryptionMode == .opaqueVaultV2
                 ? "macOS manages both folders together. Their contents are encrypted before kDrive upload; Finder shows per-item transfer progress."
                 : "macOS manages Desktop and Documents together under kDrive \(remotePath).")
         }
@@ -1250,6 +1272,10 @@ private struct EncryptedVaultSetupFlow: View {
                 )
                 Text("If you decide to continue, you are entirely on your own.")
                     .fontWeight(.semibold)
+                Text(
+                    "On a new device, the app cannot independently prove that kDrive presented the newest vault history because no external history witness exists."
+                )
+                .foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("vault.unsupportedRiskWarning")
 
@@ -1564,15 +1590,13 @@ private struct VaultOpenView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Open") {
-                        Task {
-                            await model.openEncryptedVault(
-                                accountIdentifier: accountIdentifier,
-                                drive: drive,
-                                recoveryKitText: recoveryKit
-                            )
-                            if model.errorMessage == nil {
-                                dismiss()
-                            }
+                        model.prepareOpenEncryptedVault(
+                            accountIdentifier: accountIdentifier,
+                            drive: drive,
+                            recoveryKitText: recoveryKit
+                        )
+                        if model.errorMessage == nil {
+                            dismiss()
                         }
                     }
                     .disabled(recoveryKit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1726,7 +1750,7 @@ private struct KnownFolderPreflightSummary: View {
             .foregroundStyle(.orange)
         case .legacyPotassium:
             Label(
-                "Complete verified encrypted migration before releasing the plaintext Potassium domain.",
+                "Safe encrypted migration is not implemented. Keep the plaintext Potassium domain as owner.",
                 systemImage: "lock.trianglebadge.exclamationmark"
             )
             .foregroundStyle(.orange)

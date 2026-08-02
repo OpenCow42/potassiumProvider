@@ -25,13 +25,12 @@ data.
   state, validation, and remaining manual release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
-- [Encrypted Vault Format v1](doc/ENCRYPTED_VAULT.md): threat model, leakage,
+- [Encrypted Vault Format v2](doc/ENCRYPTED_VAULT.md): threat model, leakage,
   device-local and optional iCloud Keychain custody, guided recovery, binary
   formats, opaque synchronization, rollback behavior, and security-review
   feature gates.
-- [Encrypted Vault Migration](doc/ENCRYPTED_VAULT_MIGRATION.md): resumable
-  encrypted migration journal, verification-before-purge invariant, and
-  Desktop/Documents cutover.
+- [Conflict Resolution Truth Table](doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md):
+  normative encrypted-vault data-safety decisions, evidence, and open gates.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
   File Provider domain registration, and macOS Desktop & Documents controls.
 - [Authentication](doc/AUTHENTICATION.md): OAuth PKCE, manual token entry,
@@ -148,8 +147,9 @@ local Xcode requires a more specific variant.
   links, or user data.
 - Encrypted vaults are experimental and disabled by default pending independent
   cryptographic review. The feature flag is not a production-readiness claim.
-- Creation starts with a mandatory unsupported-feature and complete-data-loss
-  warning whose continuation remains disabled for five seconds.
+- Every encrypted-vault activation route starts with a mandatory
+  unsupported-feature and complete-data-loss warning whose continuation remains
+  disabled for five seconds.
 - Encrypted-vault onboarding always requires a verified offline recovery kit.
   Optional iCloud Keychain access is a separately gated convenience: it can
   open a vault on another trusted Apple device, but it does not replace offline
@@ -161,8 +161,8 @@ local Xcode requires a more specific variant.
 - On macOS 15 or later, Desktop & Documents protection is an explicit action.
   Encrypted domains preflight ownership and local key availability before
   presenting Apple's consent UI, then upload only opaque vault ciphertext.
-  A legacy plaintext Potassium owner must complete verified encrypted
-  migration before its known-folder claim can move.
+  A legacy plaintext Potassium owner blocks the encrypted known-folder claim.
+  Safe migration and destructive source purge are not implemented.
 
 ## License
 

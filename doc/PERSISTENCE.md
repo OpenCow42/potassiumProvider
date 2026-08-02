@@ -343,11 +343,11 @@ tests and fallback callers aligned with SQLite behavior.
 
 Encrypted domains use `EncryptedVaults.sqlite3` generations keyed by logical
 UUID strings and authenticated journal frontiers. Item and generation payloads
-are AEAD-encrypted with the vault local-state key. The resumable migration
-journal is an authenticated encrypted file. Activity and conflict rows retain
-only opaque `ev1:` identifiers and fixed summaries. Domain JSON stores
+are AEAD-encrypted with the vault local-state key. Activity and conflict rows
+retain only opaque `ev2:` identifiers and fixed summaries. Domain JSON stores
 non-secret vault locators, format version, and key epoch, never root or recovery
-keys.
+keys. Cross-vault migration state is not persisted because migration and
+destructive source purge are not implemented.
 
 Optional iCloud Keychain access is a separate synchronizable Keychain item, not
 app-group JSON or SQLite. It contains the root key and opaque remote

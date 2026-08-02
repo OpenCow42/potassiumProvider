@@ -215,9 +215,11 @@ Finder presentation and process RSS behavior that unit tests cannot establish.
 ## Encrypted vault gates
 
 Run cryptographic known-answer, envelope/frame tamper, fixed transaction,
-randomized DAG replay, Merkle/rollback, streaming cancellation, migration
-interruption, recovery, and request-leakage tests before enabling the
-development flag. Capture all mocked requests and reject known logical names,
-paths, types, dates, hashes, device names, or plaintext bytes. Benchmark 100,000
-items, 10,000 siblings, and multi-gigabyte files. Independent review with all
-high-severity findings resolved is required before default enablement.
+randomized DAG replay, cyclic-move rejection, trash provenance, collision-name
+allocation, Merkle/rollback, padded-checkpoint, streaming cancellation,
+fresh-revision restore, activation-warning, recovery, and request-leakage tests
+before enabling the development flag. Capture all mocked requests and reject
+known logical names, paths, types, dates, hashes, device names, or plaintext
+bytes. Benchmark 100,000 items, 10,000 siblings, and multi-gigabyte files. Safe
+migration/rekey design and independent review with all high-severity findings
+resolved are required before default enablement.

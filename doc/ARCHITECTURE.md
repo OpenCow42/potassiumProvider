@@ -83,9 +83,9 @@ and should not be treated as part of this product's build graph.
 
 ## Encrypted vault boundary
 
-For `opaqueVaultV1`, runtime loading adds the root key and trusted frontier from
+For `opaqueVaultV2`, runtime loading adds the root key and trusted frontier from
 Keychain, an encrypted UUID-keyed SQLite generation, and
 `KDriveObjectStoreProviding` plus `EncryptedVaultProviding`. Provider-facing
 code receives only `VaultItem`; `KDriveRemoteItem` remains physical-object
 metadata and cannot construct Finder metadata. See
-[Encrypted Vault Format v1](ENCRYPTED_VAULT.md).
+[Encrypted Vault Format v2](ENCRYPTED_VAULT.md).

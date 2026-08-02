@@ -32,6 +32,9 @@ public struct ProviderActionRuntime: Sendable {
         }
 
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
+        guard configuration.encryptionMode != .opaqueVaultV1 else {
+            throw ProviderActionRuntimeError.configurationUnavailable
+        }
         guard var token = try await tokenStore.loadToken(
             accountIdentifier: configuration.accountIdentifier
         ) else {
@@ -51,7 +54,7 @@ public struct ProviderActionRuntime: Sendable {
             appGroupIdentifier: ProviderConstants.appGroupIdentifier
         )
         let encryptedVault: (any EncryptedVaultProviding)?
-        if configuration.encryptionMode == .opaqueVaultV1 {
+        if configuration.encryptionMode == .opaqueVaultV2 {
             guard let vaultConfiguration = configuration.vault else {
                 throw ProviderActionRuntimeError.configurationUnavailable
             }

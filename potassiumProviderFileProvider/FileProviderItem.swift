@@ -35,7 +35,7 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
         self.filename = configuration.displayName
         self.contentType = .folder
         if let vault = configuration.vault,
-           configuration.encryptionMode == .opaqueVaultV1 {
+           configuration.encryptionMode == .opaqueVaultV2 {
             self.itemVersion = NSFileProviderItemVersion(
                 contentVersion: VaultRevision(
                     hashing: Data("root-content:\(vault.vaultIdentifier.rawValue.uuidString)".utf8)

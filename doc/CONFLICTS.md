@@ -357,4 +357,4 @@ an authenticated transaction DAG in canonical order, preserve concurrent
 content edits as deterministic conflict copies, merge independent
 content/metadata changes, reject stale deletion, protect concurrent children,
 and retain sibling collisions with deterministic suffixes. Encrypted conflict
-rows are opaque. See [Encrypted Vault Format v1](ENCRYPTED_VAULT.md).
+rows are opaque. See [Encrypted Vault Format v2](ENCRYPTED_VAULT.md).

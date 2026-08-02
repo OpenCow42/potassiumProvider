@@ -4,12 +4,14 @@ import Security
 import UniformTypeIdentifiers
 
 public enum VaultFormat {
-    public static let currentVersion: UInt16 = 1
+    public static let currentVersion: UInt16 = 2
     public static let currentKeyEpoch: UInt32 = 1
     public static let contentFrameSize = 1_048_576
     public static let minimumFinalFrameSize = 4_096
     public static let transactionObjectSize = 65_536
-    public static let fileProviderIdentifierPrefix = "ev1:"
+    public static let minimumCheckpointPayloadSize = 65_536
+    public static let maximumCheckpointPayloadSize = 256 * 1_048_576
+    public static let fileProviderIdentifierPrefix = "ev2:"
 }
 
 public struct VaultIdentifier: RawRepresentable, Codable, Hashable, Sendable {
@@ -105,7 +107,7 @@ public struct VaultFrontier: Codable, Equatable, Sendable {
     }
 
     public var anchorString: String {
-        var material = Data("vault-frontier-v1".utf8)
+        var material = Data("vault-frontier-v2".utf8)
         for identifier in sortedTransactionIDs() {
             material.append(identifier.data)
         }
@@ -171,6 +173,11 @@ public struct VaultItem: Codable, Equatable, Identifiable, Sendable {
     public var plaintextSize: Int64
     public var isFavorite: Bool
     public var isTrashed: Bool
+    /// Identifies the top-level trash operation that hid this item. A directly
+    /// trashed item uses its own identifier; descendants inherit that value.
+    /// This lets restoring a folder preserve descendants that were already in
+    /// the trash independently.
+    public var trashRootID: VaultItemIdentifier?
     public var contentRevision: VaultRevision
     public var metadataRevision: VaultRevision
     public var contentReference: VaultContentReference?
@@ -187,6 +194,7 @@ public struct VaultItem: Codable, Equatable, Identifiable, Sendable {
         plaintextSize: Int64 = 0,
         isFavorite: Bool = false,
         isTrashed: Bool = false,
+        trashRootID: VaultItemIdentifier? = nil,
         contentRevision: VaultRevision,
         metadataRevision: VaultRevision,
         contentReference: VaultContentReference? = nil,
@@ -202,6 +210,7 @@ public struct VaultItem: Codable, Equatable, Identifiable, Sendable {
         self.plaintextSize = plaintextSize
         self.isFavorite = isFavorite
         self.isTrashed = isTrashed
+        self.trashRootID = trashRootID ?? (isTrashed ? id : nil)
         self.contentRevision = contentRevision
         self.metadataRevision = metadataRevision
         self.contentReference = contentReference
@@ -226,7 +235,8 @@ public enum VaultRevisionDigests {
             contentTypeIdentifier: item.contentTypeIdentifier,
             createdAt: item.createdAt,
             isFavorite: item.isFavorite,
-            isTrashed: item.isTrashed
+            isTrashed: item.isTrashed,
+            trashRootID: item.trashRootID
         ))
     }
 
@@ -238,6 +248,7 @@ public enum VaultRevisionDigests {
         let createdAt: Date
         let isFavorite: Bool
         let isTrashed: Bool
+        let trashRootID: VaultItemIdentifier?
     }
 }
 

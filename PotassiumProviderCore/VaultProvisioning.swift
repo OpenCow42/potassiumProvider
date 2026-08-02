@@ -22,7 +22,7 @@ public struct PendingVaultProvisioning: Sendable {
     }
 }
 
-public struct PendingVaultRecoveryRotation: Sendable {
+public struct PendingVaultRecoveryRewrap: Sendable {
     public let recoveryKit: VaultRecoveryKit
     public let vaultConfiguration: ProviderVaultConfiguration
 
@@ -124,9 +124,8 @@ public struct VaultProvisioningService: Sendable {
                 items: [],
                 transactionMerkleRoot: VaultMerkleTree.emptyRoot
             )
-            let checkpointEnvelope = try VaultCryptography.seal(
+            let checkpointEnvelope = try VaultPaddedCheckpointCodec.seal(
                 checkpoint,
-                role: .checkpoint,
                 objectToken: checkpointToken,
                 rootKey: rootKey,
                 vaultID: vaultID
@@ -248,11 +247,9 @@ public struct VaultProvisioningService: Sendable {
             fileID: checkpointObject.id,
             to: checkpointURL
         )
-        let checkpoint = try VaultCryptography.open(
-            VaultCheckpoint.self,
-            envelope: Data(contentsOf: checkpointURL, options: .mappedIfSafe),
-            expectedRole: .checkpoint,
-            expectedObjectToken: layout.checkpointToken,
+        let checkpoint = try VaultPaddedCheckpointCodec.open(
+            Data(contentsOf: checkpointURL, options: .mappedIfSafe),
+            objectToken: layout.checkpointToken,
             rootKey: unlocked.rootKey,
             vaultID: unlocked.vaultID,
             keyEpoch: unlocked.keyEpoch
@@ -321,11 +318,9 @@ public struct VaultProvisioningService: Sendable {
             fileID: checkpointObject.id,
             to: checkpointURL
         )
-        _ = try VaultCryptography.open(
-            VaultCheckpoint.self,
-            envelope: Data(contentsOf: checkpointURL, options: .mappedIfSafe),
-            expectedRole: .checkpoint,
-            expectedObjectToken: layout.checkpointToken,
+        _ = try VaultPaddedCheckpointCodec.open(
+            Data(contentsOf: checkpointURL, options: .mappedIfSafe),
+            objectToken: layout.checkpointToken,
             rootKey: unlocked.rootKey,
             vaultID: unlocked.vaultID,
             keyEpoch: unlocked.keyEpoch
@@ -379,11 +374,9 @@ public struct VaultProvisioningService: Sendable {
             fileID: checkpointObject.id,
             to: checkpointURL
         )
-        let checkpoint = try VaultCryptography.open(
-            VaultCheckpoint.self,
-            envelope: Data(contentsOf: checkpointURL, options: .mappedIfSafe),
-            expectedRole: .checkpoint,
-            expectedObjectToken: record.remoteLayout.checkpointToken,
+        let checkpoint = try VaultPaddedCheckpointCodec.open(
+            Data(contentsOf: checkpointURL, options: .mappedIfSafe),
+            objectToken: record.remoteLayout.checkpointToken,
             rootKey: record.rootKey,
             vaultID: record.vaultID,
             keyEpoch: record.keyEpoch
@@ -422,17 +415,17 @@ public struct VaultProvisioningService: Sendable {
     /// Rewraps the existing root key under a fresh recovery secret. This does
     /// not revoke an old recovery kit while an older bootstrap object or server
     /// backup remains reachable; device revocation requires full rekeying.
-    public func prepareRecoveryRotation(
+    public func prepareRecoveryRewrap(
         configuration: ProviderVaultConfiguration,
         driveID: Int,
         currentRecoveryKitText: String
-    ) async throws -> PendingVaultRecoveryRotation {
+    ) async throws -> PendingVaultRecoveryRewrap {
         let currentKit = try VaultRecoveryKit(encoded: currentRecoveryKitText)
         guard currentKit.vaultID == configuration.vaultIdentifier,
               currentKit.driveID == driveID else {
             throw VaultProvisioningError.recoveryConfirmationMismatch
         }
-        let bootstrapURL = temporaryURL(prefix: "rotation-bootstrap-download")
+        let bootstrapURL = temporaryURL(prefix: "recovery-rewrap-bootstrap-download")
         defer { try? FileManager.default.removeItem(at: bootstrapURL) }
         try await objectStore.downloadObject(
             fileID: currentKit.vaultHeaderFileID,
@@ -459,7 +452,7 @@ public struct VaultProvisioningService: Sendable {
             recoverySecret: newRecoverySecret,
             remoteLayout: layout
         )
-        let uploadURL = temporaryURL(prefix: "rotation-bootstrap")
+        let uploadURL = temporaryURL(prefix: "recovery-rewrap-bootstrap")
         defer { try? FileManager.default.removeItem(at: uploadURL) }
         try newBootstrap.write(to: uploadURL, options: [.atomic])
         let header = try await objectStore.uploadObject(
@@ -469,7 +462,7 @@ public struct VaultProvisioningService: Sendable {
         )
         var rotatedConfiguration = configuration
         rotatedConfiguration.vaultHeaderFileID = header.id
-        return PendingVaultRecoveryRotation(
+        return PendingVaultRecoveryRewrap(
             recoveryKit: VaultRecoveryKit(
                 vaultID: configuration.vaultIdentifier,
                 driveID: driveID,
@@ -481,8 +474,8 @@ public struct VaultProvisioningService: Sendable {
         )
     }
 
-    public func confirmRecoveryRotation(
-        _ pending: PendingVaultRecoveryRotation,
+    public func confirmRecoveryRewrap(
+        _ pending: PendingVaultRecoveryRewrap,
         recoveryKitConfirmation: String
     ) throws -> ProviderVaultConfiguration {
         guard let confirmation = try? VaultRecoveryKit(

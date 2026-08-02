@@ -59,7 +59,7 @@ public enum VaultCryptoError: Error, Equatable, LocalizedError, Sendable {
 }
 
 public enum VaultCryptography {
-    private static let envelopeMagic = Data("KPE1".utf8)
+    private static let envelopeMagic = Data("KPE2".utf8)
     private static let envelopeHeaderByteCount = 4 + 2 + 1 + 4 + 16 + 20
 
     public static func makeRootKey() throws -> VaultKeyMaterial {

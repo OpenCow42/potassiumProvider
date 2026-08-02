@@ -49,7 +49,7 @@ public struct VaultContentEncryptionResult: Equatable, Sendable {
 }
 
 public enum VaultContentCipher {
-    private static let magic = Data("KPC1".utf8)
+    private static let magic = Data("KPC2".utf8)
     private static let headerByteCount = 4 + 2 + 4 + 8
     private static let authenticationTagByteCount = 16
 

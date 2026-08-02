@@ -2,8 +2,8 @@ import CryptoKit
 import Foundation
 
 public struct VaultRecoveryKit: Equatable, Sendable {
-    public static let prefix = "KPV1"
-    private static let magic = Data("KPR1".utf8)
+    public static let prefix = "KPV2"
+    private static let magic = Data("KPR2".utf8)
     private static let payloadByteCount = 4 + 2 + 16 + 8 + 8 + 8 + VaultKeyMaterial.byteCount
     private static let checksumByteCount = 5
 
@@ -104,7 +104,7 @@ public struct VaultRecoveryKit: Equatable, Sendable {
 }
 
 public enum VaultBootstrap {
-    private static let magic = Data("KPB1".utf8)
+    private static let magic = Data("KPB2".utf8)
     private static let headerByteCount = 4 + 2 + 4 + 16
 
     public struct RemoteLayout: Codable, Equatable, Sendable {

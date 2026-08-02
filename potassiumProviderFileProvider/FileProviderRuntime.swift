@@ -65,7 +65,7 @@ struct FileProviderRuntime: Sendable {
         let sqliteStore = try makeSQLiteStore()
         let remote = PotassiumKDriveService(bearerToken: token.accessToken)
         let encryptedVault: (any EncryptedVaultProviding)?
-        if configuration.encryptionMode == .opaqueVaultV1 {
+        if configuration.encryptionMode == .opaqueVaultV2 {
             guard let vaultConfiguration = configuration.vault,
                   vaultConfiguration.formatVersion == VaultFormat.currentVersion,
                   vaultConfiguration.remoteLayout != nil else {
@@ -135,6 +135,10 @@ struct FileProviderRuntime: Sendable {
         guard let configuration = try await configurationStore.configuration(domainIdentifier: domain.identifier.rawValue) else {
             FileProviderLog.runtime.error("missing configuration for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
             throw NSFileProviderError(.notAuthenticated)
+        }
+        guard configuration.encryptionMode != .opaqueVaultV1 else {
+            FileProviderLog.runtime.error("unsupported experimental encrypted vault v1 for domain(\(domain.identifier.rawValue, privacy: .public)); returning cannotSynchronize")
+            throw NSFileProviderError(.cannotSynchronize)
         }
         FileProviderLog.runtime.debug("loaded configuration for domain(\(configuration.domainIdentifier, privacy: .public)) driveID(\(configuration.driveID, privacy: .public)) displayName(\(configuration.displayName, privacy: .private))")
         return configuration

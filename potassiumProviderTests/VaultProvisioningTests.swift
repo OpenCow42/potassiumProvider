@@ -20,7 +20,7 @@ struct VaultProvisioningTests {
         await #expect(throws: VaultProvisioningError.recoveryConfirmationMismatch) {
             try await service.confirm(
                 pending,
-                recoveryKitConfirmation: "KPV1-NOT-A-RECOVERY-KIT"
+                recoveryKitConfirmation: "KPV2-NOT-A-RECOVERY-KIT"
             )
         }
         #expect(try await keyStore.loadRootKey(vaultID: pending.vaultID) == nil)
@@ -127,7 +127,7 @@ struct VaultProvisioningTests {
             displayName: "Encrypted",
             driveID: 5,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: ProviderVaultConfiguration(
                 vaultIdentifier: vaultID,
                 vaultRootFileID: 1,
@@ -178,6 +178,97 @@ struct VaultProvisioningTests {
         #expect(try Data(contentsOf: openedURL) == plaintext)
     }
 
+    @Test func restoringVersionPublishesFreshRevisionAndRejectsABAStaleWrite() async throws {
+        let directory = Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let objectStore = InMemoryOpaqueObjectStore()
+        let keyStore = InMemoryVaultKeyStore()
+        let provisioning = VaultProvisioningService(
+            objectStore: objectStore,
+            keyStore: keyStore,
+            temporaryDirectoryURL: directory
+        )
+        let pending = try await provisioning.prepareNewVault(driveID: 6)
+        _ = try await provisioning.confirm(
+            pending,
+            recoveryKitConfirmation: pending.recoveryKit.encoded
+        )
+        let configuration = ProviderDomainConfiguration(
+            domainIdentifier: "version-domain",
+            displayName: "Encrypted",
+            driveID: 6,
+            driveName: "Drive",
+            encryptionMode: .opaqueVaultV2,
+            vault: pending.vaultConfiguration
+        )
+        let localStore = try VaultSQLiteStore(
+            databaseURL: directory.appendingPathComponent("versions.sqlite3"),
+            domainIdentifier: configuration.domainIdentifier,
+            vaultID: pending.vaultID,
+            rootKey: pending.rootKey
+        )
+        let vault = try EncryptedVaultService(
+            configuration: configuration,
+            rootKey: pending.rootKey,
+            deviceID: UUID(),
+            objectStore: objectStore,
+            localStore: localStore,
+            keyStore: keyStore,
+            temporaryDirectoryURL: directory
+        )
+        let firstURL = directory.appendingPathComponent("first")
+        let secondURL = directory.appendingPathComponent("second")
+        try Data("first revision".utf8).write(to: firstURL)
+        try Data("second revision".utf8).write(to: secondURL)
+        let original = try await vault.createFile(
+            parentID: nil,
+            filename: "document.txt",
+            contentTypeIdentifier: "public.plain-text",
+            plaintextURL: firstURL,
+            modifiedAt: Date(timeIntervalSince1970: 100)
+        )
+        let modified = try await vault.modify(
+            itemID: original.id,
+            baseContentRevision: original.contentRevision,
+            baseMetadataRevision: original.metadataRevision,
+            parentID: original.parentID,
+            filename: original.filename,
+            favorite: original.isFavorite,
+            plaintextURL: secondURL,
+            modifiedAt: Date(timeIntervalSince1970: 200)
+        )
+
+        let restored = try await vault.restoreVersion(
+            itemID: original.id,
+            contentRevision: original.contentRevision
+        )
+        #expect(restored.contentRevision != original.contentRevision)
+        #expect(restored.contentRevision != modified.contentRevision)
+        #expect(restored.contentReference?.objectToken != original.contentReference?.objectToken)
+
+        let openedURL = directory.appendingPathComponent("restored")
+        _ = try await vault.fetchContent(
+            itemID: restored.id,
+            expectedRevision: restored.contentRevision,
+            to: openedURL
+        )
+        #expect(try Data(contentsOf: openedURL) == Data("first revision".utf8))
+
+        await #expect(throws: EncryptedVaultError.staleRevision) {
+            try await vault.modify(
+                itemID: original.id,
+                baseContentRevision: original.contentRevision,
+                baseMetadataRevision: original.metadataRevision,
+                parentID: original.parentID,
+                filename: original.filename,
+                favorite: original.isFavorite,
+                plaintextURL: secondURL,
+                modifiedAt: Date(timeIntervalSince1970: 300)
+            )
+        }
+    }
+
     @Test func returningDeviceRejectsOmittedRemoteJournalObject() async throws {
         let directory = Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -199,7 +290,7 @@ struct VaultProvisioningTests {
             displayName: "Encrypted",
             driveID: 8,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: pending.vaultConfiguration
         )
         let localStore = try VaultSQLiteStore(
@@ -238,7 +329,7 @@ struct VaultProvisioningTests {
         }
     }
 
-    @Test func garbageCollectionRequiresTwoVerifiedCheckpointsAndLocalAge() async throws {
+    @Test func maintenanceNeverDeletesCiphertextThatAnOfflineDeviceMayReference() async throws {
         let directory = Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -259,7 +350,7 @@ struct VaultProvisioningTests {
             displayName: "Encrypted",
             driveID: 12,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: pending.vaultConfiguration
         )
         let localStore = try VaultSQLiteStore(
@@ -308,26 +399,23 @@ struct VaultProvisioningTests {
             temporaryDirectoryURL: directory
         )
 
-        let first = try await maintenance.checkpointAndCollectUnreferencedContent(
-            retentionInterval: 100,
+        let first = try await maintenance.checkpointAndReportUnreferencedContent(
             now: Date(timeIntervalSince1970: 1_000)
         )
-        #expect(first.deletedObjectCount == 0)
+        #expect(first.unreferencedObjectCount == 1)
         #expect(await objectStore.contains(fileID: orphan.id))
 
-        let stillYoung = try await maintenance.checkpointAndCollectUnreferencedContent(
-            retentionInterval: 100,
-            now: Date(timeIntervalSince1970: 1_099)
+        let later = try await maintenance.checkpointAndReportUnreferencedContent(
+            now: Date(timeIntervalSince1970: 10_000)
         )
-        #expect(stillYoung.deletedObjectCount == 0)
+        #expect(later.unreferencedObjectCount == 1)
         #expect(await objectStore.contains(fileID: orphan.id))
 
-        let collected = try await maintenance.checkpointAndCollectUnreferencedContent(
-            retentionInterval: 100,
-            now: Date(timeIntervalSince1970: 1_101)
+        let muchLater = try await maintenance.checkpointAndReportUnreferencedContent(
+            now: Date(timeIntervalSince1970: 1_000_000)
         )
-        #expect(collected.deletedObjectCount == 1)
-        #expect(await objectStore.contains(fileID: orphan.id) == false)
+        #expect(muchLater.unreferencedObjectCount == 1)
+        #expect(await objectStore.contains(fileID: orphan.id))
         #expect(await objectStore.contains(fileID: referencedFileID))
     }
 
@@ -352,7 +440,7 @@ struct VaultProvisioningTests {
             displayName: "Encrypted",
             driveID: 13,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: pending.vaultConfiguration
         )
         let localStore = try VaultSQLiteStore(

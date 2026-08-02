@@ -23,7 +23,7 @@ struct ProviderActionRootView: View {
                         ContentUnavailableView(
                             "Encrypted Sharing Unavailable",
                             systemImage: "person.crop.circle.badge.xmark",
-                            description: Text("Recipient-key sharing is not supported for encrypted vaults in version 1.")
+                            description: Text("Recipient-key sharing is not supported for encrypted vaults in version 2.")
                         )
                     case .versionHistory:
                         VaultVersionHistoryActionView(model: model, item: item)

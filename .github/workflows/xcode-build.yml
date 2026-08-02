@@ -34,3 +34,53 @@ jobs:
             -destination 'platform=macOS' \
             MACOSX_DEPLOYMENT_TARGET=26.4 \
             CODE_SIGNING_ALLOWED=NO
+
+  ios:
+    name: iOS Simulator
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider \
+            -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run unit tests on iOS Simulator
+        run: |
+          xcodebuild test \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider \
+            -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
+            -only-testing:potassiumProviderTests \
+            CODE_SIGNING_ALLOWED=NO
+
+  visionos:
+    name: visionOS
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build for visionOS
+        run: |
+          xcodebuild build \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider \
+            -destination 'generic/platform=visionOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run unit tests on visionOS Simulator
+        run: |
+          xcodebuild test \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider \
+            -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro' \
+            -only-testing:potassiumProviderTests \
+            CODE_SIGNING_ALLOWED=NO

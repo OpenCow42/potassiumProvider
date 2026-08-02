@@ -3,6 +3,14 @@ import Foundation
 import Testing
 
 struct VaultDomainConfigurationTests {
+    @Test func v2FormatMarkersAreCurrentAndV1ModeIsFailClosed() {
+        #expect(VaultFormat.currentVersion == 2)
+        #expect(VaultFormat.fileProviderIdentifierPrefix == "ev2:")
+        #expect(ProviderEncryptionMode.opaqueVaultV2.isSupportedEncryptedVault)
+        #expect(ProviderEncryptionMode.opaqueVaultV1.isEncryptedVault)
+        #expect(ProviderEncryptionMode.opaqueVaultV1.isSupportedEncryptedVault == false)
+    }
+
     @Test func legacyConfigurationDefaultsToPlaintextMode() throws {
         let json = """
         {
@@ -44,7 +52,7 @@ struct VaultDomainConfigurationTests {
             displayName: "Private",
             driveID: 9,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: vault,
             createdAt: Date(timeIntervalSince1970: 100),
             updatedAt: Date(timeIntervalSince1970: 200)
@@ -54,5 +62,50 @@ struct VaultDomainConfigurationTests {
         let loaded = try await store.configuration(domainIdentifier: configuration.domainIdentifier)
         #expect(loaded == configuration)
         #expect(loaded?.vault == vault)
+    }
+
+    @Test func v2ModeCannotOverrideAnIncompatibleEmbeddedFormat() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VaultDomainConfigurationTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let vaultID = VaultIdentifier()
+        let rootKey = try VaultKeyMaterial.random()
+        let configuration = ProviderDomainConfiguration(
+            domainIdentifier: "mismatched-format-domain",
+            displayName: "Unsupported",
+            driveID: 9,
+            driveName: "Drive",
+            encryptionMode: .opaqueVaultV2,
+            vault: ProviderVaultConfiguration(
+                vaultIdentifier: vaultID,
+                vaultRootFileID: 100,
+                vaultHeaderFileID: 101,
+                formatVersion: 1,
+                remoteLayout: VaultBootstrap.RemoteLayout(
+                    contentContainerID: 102,
+                    journalContainerID: 103,
+                    checkpointContainerID: 104,
+                    checkpointToken: "unsupported-format-token"
+                )
+            )
+        )
+        let localStore = try VaultSQLiteStore(
+            databaseURL: directory.appendingPathComponent("vault.sqlite3"),
+            domainIdentifier: configuration.domainIdentifier,
+            vaultID: vaultID,
+            rootKey: rootKey
+        )
+
+        #expect(throws: EncryptedVaultError.missingConfiguration) {
+            _ = try EncryptedVaultService(
+                configuration: configuration,
+                rootKey: rootKey,
+                deviceID: UUID(),
+                objectStore: InMemoryOpaqueObjectStore(),
+                localStore: localStore,
+                keyStore: InMemoryVaultKeyStore(),
+                temporaryDirectoryURL: directory
+            )
+        }
     }
 }

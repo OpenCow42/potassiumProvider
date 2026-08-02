@@ -17,8 +17,26 @@ public enum ProviderEncryptionMode: String, Codable, Equatable, Sendable {
     /// Compatibility mode for domains created before encrypted vault support.
     case legacyPlaintext
 
-    /// Version 1 opaque, client-side encrypted vault.
+    /// Unsupported experimental v1 vault, retained only for fail-closed decode.
     case opaqueVaultV1
+
+    /// Version 2 opaque vault. Version 1 remains recognizable only so clients
+    /// fail closed instead of accidentally routing its opaque objects through
+    /// the legacy plaintext provider.
+    case opaqueVaultV2
+
+    public var isEncryptedVault: Bool {
+        switch self {
+        case .legacyPlaintext:
+            false
+        case .opaqueVaultV1, .opaqueVaultV2:
+            true
+        }
+    }
+
+    public var isSupportedEncryptedVault: Bool {
+        self == .opaqueVaultV2
+    }
 }
 
 public struct ProviderVaultConfiguration: Codable, Equatable, Sendable {

@@ -133,7 +133,7 @@ struct VaultUXAppModelTests {
         )
         let keyStore = InMemoryVaultKeyStore()
         let objectStore = InMemoryOpaqueObjectStore()
-        var currentDate = Date(timeIntervalSince1970: 1_000)
+        var currentUptime: TimeInterval = 1_000
         let model = PotassiumProviderAppModel(
             accountStore: ProviderAccountFileStore(
                 directoryURL: directory.appendingPathComponent("Accounts")
@@ -160,7 +160,7 @@ struct VaultUXAppModelTests {
             ),
             encryptedVaultsEnabled: true,
             encryptedVaultICloudKeychainEnabled: true,
-            currentDate: { currentDate }
+            currentUptime: { currentUptime }
         )
 
         await model.prepareEncryptedVault(
@@ -177,13 +177,13 @@ struct VaultUXAppModelTests {
         #expect(model.errorMessage?.contains("Wait five seconds") == true)
         #expect(await objectStore.allTokens().isEmpty)
 
-        currentDate.addTimeInterval(4.999)
+        currentUptime += 4.999
         await model.acceptEncryptedVaultRiskAndPrepare()
         #expect(model.vaultSetupStep == .unsupportedRiskWarning)
         #expect(model.pendingVaultProvisioning == nil)
         #expect(await objectStore.allTokens().isEmpty)
 
-        currentDate.addTimeInterval(0.001)
+        currentUptime += 0.001
         await model.acceptEncryptedVaultRiskAndPrepare()
         #expect(model.vaultSetupStep == .overview)
         let pending = try #require(model.pendingVaultProvisioning)
@@ -221,7 +221,120 @@ struct VaultUXAppModelTests {
         #expect(model.errorMessage == nil)
     }
 
-    private func makeContext() async throws -> VaultUXContext {
+    @Test func recoveryAndICloudOpenCannotBypassRiskDelay() async throws {
+        var currentUptime: TimeInterval = 2_000
+        let context = try await makeContext(currentUptime: { currentUptime })
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let drive = KDriveDriveSummary(
+            id: context.configuration.driveID,
+            name: context.configuration.driveName,
+            accountID: 1,
+            role: "admin",
+            status: "active",
+            isInMaintenance: false
+        )
+        let initialTokens = await context.objectStore.allTokens()
+
+        context.model.prepareOpenEncryptedVault(
+            accountIdentifier: context.configuration.accountIdentifier,
+            drive: drive,
+            recoveryKitText: context.recoveryKit.encoded
+        )
+        #expect(context.model.vaultSetupStep == .unsupportedRiskWarning)
+        await context.model.acceptEncryptedVaultRiskAndPrepare()
+        #expect(context.model.vaultSetupStep == .unsupportedRiskWarning)
+        #expect(await context.objectStore.allTokens() == initialTokens)
+        context.model.finishVaultSetup()
+
+        context.model.prepareOpenEncryptedVaultFromICloud(
+            accountIdentifier: context.configuration.accountIdentifier,
+            drive: drive,
+            vaultID: context.vaultID
+        )
+        #expect(context.model.vaultSetupStep == .unsupportedRiskWarning)
+        currentUptime += 4.999
+        await context.model.acceptEncryptedVaultRiskAndPrepare()
+        #expect(context.model.vaultSetupStep == .unsupportedRiskWarning)
+        #expect(context.authorizer.authorizationCount == 0)
+        #expect(await context.objectStore.allTokens() == initialTokens)
+    }
+
+    @Test func iCloudConvenienceGateCannotBypassDisabledVaultGate() async throws {
+        let context = try await makeContext(encryptedVaultsEnabled: false)
+        defer { try? FileManager.default.removeItem(at: context.directory) }
+        let drive = KDriveDriveSummary(
+            id: context.configuration.driveID,
+            name: context.configuration.driveName,
+            accountID: 1,
+            role: "admin",
+            status: "active",
+            isInMaintenance: false
+        )
+
+        context.model.prepareOpenEncryptedVaultFromICloud(
+            accountIdentifier: context.configuration.accountIdentifier,
+            drive: drive,
+            vaultID: context.vaultID
+        )
+
+        #expect(context.model.vaultSetupStep == nil)
+        #expect(context.model.errorMessage?.contains("Encrypted vaults are disabled") == true)
+        #expect(context.authorizer.authorizationCount == 0)
+    }
+
+    @Test func reloadDoesNotReactivateAnUnsupportedV1Domain() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let domainStore = DomainConfigurationFileStore(
+            directoryURL: directory.appendingPathComponent("Domains")
+        )
+        let configuration = ProviderDomainConfiguration(
+            domainIdentifier: "unsupported-v1-domain",
+            accountIdentifier: "account",
+            displayName: "Unsupported",
+            driveID: 42,
+            driveName: "Drive",
+            encryptionMode: .opaqueVaultV1,
+            vault: ProviderVaultConfiguration(
+                vaultIdentifier: VaultIdentifier(),
+                vaultRootFileID: 100,
+                vaultHeaderFileID: 101,
+                formatVersion: 1
+            )
+        )
+        try await domainStore.save(configuration)
+        let registrar = RecordingVaultUXDomainRegistrar()
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts")
+            ),
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: VaultUXOAuthAuthenticator(),
+            domainRegistrar: registrar,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in VaultUXFileProvider() },
+            vaultKeyStore: InMemoryVaultKeyStore(),
+            vaultDeviceIdentityStore: VaultUXDeviceIdentityStore(),
+            vaultCloudAccessStore: InMemoryVaultCloudAccessStore(),
+            vaultUserPresenceAuthorizer: AllowVaultUserPresenceAuthorizer(),
+            vaultUXDefaults: UserDefaults(
+                suiteName: "VaultUXAppModelTests.\(UUID().uuidString)"
+            )
+        )
+
+        await model.reloadStoredState()
+
+        #expect(registrar.addedDomainIdentifiers.isEmpty)
+        #expect(model.domains.map(\.domainIdentifier) == [configuration.domainIdentifier])
+    }
+
+    private func makeContext(
+        encryptedVaultsEnabled: Bool = true,
+        currentUptime: @escaping () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        }
+    ) async throws -> VaultUXContext {
         let directory = temporaryDirectory()
         try FileManager.default.createDirectory(
             at: directory,
@@ -245,10 +358,11 @@ struct VaultUXAppModelTests {
             displayName: "Encrypted",
             driveID: 42,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: vault
         )
         let cloudStore = InMemoryVaultCloudAccessStore()
+        let authorizer = CountingVaultUserPresenceAuthorizer()
         let tokenStore = InMemoryOAuthTokenStore()
         try await tokenStore.saveToken(
             KDriveOAuthToken(
@@ -285,12 +399,13 @@ struct VaultUXAppModelTests {
             vaultKeyStore: keyStore,
             vaultDeviceIdentityStore: VaultUXDeviceIdentityStore(),
             vaultCloudAccessStore: cloudStore,
-            vaultUserPresenceAuthorizer: AllowVaultUserPresenceAuthorizer(),
+            vaultUserPresenceAuthorizer: authorizer,
             vaultUXDefaults: UserDefaults(
                 suiteName: "VaultUXAppModelTests.\(UUID().uuidString)"
             ),
-            encryptedVaultsEnabled: true,
-            encryptedVaultICloudKeychainEnabled: true
+            encryptedVaultsEnabled: encryptedVaultsEnabled,
+            encryptedVaultICloudKeychainEnabled: true,
+            currentUptime: currentUptime
         )
         return VaultUXContext(
             directory: directory,
@@ -300,7 +415,9 @@ struct VaultUXAppModelTests {
             rootKey: pending.rootKey,
             recoveryKit: pending.recoveryKit,
             keyStore: keyStore,
-            cloudStore: cloudStore
+            cloudStore: cloudStore,
+            objectStore: objectStore,
+            authorizer: authorizer
         )
     }
 
@@ -321,6 +438,8 @@ private struct VaultUXContext {
     let recoveryKit: VaultRecoveryKit
     let keyStore: InMemoryVaultKeyStore
     let cloudStore: InMemoryVaultCloudAccessStore
+    let objectStore: InMemoryOpaqueObjectStore
+    let authorizer: CountingVaultUserPresenceAuthorizer
 }
 
 @MainActor
@@ -328,6 +447,17 @@ private struct AllowVaultUserPresenceAuthorizer:
     VaultUserPresenceAuthorizing
 {
     func authorize(reason: String) async throws {}
+}
+
+@MainActor
+private final class CountingVaultUserPresenceAuthorizer:
+    VaultUserPresenceAuthorizing
+{
+    private(set) var authorizationCount = 0
+
+    func authorize(reason: String) async throws {
+        authorizationCount += 1
+    }
 }
 
 private actor VaultUXDeviceIdentityStore: VaultDeviceIdentityStoring {
@@ -348,6 +478,17 @@ private actor FailingVaultCloudAccessStore: VaultCloudAccessStoring {
 @MainActor
 private struct VaultUXDomainRegistrar: ProviderDomainRegistering {
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+}
+
+@MainActor
+private final class RecordingVaultUXDomainRegistrar: ProviderDomainRegistering {
+    private(set) var addedDomainIdentifiers: [String] = []
+
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        addedDomainIdentifiers.append(configuration.domainIdentifier)
+    }
+
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
 }
 

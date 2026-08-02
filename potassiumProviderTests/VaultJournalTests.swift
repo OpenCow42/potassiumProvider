@@ -189,6 +189,177 @@ struct VaultJournalTests {
         })
     }
 
+    @Test func concurrentDirectoryMovesCannotCreateAParentCycle() throws {
+        let firstDirectory = Self.item(
+            named: "First",
+            id: VaultItemIdentifier(
+                rawValue: UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000001")!
+            ),
+            isDirectory: true
+        )
+        let secondDirectory = Self.item(
+            named: "Second",
+            id: VaultItemIdentifier(
+                rawValue: UUID(uuidString: "BBBBBBBB-0000-0000-0000-000000000001")!
+            ),
+            isDirectory: true
+        )
+        let createFirst = VaultTransaction(
+            id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
+            parents: VaultFrontier(),
+            deviceID: UUID(),
+            operation: .upsert(firstDirectory)
+        )
+        let createSecond = VaultTransaction(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
+            parents: VaultFrontier(),
+            deviceID: UUID(),
+            operation: .upsert(secondDirectory)
+        )
+        let sharedFrontier = VaultFrontier(transactionIDs: [
+            createFirst.id,
+            createSecond.id,
+        ])
+        var firstMoved = firstDirectory
+        firstMoved.parentID = secondDirectory.id
+        firstMoved.metadataRevision = try VaultRevisionDigests.metadata(for: firstMoved)
+        var secondMoved = secondDirectory
+        secondMoved.parentID = firstDirectory.id
+        secondMoved.metadataRevision = try VaultRevisionDigests.metadata(for: secondMoved)
+        let moveFirst = VaultTransaction(
+            id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!,
+            parents: sharedFrontier,
+            deviceID: UUID(),
+            baseItem: firstDirectory,
+            operation: .upsert(firstMoved)
+        )
+        let moveSecond = VaultTransaction(
+            id: UUID(uuidString: "40000000-0000-0000-0000-000000000001")!,
+            parents: sharedFrontier,
+            deviceID: UUID(),
+            baseItem: secondDirectory,
+            operation: .upsert(secondMoved)
+        )
+
+        let expected = try VaultJournalReducer.reduce([
+            createFirst,
+            createSecond,
+            moveFirst,
+            moveSecond,
+        ])
+        for replayOrder in [
+            [moveSecond, createFirst, moveFirst, createSecond],
+            [createSecond, moveFirst, createFirst, moveSecond],
+        ] {
+            #expect(try VaultJournalReducer.reduce(replayOrder) == expected)
+        }
+        #expect(expected.items[firstDirectory.id]?.parentID == secondDirectory.id)
+        #expect(expected.items[secondDirectory.id]?.parentID == nil)
+        #expect(expected.conflicts.contains {
+            $0.kind == .invalidMove && $0.itemID == secondDirectory.id
+        })
+    }
+
+    @Test func restoringFolderPreservesIndependentlyTrashedDescendant() throws {
+        let folder = Self.item(named: "Folder", isDirectory: true)
+        let child = Self.item(named: "child.txt", parentID: folder.id)
+        let createFolder = VaultTransaction(
+            id: UUID(uuidString: "10000000-0000-0000-0000-000000000010")!,
+            parents: VaultFrontier(),
+            deviceID: UUID(),
+            operation: .upsert(folder)
+        )
+        let createChild = VaultTransaction(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000010")!,
+            parents: VaultFrontier(transactionIDs: [createFolder.id]),
+            deviceID: UUID(),
+            operation: .upsert(child)
+        )
+        let trashChild = VaultTransaction(
+            id: UUID(uuidString: "30000000-0000-0000-0000-000000000010")!,
+            parents: VaultFrontier(transactionIDs: [createChild.id]),
+            deviceID: UUID(),
+            baseItem: child,
+            operation: .trash(
+                itemID: child.id,
+                baseContentRevision: child.contentRevision,
+                baseMetadataRevision: child.metadataRevision
+            )
+        )
+        let trashFolder = VaultTransaction(
+            id: UUID(uuidString: "40000000-0000-0000-0000-000000000010")!,
+            parents: VaultFrontier(transactionIDs: [trashChild.id]),
+            deviceID: UUID(),
+            baseItem: folder,
+            operation: .trash(
+                itemID: folder.id,
+                baseContentRevision: folder.contentRevision,
+                baseMetadataRevision: folder.metadataRevision
+            )
+        )
+        let restoreFolder = VaultTransaction(
+            id: UUID(uuidString: "50000000-0000-0000-0000-000000000010")!,
+            parents: VaultFrontier(transactionIDs: [trashFolder.id]),
+            deviceID: UUID(),
+            operation: .restore(itemID: folder.id, parentID: nil)
+        )
+
+        let state = try VaultJournalReducer.reduce([
+            restoreFolder,
+            createChild,
+            trashFolder,
+            createFolder,
+            trashChild,
+        ])
+        #expect(state.items[folder.id]?.isTrashed == false)
+        #expect(state.items[folder.id]?.trashRootID == nil)
+        #expect(state.items[child.id]?.isTrashed == true)
+        #expect(state.items[child.id]?.trashRootID == child.id)
+    }
+
+    @Test func siblingConflictAllocatorSkipsExistingGeneratedName() throws {
+        let winner = Self.item(
+            named: "report.txt",
+            id: VaultItemIdentifier(
+                rawValue: UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000020")!
+            )
+        )
+        let loser = Self.item(
+            named: "report.txt",
+            id: VaultItemIdentifier(
+                rawValue: UUID(uuidString: "BBBBBBBB-0000-0000-0000-000000000020")!
+            )
+        )
+        let reserved = Self.item(
+            named: "report (conflict bbbbbbbb).txt",
+            id: VaultItemIdentifier(
+                rawValue: UUID(uuidString: "CCCCCCCC-0000-0000-0000-000000000020")!
+            )
+        )
+        let transactionIDs = [
+            UUID(uuidString: "10000000-0000-0000-0000-000000000020")!,
+            UUID(uuidString: "20000000-0000-0000-0000-000000000020")!,
+            UUID(uuidString: "30000000-0000-0000-0000-000000000020")!,
+        ]
+        let transactions = zip(transactionIDs, [winner, loser, reserved]).map {
+            transactionID, item in
+            VaultTransaction(
+                id: transactionID,
+                parents: VaultFrontier(),
+                deviceID: UUID(),
+                operation: .upsert(item)
+            )
+        }
+
+        let expected = try VaultJournalReducer.reduce(transactions)
+        #expect(expected.items[loser.id]?.filename == "report (conflict bbbbbbbb-2).txt")
+        let normalizedNames = expected.items.values.map {
+            $0.filename.precomposedStringWithCanonicalMapping.lowercased()
+        }
+        #expect(Set(normalizedNames).count == normalizedNames.count)
+        #expect(try VaultJournalReducer.reduce(Array(transactions.reversed())) == expected)
+    }
+
     @Test func merkleProofAllowsTrustedFrontierCompactionButRejectsWrongRoot() throws {
         let transaction = VaultTransaction(
             parents: VaultFrontier(),

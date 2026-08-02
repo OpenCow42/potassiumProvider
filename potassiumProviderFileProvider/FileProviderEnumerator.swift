@@ -78,7 +78,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 let configuration = try await FileProviderRuntime.loadConfiguration(domain: domain)
                 domainIdentifier = configuration.domainIdentifier
                 driveID = configuration.driveID
-                if configuration.encryptionMode == .opaqueVaultV1 {
+                if configuration.encryptionMode == .opaqueVaultV2 {
                     let runtime = try await FileProviderRuntime.load(domain: domain)
                     guard let vault = runtime.encryptedVault else {
                         throw NSFileProviderError(.notAuthenticated)

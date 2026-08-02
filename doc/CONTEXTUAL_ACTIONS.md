@@ -94,4 +94,4 @@ semantics remain unchanged.
 For encrypted items, favorite, duplicate, trash restore, and logical version
 restore call `EncryptedVaultProviding`. Thumbnails and versions are local
 authenticated vault operations. Share-link panels stop before any kDrive
-sharing call and explain that recipient-key sharing is not supported in v1.
+sharing call and explain that recipient-key sharing is not supported in v2.

@@ -21,6 +21,20 @@ enum ProviderDriveAction: Equatable, Sendable {
     case syncingNow
 }
 
+private enum PendingEncryptedVaultActivation {
+    case create(accountIdentifier: String, drive: KDriveDriveSummary)
+    case recoveryKit(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary,
+        recoveryKitText: String
+    )
+    case iCloud(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary,
+        vaultID: VaultIdentifier
+    )
+}
+
 @MainActor
 final class PotassiumProviderAppModel: ObservableObject {
     private static let log = ProviderLog.app
@@ -74,11 +88,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let vaultUserPresenceAuthorizer: any VaultUserPresenceAuthorizing
     private let vaultUXDefaults: UserDefaults
     private let computerNameProvider: @Sendable () throws -> String
-    private let currentDate: () -> Date
+    private let currentUptime: () -> TimeInterval
     private var pendingVaultAccountIdentifier: String?
     private var pendingVaultDriveID: Int?
     private var pendingVaultDriveName: String?
-    private var vaultRiskWarningStartedAt: Date?
+    private var pendingVaultActivation: PendingEncryptedVaultActivation?
+    private var vaultRiskWarningStartedAtUptime: TimeInterval?
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
     private var fileProviderDomainChangeCancellable: AnyCancellable?
 
@@ -110,7 +125,9 @@ final class PotassiumProviderAppModel: ObservableObject {
             forKey: ProviderConstants.encryptedVaultICloudKeychainFeatureFlag
         ),
         computerNameProvider: @escaping @Sendable () throws -> String = { try KDriveMachineNamespaceName.current() },
-        currentDate: @escaping () -> Date = Date.init
+        currentUptime: @escaping () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        }
     ) {
         self.accountStore = accountStore ?? Self.makeDefaultAccountStore()
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
@@ -143,7 +160,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.encryptedVaultICloudKeychainEnabled =
             encryptedVaultICloudKeychainEnabled
         self.computerNameProvider = computerNameProvider
-        self.currentDate = currentDate
+        self.currentUptime = currentUptime
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
         domains = initialDomains
@@ -516,6 +533,43 @@ final class PotassiumProviderAppModel: ObservableObject {
         accountIdentifier: String,
         drive: KDriveDriveSummary
     ) async {
+        beginEncryptedVaultActivation(.create(
+            accountIdentifier: accountIdentifier,
+            drive: drive
+        ))
+    }
+
+    func prepareOpenEncryptedVault(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary,
+        recoveryKitText: String
+    ) {
+        beginEncryptedVaultActivation(.recoveryKit(
+            accountIdentifier: accountIdentifier,
+            drive: drive,
+            recoveryKitText: recoveryKitText
+        ))
+    }
+
+    func prepareOpenEncryptedVaultFromICloud(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary,
+        vaultID: VaultIdentifier
+    ) {
+        guard encryptedVaultICloudKeychainEnabled else {
+            errorMessage = "iCloud Keychain vault access is disabled until its security review is complete."
+            return
+        }
+        beginEncryptedVaultActivation(.iCloud(
+            accountIdentifier: accountIdentifier,
+            drive: drive,
+            vaultID: vaultID
+        ))
+    }
+
+    private func beginEncryptedVaultActivation(
+        _ activation: PendingEncryptedVaultActivation
+    ) {
         guard encryptedVaultsEnabled else {
             errorMessage = "Encrypted vaults are disabled until the format passes the configured security-review gate."
             statusMessage = nil
@@ -525,10 +579,16 @@ final class PotassiumProviderAppModel: ObservableObject {
             errorMessage = "Finish or cancel the current vault setup first."
             return
         }
-        pendingVaultAccountIdentifier = accountIdentifier
-        pendingVaultDriveID = drive.id
-        pendingVaultDriveName = drive.name
-        vaultRiskWarningStartedAt = currentDate()
+        pendingVaultActivation = activation
+        switch activation {
+        case .create(let accountIdentifier, let drive),
+             .recoveryKit(let accountIdentifier, let drive, _),
+             .iCloud(let accountIdentifier, let drive, _):
+            pendingVaultAccountIdentifier = accountIdentifier
+            pendingVaultDriveID = drive.id
+            pendingVaultDriveName = drive.name
+        }
+        vaultRiskWarningStartedAtUptime = currentUptime()
         vaultSetupStep = .unsupportedRiskWarning
         vaultSetupOutcome = VaultSetupOutcome()
         errorMessage = nil
@@ -540,18 +600,43 @@ final class PotassiumProviderAppModel: ObservableObject {
     /// until `confirmEncryptedVault` succeeds.
     func acceptEncryptedVaultRiskAndPrepare() async {
         guard vaultSetupStep == .unsupportedRiskWarning,
-              let warningStartedAt = vaultRiskWarningStartedAt,
-              currentDate().timeIntervalSince(warningStartedAt)
+              let warningStartedAt = vaultRiskWarningStartedAtUptime,
+              currentUptime() - warningStartedAt
                 >= Self.encryptedVaultRiskWarningDelaySeconds else {
             errorMessage = "Wait five seconds before continuing with this unsupported feature."
             return
         }
-        guard let accountIdentifier = pendingVaultAccountIdentifier,
-              let driveID = pendingVaultDriveID,
-              pendingVaultDriveName != nil else {
+        guard let activation = pendingVaultActivation else {
             errorMessage = "There is no pending encrypted vault setup."
             return
         }
+        vaultRiskWarningStartedAtUptime = nil
+        switch activation {
+        case .create(let accountIdentifier, let drive):
+            await prepareNewEncryptedVaultAfterRiskAcceptance(
+                accountIdentifier: accountIdentifier,
+                drive: drive
+            )
+        case .recoveryKit(let accountIdentifier, let drive, let recoveryKitText):
+            await openEncryptedVaultAfterRiskAcceptance(
+                accountIdentifier: accountIdentifier,
+                drive: drive,
+                recoveryKitText: recoveryKitText
+            )
+        case .iCloud(let accountIdentifier, let drive, let vaultID):
+            await openEncryptedVaultFromICloudAfterRiskAcceptance(
+                accountIdentifier: accountIdentifier,
+                drive: drive,
+                vaultID: vaultID
+            )
+        }
+    }
+
+    private func prepareNewEncryptedVaultAfterRiskAcceptance(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary
+    ) async {
+        let driveID = drive.id
         let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: driveID)
         guard beginDriveAction(.addingToFiles, for: key) else { return }
         defer { endDriveAction(for: key) }
@@ -564,13 +649,14 @@ final class PotassiumProviderAppModel: ObservableObject {
             )
             let pending = try await service.prepareNewVault(driveID: driveID)
             pendingVaultProvisioning = pending
-            vaultRiskWarningStartedAt = nil
             vaultSetupStep = .overview
             vaultSetupOutcome = VaultSetupOutcome()
             errorMessage = nil
             statusMessage = "Review encrypted-vault protection before saving the recovery kit."
         } catch {
             vaultSetupStep = .unsupportedRiskWarning
+            vaultRiskWarningStartedAtUptime =
+                currentUptime() - Self.encryptedVaultRiskWarningDelaySeconds
             errorMessage = "Could not prepare the encrypted vault: \(error.localizedDescription)"
             statusMessage = nil
         }
@@ -704,7 +790,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func resumeVaultSetup(for configuration: ProviderDomainConfiguration) {
-        guard configuration.encryptionMode == .opaqueVaultV1,
+        guard configuration.encryptionMode == .opaqueVaultV2,
               let vault = configuration.vault else {
             errorMessage = "The selected domain is not an encrypted vault."
             return
@@ -730,15 +816,11 @@ final class PotassiumProviderAppModel: ObservableObject {
         errorMessage = nil
     }
 
-    func openEncryptedVault(
+    private func openEncryptedVaultAfterRiskAcceptance(
         accountIdentifier: String,
         drive: KDriveDriveSummary,
         recoveryKitText: String
     ) async {
-        guard encryptedVaultsEnabled else {
-            errorMessage = "Encrypted vaults are disabled until the format passes the configured security-review gate."
-            return
-        }
         let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: drive.id)
         guard beginDriveAction(.addingToFiles, for: key) else { return }
         defer { endDriveAction(for: key) }
@@ -760,23 +842,30 @@ final class PotassiumProviderAppModel: ObservableObject {
                 vaultConfiguration: vaultConfiguration
             )
             await refreshVaultAccessState()
+            vaultSetupOutcome = VaultSetupOutcome(
+                configuration: domains.first(where: {
+                    $0.vault?.vaultIdentifier == vaultConfiguration.vaultIdentifier
+                }),
+                cloudAccessStatus: .disabled,
+                recoveryKitVerified: true
+            )
+            clearPendingVault()
+            vaultSetupStep = .complete
             statusMessage = "Opened the encrypted vault on this device."
             errorMessage = nil
         } catch {
+            vaultRiskWarningStartedAtUptime =
+                currentUptime() - Self.encryptedVaultRiskWarningDelaySeconds
             errorMessage = "Could not open the encrypted vault: \(error.localizedDescription)"
             statusMessage = nil
         }
     }
 
-    func openEncryptedVaultFromICloud(
+    private func openEncryptedVaultFromICloudAfterRiskAcceptance(
         accountIdentifier: String,
         drive: KDriveDriveSummary,
         vaultID: VaultIdentifier
     ) async {
-        guard encryptedVaultICloudKeychainEnabled else {
-            errorMessage = "iCloud Keychain vault access is disabled until its security review is complete."
-            return
-        }
         let key = ProviderDriveKey(
             accountIdentifier: accountIdentifier,
             driveID: drive.id
@@ -809,9 +898,20 @@ final class PotassiumProviderAppModel: ObservableObject {
                 vaultConfiguration: vaultConfiguration
             )
             await refreshVaultAccessState()
+            vaultSetupOutcome = VaultSetupOutcome(
+                configuration: domains.first(where: {
+                    $0.vault?.vaultIdentifier == vaultConfiguration.vaultIdentifier
+                }),
+                cloudAccessStatus: .available,
+                recoveryKitVerified: true
+            )
+            clearPendingVault()
+            vaultSetupStep = .complete
             statusMessage = "Authenticated the iCloud Keychain record and opened the vault on this device."
             errorMessage = nil
         } catch {
+            vaultRiskWarningStartedAtUptime =
+                currentUptime() - Self.encryptedVaultRiskWarningDelaySeconds
             errorMessage = "Could not open the vault from iCloud Keychain: \(error.localizedDescription)"
             statusMessage = nil
         }
@@ -1096,7 +1196,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             try await domainStore.save(namespacedConfiguration)
             replaceDomainConfiguration(namespacedConfiguration)
 
-            if configuration.encryptionMode == .opaqueVaultV1 {
+            if configuration.encryptionMode == .opaqueVaultV2 {
                 let vault = try await makeEncryptedVaultService(
                     configuration: namespacedConfiguration,
                     accessToken: token.accessToken
@@ -1140,7 +1240,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             knownFolderTransferPhasesByDomainIdentifier[
                 configuration.domainIdentifier
             ] = .connectedUploading
-            if configuration.encryptionMode == .opaqueVaultV1 {
+            if configuration.encryptionMode == .opaqueVaultV2 {
                 statusMessage = "Desktop and Documents are connected to \(configuration.displayName). Finder shows initial encrypted-upload progress."
             } else {
                 statusMessage = "Desktop and Documents now sync with \(configuration.displayName) in kDrive /Private/\(plaintextNamespaceName ?? "<this Mac>")."
@@ -1236,6 +1336,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async -> URL? {
+        guard configuration.encryptionMode != .opaqueVaultV1 else {
+            errorMessage = KnownFolderSetupError.unsupportedEncryptedVaultFormat
+                .localizedDescription
+            statusMessage = nil
+            return nil
+        }
         let key = driveKey(for: configuration)
         guard beginDriveAction(.showingInFiles, for: key) else { return nil }
         defer { endDriveAction(for: key) }
@@ -1262,6 +1368,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func syncNow(_ configuration: ProviderDomainConfiguration) async {
+        guard configuration.encryptionMode != .opaqueVaultV1 else {
+            errorMessage = KnownFolderSetupError.unsupportedEncryptedVaultFormat
+                .localizedDescription
+            statusMessage = nil
+            return
+        }
         let key = driveKey(for: configuration)
         guard beginDriveAction(.syncingNow, for: key) else { return }
         defer { endDriveAction(for: key) }
@@ -1479,7 +1591,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             driveID: driveID,
             driveName: driveName,
             knownFolderLayout: .machineNamespace,
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: vaultConfiguration,
             createdAt: now,
             updatedAt: now
@@ -1561,7 +1673,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         pendingVaultAccountIdentifier = nil
         pendingVaultDriveID = nil
         pendingVaultDriveName = nil
-        vaultRiskWarningStartedAt = nil
+        pendingVaultActivation = nil
+        vaultRiskWarningStartedAtUptime = nil
     }
 
     private func advanceVaultSetupAfterRegistration(
@@ -1596,6 +1709,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     private func evaluateKnownFolderPreflight(
         for configuration: ProviderDomainConfiguration
     ) async throws -> KnownFolderPreflight {
+        guard configuration.encryptionMode != .opaqueVaultV1 else {
+            throw KnownFolderSetupError.unsupportedEncryptedVaultFormat
+        }
         let owner = try await domainRegistrar.knownFolderOwner()
         let ownership: KnownFolderPreflight.Ownership
         if let owner {
@@ -1618,7 +1734,7 @@ final class PotassiumProviderAppModel: ObservableObject {
 
         let vaultIsUnlocked: Bool
         let remoteIsReachable: Bool
-        if configuration.encryptionMode == .opaqueVaultV1,
+        if configuration.encryptionMode == .opaqueVaultV2,
            let vaultID = configuration.vault?.vaultIdentifier {
             let rootKey = try await vaultKeyStore.loadRootKey(vaultID: vaultID)
             vaultIsUnlocked = rootKey != nil
@@ -1678,7 +1794,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         )
 
         var localStatuses: [VaultIdentifier: VaultLocalKeyStatus] = [:]
-        for configuration in domains where configuration.encryptionMode == .opaqueVaultV1 {
+        for configuration in domains where configuration.encryptionMode == .opaqueVaultV2 {
             guard let vaultID = configuration.vault?.vaultIdentifier else {
                 continue
             }
@@ -1722,7 +1838,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             }
 
             var statuses: [VaultIdentifier: VaultCloudAccessStatus] = [:]
-            for configuration in domains where configuration.encryptionMode == .opaqueVaultV1 {
+            for configuration in domains where configuration.encryptionMode == .opaqueVaultV2 {
                 guard let vault = configuration.vault else { continue }
                 let matching = groupedByVault[vault.vaultIdentifier] ?? []
                 guard matching.count <= 1 else {
@@ -2001,6 +2117,14 @@ final class PotassiumProviderAppModel: ObservableObject {
                 try await domainStore.save(configurations[index])
             }
 
+            // Preserve the saved record so the user can explicitly remove it,
+            // but never re-register an incompatible v1 domain with File
+            // Provider. An already registered system domain remains inert
+            // because every extension runtime load also fails closed.
+            guard configurations[index].encryptionMode != .opaqueVaultV1 else {
+                continue
+            }
+
             do {
                 try await domainRegistrar.addDomain(for: configurations[index])
             } catch {
@@ -2022,7 +2146,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     ) -> [String: String] {
         let baseNames = Dictionary(uniqueKeysWithValues: configurations.map {
             let driveName = ProviderDomainConfiguration.finderDisplayName(forDriveName: $0.driveName)
-            let displayName = $0.encryptionMode == .opaqueVaultV1
+            let displayName = $0.encryptionMode == .opaqueVaultV2
                 ? "\(driveName) — Encrypted"
                 : driveName
             return ($0.domainIdentifier, displayName)
@@ -2191,15 +2315,18 @@ private enum KnownFolderSetupError: Error, LocalizedError {
     case legacyMigrationRequired
     case partialClaimRequiresRepair
     case preflightFailed
+    case unsupportedEncryptedVaultFormat
 
     var errorDescription: String? {
         switch self {
         case .legacyMigrationRequired:
-            return "Desktop and Documents are owned by a legacy plaintext Potassium domain. Complete verified encrypted migration before switching ownership."
+            return "Desktop and Documents are owned by a legacy plaintext Potassium domain. Safe encrypted migration is not implemented, so ownership cannot switch to this vault."
         case .partialClaimRequiresRepair:
             return "Only one known folder is currently claimed. Stop the partial configuration before enabling both folders again."
         case .preflightFailed:
             return "Desktop and Documents protection did not pass its unlock and reachability checks."
+        case .unsupportedEncryptedVaultFormat:
+            return "This experimental encrypted-vault format is unsupported. Export any recoverable data with an older build; this app will not activate or mutate it."
         }
     }
 }

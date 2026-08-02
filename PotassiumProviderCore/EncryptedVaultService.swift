@@ -33,63 +33,6 @@ public struct VaultItemChanges: Equatable, Sendable {
     }
 }
 
-public struct VaultStagedContent: Codable, Equatable, Sendable {
-    public let itemID: VaultItemIdentifier
-    public let contentRevision: VaultRevision
-    public let objectToken: String
-    public let ciphertextURL: URL
-    public let wrappedContentKey: Data
-    public let noncePrefix: UInt64
-    public let plaintextLength: Int64
-    public let plaintextDigest: Data
-    public let frameCount: UInt32
-
-    public init(
-        itemID: VaultItemIdentifier,
-        contentRevision: VaultRevision,
-        objectToken: String,
-        ciphertextURL: URL,
-        wrappedContentKey: Data,
-        noncePrefix: UInt64,
-        plaintextLength: Int64,
-        plaintextDigest: Data,
-        frameCount: UInt32
-    ) {
-        self.itemID = itemID
-        self.contentRevision = contentRevision
-        self.objectToken = objectToken
-        self.ciphertextURL = ciphertextURL
-        self.wrappedContentKey = wrappedContentKey
-        self.noncePrefix = noncePrefix
-        self.plaintextLength = plaintextLength
-        self.plaintextDigest = plaintextDigest
-        self.frameCount = frameCount
-    }
-}
-
-public struct VaultUploadedContent: Codable, Equatable, Sendable {
-    public let staged: VaultStagedContent
-    public let remoteFileID: Int
-
-    public init(staged: VaultStagedContent, remoteFileID: Int) {
-        self.staged = staged
-        self.remoteFileID = remoteFileID
-    }
-
-    public var contentReference: VaultContentReference {
-        VaultContentReference(
-            encryptionItemID: staged.itemID,
-            objectToken: staged.objectToken,
-            remoteFileID: remoteFileID,
-            wrappedContentKey: staged.wrappedContentKey,
-            noncePrefix: staged.noncePrefix,
-            plaintextLength: staged.plaintextLength,
-            plaintextDigest: staged.plaintextDigest,
-            frameCount: staged.frameCount
-        )
-    }
-}
-
 public enum EncryptedVaultError: Error, Equatable, LocalizedError, Sendable {
     case missingConfiguration
     case missingKey
@@ -116,7 +59,7 @@ public enum EncryptedVaultError: Error, Equatable, LocalizedError, Sendable {
         case .notDirectory:
             return "The encrypted destination is not a folder."
         case .unsupportedNativeSharing:
-            return "Recipient-key sharing is not supported for encrypted vaults in version 1."
+            return "Recipient-key sharing is not supported for encrypted vaults in version 2."
         case .staleRevision:
             return "The encrypted item changed on another device."
         case .syncAnchorExpired:
@@ -205,8 +148,9 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
         keyStore: any VaultKeyStoring,
         temporaryDirectoryURL: URL = FileManager.default.temporaryDirectory
     ) throws {
-        guard configuration.encryptionMode == .opaqueVaultV1,
+        guard configuration.encryptionMode == .opaqueVaultV2,
               let vaultConfiguration = configuration.vault,
+              vaultConfiguration.formatVersion == VaultFormat.currentVersion,
               let layout = vaultConfiguration.remoteLayout else {
             throw EncryptedVaultError.missingConfiguration
         }
@@ -269,7 +213,7 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
             cursor = page.nextCursor
         } while cursor != nil
 
-        // Journal compaction is intentionally disabled in v1. Therefore every
+        // Journal compaction is intentionally disabled in v2. Therefore every
         // previously stored remote journal object must remain present in a
         // complete listing. Folding cached transactions into a listing that
         // omitted them would mask a server rollback.
@@ -416,35 +360,13 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
             throw EncryptedVaultError.staleRevision
         }
         guard let reference = item.contentReference,
-              let remoteFileID = reference.remoteFileID else {
+              reference.remoteFileID != nil else {
             throw EncryptedVaultError.missingContent
         }
-        let ciphertextURL = temporaryURL(prefix: "content-download")
-        defer { try? FileManager.default.removeItem(at: ciphertextURL) }
-        try await objectStore.downloadObject(fileID: remoteFileID, to: ciphertextURL)
-        try Task.checkCancellation()
-        let contentKey = try VaultCryptography.unwrapContentKey(
-            reference.wrappedContentKey,
-            objectToken: reference.objectToken,
-            rootKey: rootKey,
-            vaultID: vaultConfiguration.vaultIdentifier,
-            keyEpoch: vaultConfiguration.keyEpoch
-        )
-        try VaultContentCipher.decrypt(
-            ciphertextURL: ciphertextURL,
-            plaintextURL: plaintextURL,
-            context: VaultContentEncryptionContext(
-                vaultID: vaultConfiguration.vaultIdentifier,
-                itemID: reference.encryptionItemID,
-                contentRevision: item.contentRevision,
-                objectToken: reference.objectToken,
-                keyEpoch: vaultConfiguration.keyEpoch
-            ),
-            contentKey: contentKey,
-            expectedNoncePrefix: reference.noncePrefix,
-            expectedPlaintextLength: reference.plaintextLength,
-            expectedPlaintextDigest: reference.plaintextDigest,
-            expectedFrameCount: reference.frameCount
+        try await downloadAndDecrypt(
+            reference: reference,
+            contentRevision: item.contentRevision,
+            to: plaintextURL
         )
         try applyPlaintextFileProtection(to: plaintextURL)
         return item
@@ -504,99 +426,6 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
         )
         item.metadataRevision = try metadataRevision(for: item)
         return try await commitUpsert(item, base: nil)
-    }
-
-    /// Migration-only staging boundary. The returned file contains ciphertext
-    /// and can be resumed without retaining a plaintext staging file.
-    public func stageFileImport(
-        itemID: VaultItemIdentifier = VaultItemIdentifier(),
-        plaintextURL: URL
-    ) async throws -> VaultStagedContent {
-        let token = try VaultCryptography.makeObjectToken(
-            rootKey: rootKey,
-            vaultID: vaultConfiguration.vaultIdentifier
-        )
-        let revision = try VaultRevision.random()
-        let ciphertextURL = temporaryURL(prefix: "migration-content")
-        let result: VaultContentEncryptionResult
-        do {
-            result = try VaultContentCipher.encrypt(
-                plaintextURL: plaintextURL,
-                ciphertextURL: ciphertextURL,
-                context: VaultContentEncryptionContext(
-                    vaultID: vaultConfiguration.vaultIdentifier,
-                    itemID: itemID,
-                    contentRevision: revision,
-                    objectToken: token,
-                    keyEpoch: vaultConfiguration.keyEpoch
-                )
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: ciphertextURL)
-            throw error
-        }
-        let wrappedKey = try VaultCryptography.wrapContentKey(
-            result.contentKey,
-            objectToken: token,
-            rootKey: rootKey,
-            vaultID: vaultConfiguration.vaultIdentifier,
-            keyEpoch: vaultConfiguration.keyEpoch
-        )
-        return VaultStagedContent(
-            itemID: itemID,
-            contentRevision: revision,
-            objectToken: token,
-            ciphertextURL: ciphertextURL,
-            wrappedContentKey: wrappedKey,
-            noncePrefix: result.noncePrefix,
-            plaintextLength: result.plaintextLength,
-            plaintextDigest: result.plaintextDigest,
-            frameCount: result.frameCount
-        )
-    }
-
-    public func uploadStagedFileImport(
-        _ staged: VaultStagedContent
-    ) async throws -> VaultUploadedContent {
-        let remote = try await uploadIdempotently(
-            containerID: layout.contentContainerID,
-            token: staged.objectToken,
-            fileURL: staged.ciphertextURL
-        )
-        return VaultUploadedContent(staged: staged, remoteFileID: remote.id)
-    }
-
-    public func commitUploadedFileImport(
-        _ uploaded: VaultUploadedContent,
-        parentID: VaultItemIdentifier?,
-        filename: String,
-        contentTypeIdentifier: String?,
-        createdAt: Date,
-        modifiedAt: Date
-    ) async throws -> VaultItem {
-        _ = try await synchronize()
-        try await validateParent(parentID)
-        var item = VaultItem(
-            id: uploaded.staged.itemID,
-            parentID: parentID,
-            filename: filename,
-            isDirectory: false,
-            contentTypeIdentifier: contentTypeIdentifier,
-            createdAt: createdAt,
-            modifiedAt: modifiedAt,
-            plaintextSize: uploaded.staged.plaintextLength,
-            contentRevision: uploaded.staged.contentRevision,
-            metadataRevision: uploaded.staged.contentRevision,
-            contentReference: uploaded.contentReference
-        )
-        item.metadataRevision = try metadataRevision(for: item)
-        let committed = try await commitUpsert(item, base: nil)
-        try? FileManager.default.removeItem(at: uploaded.staged.ciphertextURL)
-        return committed
-    }
-
-    public func discardStagedFileImport(_ staged: VaultStagedContent) {
-        try? FileManager.default.removeItem(at: staged.ciphertextURL)
     }
 
     public func modify(
@@ -743,6 +572,18 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
         }) else {
             throw EncryptedVaultError.missingContent
         }
+        let restoredPlaintextURL = temporaryURL(prefix: "version-restore")
+        defer { try? FileManager.default.removeItem(at: restoredPlaintextURL) }
+        try await downloadAndDecrypt(
+            reference: version.contentReference,
+            contentRevision: version.contentRevision,
+            to: restoredPlaintextURL
+        )
+        try applyPlaintextFileProtection(to: restoredPlaintextURL)
+        let restoredContent = try await encryptAndUpload(
+            plaintextURL: restoredPlaintextURL,
+            itemID: itemID
+        )
         var desired = base
         if let currentReference = base.contentReference {
             desired.versions.insert(VaultVersion(
@@ -754,9 +595,9 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
         }
         desired.versions.removeAll { $0.contentRevision == contentRevision }
         desired.versions = retainedVersions(desired.versions)
-        desired.contentRevision = version.contentRevision
-        desired.contentReference = version.contentReference
-        desired.plaintextSize = version.plaintextSize
+        desired.contentRevision = restoredContent.revision
+        desired.contentReference = restoredContent.reference
+        desired.plaintextSize = restoredContent.reference.plaintextLength
         desired.modifiedAt = Date()
         desired.metadataRevision = try metadataRevision(for: desired)
         return try await commitUpsert(desired, base: base)
@@ -886,6 +727,43 @@ public actor EncryptedVaultService: EncryptedVaultProviding {
                 plaintextDigest: result.plaintextDigest,
                 frameCount: result.frameCount
             )
+        )
+    }
+
+    private func downloadAndDecrypt(
+        reference: VaultContentReference,
+        contentRevision: VaultRevision,
+        to plaintextURL: URL
+    ) async throws {
+        guard let remoteFileID = reference.remoteFileID else {
+            throw EncryptedVaultError.missingContent
+        }
+        let ciphertextURL = temporaryURL(prefix: "content-download")
+        defer { try? FileManager.default.removeItem(at: ciphertextURL) }
+        try await objectStore.downloadObject(fileID: remoteFileID, to: ciphertextURL)
+        try Task.checkCancellation()
+        let contentKey = try VaultCryptography.unwrapContentKey(
+            reference.wrappedContentKey,
+            objectToken: reference.objectToken,
+            rootKey: rootKey,
+            vaultID: vaultConfiguration.vaultIdentifier,
+            keyEpoch: vaultConfiguration.keyEpoch
+        )
+        try VaultContentCipher.decrypt(
+            ciphertextURL: ciphertextURL,
+            plaintextURL: plaintextURL,
+            context: VaultContentEncryptionContext(
+                vaultID: vaultConfiguration.vaultIdentifier,
+                itemID: reference.encryptionItemID,
+                contentRevision: contentRevision,
+                objectToken: reference.objectToken,
+                keyEpoch: vaultConfiguration.keyEpoch
+            ),
+            contentKey: contentKey,
+            expectedNoncePrefix: reference.noncePrefix,
+            expectedPlaintextLength: reference.plaintextLength,
+            expectedPlaintextDigest: reference.plaintextDigest,
+            expectedFrameCount: reference.frameCount
         )
     }
 

@@ -1,26 +1,26 @@
 import Foundation
 
-public struct VaultGarbageCollectionReport: Equatable, Sendable {
+public struct VaultMaintenanceReport: Equatable, Sendable {
     public let checkpointFileID: Int
     public let examinedObjectCount: Int
-    public let deletedObjectCount: Int
+    public let unreferencedObjectCount: Int
 
     public init(
         checkpointFileID: Int,
         examinedObjectCount: Int,
-        deletedObjectCount: Int
+        unreferencedObjectCount: Int
     ) {
         self.checkpointFileID = checkpointFileID
         self.examinedObjectCount = examinedObjectCount
-        self.deletedObjectCount = deletedObjectCount
+        self.unreferencedObjectCount = unreferencedObjectCount
     }
 }
 
-/// Conservative maintenance: an authenticated checkpoint is uploaded and
-/// downloaded again before any unreferenced ciphertext can be deleted.
-/// Journal objects remain immutable in v1 until Merkle-node proof retrieval has
-/// passed independent review; this intentionally prefers quota use over an
-/// unsafe compaction.
+/// Conservative maintenance uploads and authenticates a padded checkpoint and
+/// reports unreferenced ciphertext. It never deletes remote content or journal
+/// objects: retention time alone cannot prove that an offline device will not
+/// later publish a valid transaction that references an apparently orphaned
+/// object.
 public actor VaultMaintenanceService {
     private let vaultConfiguration: ProviderVaultConfiguration
     private let rootKey: VaultKeyMaterial
@@ -48,10 +48,9 @@ public actor VaultMaintenanceService {
         self.temporaryDirectoryURL = temporaryDirectoryURL
     }
 
-    public func checkpointAndCollectUnreferencedContent(
-        retentionInterval: TimeInterval = 30 * 24 * 60 * 60,
+    public func checkpointAndReportUnreferencedContent(
         now: Date = Date()
-    ) async throws -> VaultGarbageCollectionReport {
+    ) async throws -> VaultMaintenanceReport {
         guard let layout = vaultConfiguration.remoteLayout else {
             throw EncryptedVaultError.missingConfiguration
         }
@@ -80,9 +79,8 @@ public actor VaultMaintenanceService {
             rootKey: rootKey,
             vaultID: vaultConfiguration.vaultIdentifier
         )
-        let envelope = try VaultCryptography.seal(
+        let envelope = try VaultPaddedCheckpointCodec.seal(
             checkpoint,
-            role: .checkpoint,
             objectToken: checkpointToken,
             rootKey: rootKey,
             vaultID: vaultConfiguration.vaultIdentifier,
@@ -104,11 +102,9 @@ public actor VaultMaintenanceService {
             fileID: remoteCheckpoint.id,
             to: verificationURL
         )
-        let verified = try VaultCryptography.open(
-            VaultCheckpoint.self,
-            envelope: Data(contentsOf: verificationURL, options: .mappedIfSafe),
-            expectedRole: .checkpoint,
-            expectedObjectToken: checkpointToken,
+        let verified = try VaultPaddedCheckpointCodec.open(
+            Data(contentsOf: verificationURL, options: .mappedIfSafe),
+            objectToken: checkpointToken,
             rootKey: rootKey,
             vaultID: vaultConfiguration.vaultIdentifier,
             keyEpoch: vaultConfiguration.keyEpoch
@@ -118,7 +114,6 @@ public actor VaultMaintenanceService {
         }
 
         let referencedTokens = Self.referencedContentTokens(in: verified.items)
-        let cutoff = now.addingTimeInterval(-max(0, retentionInterval))
         var candidatesByToken = Dictionary(uniqueKeysWithValues:
             try await localStore.garbageCollectionCandidates().map {
                 ($0.objectToken, $0)
@@ -127,7 +122,6 @@ public actor VaultMaintenanceService {
         var observedTokens: Set<String> = []
         var cursor: String?
         var examined = 0
-        var deleted = 0
         repeat {
             let page = try await objectStore.listObjects(
                 containerID: layout.contentContainerID,
@@ -140,17 +134,7 @@ public actor VaultMaintenanceService {
                     candidatesByToken[object.token] = nil
                     continue
                 }
-                if let candidate = candidatesByToken[object.token],
-                   candidate.remoteFileID == object.id {
-                    if candidate.firstObservedAt <= cutoff,
-                       candidate.observedFrontier.transactionIDs.isSubset(
-                           of: state.appliedTransactionIDs
-                       ) {
-                        try await objectStore.deleteObject(fileID: object.id)
-                        candidatesByToken[object.token] = nil
-                        deleted += 1
-                    }
-                } else {
+                if candidatesByToken[object.token]?.remoteFileID != object.id {
                     candidatesByToken[object.token] = VaultGarbageCollectionCandidate(
                         objectToken: object.token,
                         remoteFileID: object.id,
@@ -169,10 +153,10 @@ public actor VaultMaintenanceService {
             Array(candidatesByToken.values)
         )
 
-        return VaultGarbageCollectionReport(
+        return VaultMaintenanceReport(
             checkpointFileID: remoteCheckpoint.id,
             examinedObjectCount: examined,
-            deletedObjectCount: deleted
+            unreferencedObjectCount: candidatesByToken.count
         )
     }
 

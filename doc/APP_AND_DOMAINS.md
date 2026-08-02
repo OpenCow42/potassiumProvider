@@ -183,9 +183,10 @@ reports key availability, kDrive reachability, current ownership, and quota
 when exposed by the API. The UI distinguishes preparing, awaiting consent,
 connected/uploading, up to date, quota blocked, and attention required.
 
-A legacy plaintext Potassium owner blocks direct claiming until verified
-encrypted migration completes. Another provider can be handed off through
-macOS consent, with a warning that its previous remote copies are not purged.
+A legacy plaintext Potassium owner blocks direct claiming because safe
+encrypted migration is not implemented. Another provider can be handed off
+through macOS consent, with a warning that its previous remote copies are not
+purged.
 
 ## Removing A Domain
 
@@ -251,15 +252,17 @@ token or expiration, so reconnecting may be required when it stops working.
 ## Encrypted vault domains
 
 When the security-review feature flag is enabled, drive management offers
-Create Encrypted Vault and Open Existing Vault. Before creation performs any
-remote preparation, it displays a mandatory warning that the unsupported
-experimental feature may cause complete, unrecoverable data loss and that the
-user proceeds entirely on their own. The acknowledgement button remains
-disabled for five seconds. Creation then shows a one-time text and QR recovery
-kit and requires exact confirmation before saving the device key or registering
-the domain. Existing plaintext domains remain separately registered migration
-sources. Normal removal/logout retains vault keys; the separate Forget Key
-workflow requires the matching recovery kit.
+Create Encrypted Vault and Open Existing Vault. Before creation, recovery-kit
+open, or iCloud Keychain open performs any activation side effect, it displays
+a mandatory warning that the unsupported experimental feature may cause
+complete, unrecoverable data loss and that the user proceeds entirely on their
+own. The acknowledgement button remains disabled for five seconds measured with
+system uptime. Creation then shows a one-time text and QR recovery kit and
+requires exact confirmation before saving the device key or registering the
+domain. Existing plaintext domains remain separately registered; no cross-vault
+migration or source-purge workflow is implemented. Normal removal/logout
+retains vault keys; the separate Forget Key workflow requires the matching
+recovery kit.
 
 Creation is a guided flow: threat-boundary overview, device-only versus optional
 iCloud Keychain custody, recovery confirmation, durable registration,

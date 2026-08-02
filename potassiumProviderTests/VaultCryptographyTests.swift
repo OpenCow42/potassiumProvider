@@ -41,7 +41,7 @@ struct VaultCryptographyTests {
                 == identifier
         )
         #expect(VaultItemIdentifier(fileProviderIdentifier: "42") == nil)
-        #expect(VaultItemIdentifier(fileProviderIdentifier: "ev1:not-base64") == nil)
+        #expect(VaultItemIdentifier(fileProviderIdentifier: "ev2:not-base64") == nil)
     }
 
     @Test func encryptedEnvelopeRoundTripsAndBindsContext() throws {
@@ -158,6 +158,7 @@ struct VaultCryptographyTests {
             rootKey: rootKey,
             recoverySecret: recoverySecret
         )
+        #expect(bootstrap.starts(with: Data("KPB2".utf8)))
 
         let unlocked = try VaultBootstrap.unlock(
             bootstrap,
@@ -197,7 +198,7 @@ struct VaultCryptographyTests {
 
         let decoded = try VaultRecoveryKit(encoded: kit.encoded.lowercased())
         #expect(decoded == kit)
-        #expect(kit.encoded.hasPrefix("KPV1-"))
+        #expect(kit.encoded.hasPrefix("KPV2-"))
 
         var mistyped = kit.encoded
         let index = mistyped.index(before: mistyped.endIndex)
@@ -215,6 +216,85 @@ struct VaultCryptographyTests {
             }
         }()
         #expect(detectsTypingError)
+    }
+
+    @Test func checkpointsHideExactMetadataSizeAndRejectUnpaddedObjects() throws {
+        let vaultID = VaultIdentifier()
+        let rootKey = try VaultKeyMaterial.random()
+        let token = try VaultCryptography.makeObjectToken()
+        let empty = VaultCheckpoint(
+            frontier: VaultFrontier(),
+            items: [],
+            transactionMerkleRoot: Data(repeating: 0x11, count: 32),
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let small = VaultCheckpoint(
+            frontier: VaultFrontier(),
+            items: [VaultItem(
+                parentID: nil,
+                filename: "private-name.txt",
+                isDirectory: false,
+                createdAt: Date(timeIntervalSince1970: 1),
+                modifiedAt: Date(timeIntervalSince1970: 1),
+                contentRevision: VaultRevision(
+                    data: Data(repeating: 0x22, count: VaultRevision.byteCount)
+                )!,
+                metadataRevision: VaultRevision(
+                    data: Data(repeating: 0x33, count: VaultRevision.byteCount)
+                )!
+            )],
+            transactionMerkleRoot: Data(repeating: 0x44, count: 32),
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let emptyEnvelope = try VaultPaddedCheckpointCodec.seal(
+            empty,
+            objectToken: token,
+            rootKey: rootKey,
+            vaultID: vaultID
+        )
+        let smallEnvelope = try VaultPaddedCheckpointCodec.seal(
+            small,
+            objectToken: token,
+            rootKey: rootKey,
+            vaultID: vaultID
+        )
+        #expect(emptyEnvelope.count == smallEnvelope.count)
+        #expect(emptyEnvelope.count > VaultFormat.minimumCheckpointPayloadSize)
+        #expect(emptyEnvelope.range(of: Data("private-name.txt".utf8)) == nil)
+        #expect(try VaultPaddedCheckpointCodec.open(
+            smallEnvelope,
+            objectToken: token,
+            rootKey: rootKey,
+            vaultID: vaultID
+        ) == small)
+
+        let unpaddedEnvelope = try VaultCryptography.seal(
+            small,
+            role: .checkpoint,
+            objectToken: token,
+            rootKey: rootKey,
+            vaultID: vaultID
+        )
+        #expect(throws: VaultJournalError.malformedPaddedCheckpoint) {
+            try VaultPaddedCheckpointCodec.open(
+                unpaddedEnvelope,
+                objectToken: token,
+                rootKey: rootKey,
+                vaultID: vaultID
+            )
+        }
+
+        var tampered = smallEnvelope
+        tampered[tampered.index(before: tampered.endIndex)] ^= 0x01
+        #expect(throws: VaultCryptoError.authenticationFailed) {
+            try VaultPaddedCheckpointCodec.open(
+                tampered,
+                objectToken: token,
+                rootKey: rootKey,
+                vaultID: vaultID
+            )
+        }
     }
 
     @Test(

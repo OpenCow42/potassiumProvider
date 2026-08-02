@@ -44,10 +44,11 @@ documentation is the source of truth for this callback and transition behavior.
 
 For encrypted domains, preflight requires a device root key, authenticated
 remote synchronization, and safe known-folder ownership before claiming. A
-legacy plaintext Potassium owner requires verified migration instead of direct
-claiming. Once macOS consents, ordinary create and modify callbacks encrypt each
-revision before its opaque object-store upload. The app reports transfer phases
-without treating a successful claim as proof that every initial file uploaded.
+legacy plaintext Potassium owner blocks the claim because safe migration is not
+implemented. Once macOS consents, ordinary create and modify callbacks encrypt
+each revision before its opaque object-store upload. The app reports transfer
+phases without treating a successful claim as proof that every initial file
+uploaded.
 
 File Provider reuses existing directory children or creates them at those
 locations, keeps its default binary-compatibility symlink behavior, and manages

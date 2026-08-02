@@ -152,4 +152,4 @@ Encrypted domains stream content into a new random-key ciphertext object first;
 a fixed-size authenticated transaction is published last as the visibility
 point. Create, modify, move, rename, favorite, duplicate, trash, restore, purge,
 and version restore operate on logical UUID items. Retry uses the opaque object
-token for idempotency. See [Encrypted Vault Format v1](ENCRYPTED_VAULT.md).
+token for idempotency. See [Encrypted Vault Format v2](ENCRYPTED_VAULT.md).

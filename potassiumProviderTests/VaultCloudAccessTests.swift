@@ -175,7 +175,7 @@ struct VaultCloudAccessTests {
             displayName: "Encrypted",
             driveID: 42,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: pending.vaultConfiguration
         )
         let localStore = try VaultSQLiteStore(
@@ -312,7 +312,7 @@ struct VaultCloudAccessTests {
             displayName: "Encrypted",
             driveID: 42,
             driveName: "Drive",
-            encryptionMode: .opaqueVaultV1,
+            encryptionMode: .opaqueVaultV2,
             vault: pending.vaultConfiguration
         )
         let localStore = try VaultSQLiteStore(

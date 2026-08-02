@@ -7,7 +7,7 @@ enum ProviderEventRecorder {
     static func saveConflict(_ event: KDriveConflictEvent, runtime: FileProviderRuntime) async {
         guard let eventStore = runtime.eventStore else { return }
         var event = event
-        if runtime.configuration.encryptionMode == .opaqueVaultV1 {
+        if runtime.configuration.encryptionMode == .opaqueVaultV2 {
             event.originalItemName = nil
             event.originalItemPath = nil
             event.conflictItemName = nil
@@ -50,7 +50,7 @@ enum ProviderEventRecorder {
         remoteRequestID: String? = nil
     ) async {
         let storesOpaqueSummaryOnly =
-            runtime.configuration.encryptionMode == .opaqueVaultV1
+            runtime.configuration.encryptionMode == .opaqueVaultV2
         await recordActivity(
             kind: kind,
             eventStore: runtime.eventStore,
