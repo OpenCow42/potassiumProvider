@@ -46,7 +46,9 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(availableDrive.waitForExistence(timeout: 5))
         availableDrive.tap()
 
-        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.buttons["drive.createEncryptedVault"].waitForExistence(timeout: 5)
+        )
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
 

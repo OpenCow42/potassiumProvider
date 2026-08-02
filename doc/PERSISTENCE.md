@@ -348,3 +348,14 @@ journal is an authenticated encrypted file. Activity and conflict rows retain
 only opaque `ev1:` identifiers and fixed summaries. Domain JSON stores
 non-secret vault locators, format version, and key epoch, never root or recovery
 keys.
+
+Optional iCloud Keychain access is a separate synchronizable Keychain item, not
+app-group JSON or SQLite. It contains the root key and opaque remote
+configuration, but not the recovery secret, trusted rollback frontier, device
+ID, or logical metadata. Device-local root, frontier, and identity items remain
+non-synchronizing `AfterFirstUnlockThisDeviceOnly` values.
+
+Non-secret onboarding preferences are stored in app-group defaults under the
+random vault UUID: onboarding schema version and whether Desktop & Documents
+was deferred. Missing or older state produces a resumable Finish Vault Setup
+task. Actual key and known-folder status is queried live.

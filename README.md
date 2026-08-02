@@ -26,8 +26,9 @@ data.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
 - [Encrypted Vault Format v1](doc/ENCRYPTED_VAULT.md): threat model, leakage,
-  key custody, binary formats, opaque synchronization, rollback behavior, and
-  the security-review feature gate.
+  device-local and optional iCloud Keychain custody, guided recovery, binary
+  formats, opaque synchronization, rollback behavior, and security-review
+  feature gates.
 - [Encrypted Vault Migration](doc/ENCRYPTED_VAULT_MIGRATION.md): resumable
   encrypted migration journal, verification-before-purge invariant, and
   Desktop/Documents cutover.
@@ -147,15 +148,19 @@ local Xcode requires a more specific variant.
   links, or user data.
 - Encrypted vaults are experimental and disabled by default pending independent
   cryptographic review. The feature flag is not a production-readiness claim.
+- Encrypted-vault onboarding always requires a verified offline recovery kit.
+  Optional iCloud Keychain access is a separately gated convenience: it can
+  open a vault on another trusted Apple device, but it does not replace offline
+  recovery or revoke keys already imported by another device.
 - The current conflict handling delegates many decisions to kDrive. Read
   [Conflicts](doc/CONFLICTS.md) before relying on it for important files.
 - SQLite snapshots cache metadata only. File contents and thumbnails are not
   stored there.
-- On macOS 15 or later, Desktop & Documents sync is an explicit, experimental
-  opt-in that always handles both folders together under
-  `Private/<current Mac name>` on the selected kDrive. Existing active domains
-  created before this layout remain directly under `Private` until sync is
-  stopped and enabled again.
+- On macOS 15 or later, Desktop & Documents protection is an explicit action.
+  Encrypted domains preflight ownership and local key availability before
+  presenting Apple's consent UI, then upload only opaque vault ciphertext.
+  A legacy plaintext Potassium owner must complete verified encrypted
+  migration before its known-folder claim can move.
 
 ## License
 

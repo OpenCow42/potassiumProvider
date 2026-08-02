@@ -85,11 +85,7 @@ public actor KeychainVaultKeyStore: VaultKeyStoring, VaultDeviceIdentityStoring 
 
     private func saveData(_ data: Data, account: String) throws {
         let query = baseQuery(account: account)
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String:
-                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        ]
+        let attributes = saveAttributes(data: data)
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else {
@@ -106,6 +102,14 @@ public actor KeychainVaultKeyStore: VaultKeyStoring, VaultDeviceIdentityStoring 
         }
     }
 
+    func saveAttributes(data: Data) -> [String: Any] {
+        [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String:
+                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+    }
+
     private func deleteData(account: String) throws {
         let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -113,7 +117,7 @@ public actor KeychainVaultKeyStore: VaultKeyStoring, VaultDeviceIdentityStoring 
         }
     }
 
-    private func baseQuery(account: String) -> [String: Any] {
+    func baseQuery(account: String) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

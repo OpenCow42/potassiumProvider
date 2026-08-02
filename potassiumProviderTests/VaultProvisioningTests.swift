@@ -440,7 +440,7 @@ struct VaultProvisioningTests {
     }
 }
 
-private actor InMemoryOpaqueObjectStore: KDriveObjectStoreProviding {
+actor InMemoryOpaqueObjectStore: KDriveObjectStoreProviding {
     private struct Entry {
         var metadata: KDriveOpaqueObject
         var payload: Data?
@@ -536,7 +536,7 @@ private actor InMemoryOpaqueObjectStore: KDriveObjectStoreProviding {
     }
 }
 
-private enum TestObjectStoreError: Error {
+enum TestObjectStoreError: Error {
     case missing
 }
 

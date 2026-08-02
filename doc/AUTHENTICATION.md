@@ -61,6 +61,27 @@ vault UUID. They use the shared access group, Data Protection Keychain,
 `AfterFirstUnlockThisDeviceOnly`, and no synchronization. The recovery secret is
 not stored. See [Encrypted Vault Format v1](ENCRYPTED_VAULT.md).
 
+## Optional iCloud Keychain Vault Access
+
+The foreground app can optionally create a second, versioned convenience
+record. It uses service
+`net.weavee.potassiumProvider.vault.cloud-access`, account
+`vaultCloudAccess:<vault UUID>`, the shared access group,
+`kSecAttrSynchronizable = true`, and `kSecAttrAccessibleWhenUnlocked`.
+
+The record contains the root key and only the opaque locators needed to
+authenticate the remote vault. It never contains the recovery secret, trusted
+rollback frontier, device ID, logical names, account-local ID, or OAuth data.
+The File Provider extension never reads this record. Foreground import first
+authenticates the bootstrap identity, checkpoint, journal, and any returning
+device frontier, then copies the root into the existing non-synchronizing
+`AfterFirstUnlockThisDeviceOnly` item.
+
+iCloud access is opt-in and independently feature-gated. The offline recovery
+kit remains mandatory because synchronization can be delayed or unavailable.
+Removing the synchronizable record leaves device-local keys untouched and
+cannot revoke a key already imported by a lost device.
+
 ## Manual Access Token Path
 
 The app also supports a manual access token. This creates a token value with:

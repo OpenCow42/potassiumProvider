@@ -103,6 +103,9 @@ The app displays text and a locally generated QR code once. The user must paste
 the complete kit back before the root key is committed and the File Provider
 domain is registered. Opening an existing vault downloads and authenticates the
 bootstrap and initial checkpoint before saving the key.
+The existing-vault verification and Forget Key actions also authenticate the
+remote encrypted header and checkpoint; they do not accept locator matching as
+proof and never transmit or persist the recovery material.
 
 Recovery rotation uploads a new bootstrap wrapped by a new recovery secret and
 requires confirmation of the new kit. It does **not** revoke old server
@@ -113,6 +116,25 @@ the verified migration state machine; destruction of the old vault is a
 separate purge decision.
 
 Loss of every device key and the recovery kit is intentionally unrecoverable.
+
+### iCloud Keychain convenience
+
+Device-only custody remains the default. With the separate iCloud Keychain gate
+enabled, setup and Security & Recovery can publish a synchronizable
+`VaultCloudAccessRecord`. iCloud Keychain protects that record end to end, but
+Apple Account recovery and trusted Apple devices then become part of the
+custody boundary.
+
+The record holds the root key, vault/drive identity, opaque physical locators,
+format/epoch, and remote layout. It excludes the recovery secret, trusted
+frontier, device identity, and logical metadata. Import is explicit and
+foreground-only. It authenticates the bootstrap identity plus the encrypted
+checkpoint and complete journal before saving a device-local key. A returning
+device's trusted frontier is validated and retained.
+
+Forgetting a device key never silently imports the cloud record. Removing the
+cloud record does not erase keys already imported elsewhere; full rekeying
+remains the lost-device revocation mechanism.
 
 ## Physical layout
 
@@ -250,13 +272,32 @@ and kDrive logical version history cannot operate on ciphertext. Encrypted
 Desktop and Documents are logical folders; their plaintext names and Mac
 namespace occur only in encrypted transactions.
 
+Onboarding offers Desktop & Documents as a separate macOS consent step after
+durable registration. Preflight checks the local key, remote reachability, and
+current owner. A legacy plaintext Potassium owner blocks direct claiming until
+verified migration; an external owner triggers a warning that prior remote
+copies are outside this vault's purge boundary. Transfer UI uses phases and
+Finder per-item progress rather than a fabricated percentage.
+
 The feature flag defaults off:
 
 ```sh
 defaults write net.weavee.potassiumProvider EncryptedVaultsEnabled -bool YES
 ```
 
+Optional iCloud Keychain custody has a second independent gate:
+
+```sh
+defaults write net.weavee.potassiumProvider EncryptedVaultICloudKeychainEnabled -bool YES
+```
+
 Enabling it is for development and security review, not a confidentiality
 claim. The rollout gate is: format/crypto tests, read-only prototype,
 single-device mutation testing, multi-device conflict testing, migration pilot,
 independent security audit, then explicit default enablement.
+
+## Apple platform references
+
+- [Synchronizable Keychain items](https://developer.apple.com/documentation/security/ksecattrsynchronizable)
+- [iCloud Keychain security overview](https://support.apple.com/guide/security/icloud-keychain-security-overview-sec1c89c6f3b/web)
+- [File Provider framework updates and known folders](https://developer.apple.com/documentation/updates/fileprovider)

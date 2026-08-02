@@ -16,6 +16,7 @@ protocol ProviderDomainRegistering {
     func releaseKnownFolders(for configuration: ProviderDomainConfiguration) async throws
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws
+    func knownFolderOwner() async throws -> ProviderKnownFolderOwner?
 }
 
 enum ProviderKnownFolderSyncState: Equatable, Sendable {
@@ -23,6 +24,54 @@ enum ProviderKnownFolderSyncState: Equatable, Sendable {
     case inactive
     case partial
     case active
+}
+
+struct ProviderKnownFolderOwner: Equatable, Sendable {
+    let domainIdentifier: String
+    let displayName: String
+    let includesDesktop: Bool
+    let includesDocuments: Bool
+
+    var isPartial: Bool {
+        includesDesktop != includesDocuments
+    }
+}
+
+enum KnownFolderTransferPhase: Equatable, Sendable {
+    case idle
+    case preparing
+    case awaitingConsent
+    case connectedUploading
+    case upToDate
+    case quotaBlocked
+    case attentionRequired
+}
+
+struct KnownFolderPreflight: Equatable, Sendable {
+    enum Ownership: Equatable, Sendable {
+        case none
+        case thisVault
+        case legacyPotassium(domainIdentifier: String)
+        case externalProvider(displayName: String)
+        case partial(displayName: String)
+    }
+
+    let ownership: Ownership
+    let vaultIsUnlocked: Bool
+    let remoteIsReachable: Bool
+    let availableQuotaBytes: Int64?
+
+    var canRequestClaim: Bool {
+        guard vaultIsUnlocked, remoteIsReachable, ownership != .thisVault else {
+            return false
+        }
+        switch ownership {
+        case .partial, .legacyPotassium:
+            return false
+        case .none, .thisVault, .externalProvider:
+            return true
+        }
+    }
 }
 
 extension ProviderDomainRegistering {
@@ -51,6 +100,10 @@ extension ProviderDomainRegistering {
 
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {
         throw ProviderKnownFolderRegistrationError.managerUnavailable(configuration.domainIdentifier)
+    }
+
+    func knownFolderOwner() async throws -> ProviderKnownFolderOwner? {
+        nil
     }
 }
 
@@ -109,6 +162,26 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
         })
         #else
         return [:]
+        #endif
+    }
+
+    func knownFolderOwner() async throws -> ProviderKnownFolderOwner? {
+        #if os(macOS)
+        let domains = try await registeredDomains()
+        return domains.compactMap { domain -> ProviderKnownFolderOwner? in
+            let folders = domain.replicatedKnownFolders
+            guard folders.contains(.desktop) || folders.contains(.documents) else {
+                return nil
+            }
+            return ProviderKnownFolderOwner(
+                domainIdentifier: domain.identifier.rawValue,
+                displayName: domain.displayName,
+                includesDesktop: folders.contains(.desktop),
+                includesDocuments: folders.contains(.documents)
+            )
+        }.first
+        #else
+        return nil
         #endif
     }
 

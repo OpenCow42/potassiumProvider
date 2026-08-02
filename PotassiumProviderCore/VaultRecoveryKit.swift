@@ -133,6 +133,22 @@ public enum VaultBootstrap {
         public let remoteLayout: RemoteLayout?
     }
 
+    public struct Header: Equatable, Sendable {
+        public let formatVersion: UInt16
+        public let keyEpoch: UInt32
+        public let vaultID: VaultIdentifier
+
+        public init(
+            formatVersion: UInt16,
+            keyEpoch: UInt32,
+            vaultID: VaultIdentifier
+        ) {
+            self.formatVersion = formatVersion
+            self.keyEpoch = keyEpoch
+            self.vaultID = vaultID
+        }
+    }
+
     public static func create(
         vaultID: VaultIdentifier,
         keyEpoch: UInt32 = VaultFormat.currentKeyEpoch,
@@ -166,19 +182,11 @@ public enum VaultBootstrap {
         recoverySecret: VaultKeyMaterial,
         expectedVaultID: VaultIdentifier? = nil
     ) throws -> Unlocked {
-        guard bootstrap.count > headerByteCount else {
-            throw VaultCryptoError.invalidEnvelope
-        }
+        let inspectedHeader = try inspectHeader(bootstrap)
         var cursor = VaultDataCursor(data: bootstrap)
-        guard try cursor.read(count: 4) == magic else {
-            throw VaultCryptoError.invalidEnvelopeMagic
-        }
-        let version = try cursor.readUInt16()
-        guard version == VaultFormat.currentVersion else {
-            throw VaultCryptoError.unsupportedFormatVersion(version)
-        }
-        let keyEpoch = try cursor.readUInt32()
-        let vaultID = VaultIdentifier(rawValue: UUID(bytes: try cursor.read(count: 16)))
+        _ = try cursor.read(count: headerByteCount)
+        let keyEpoch = inspectedHeader.keyEpoch
+        let vaultID = inspectedHeader.vaultID
         if let expectedVaultID, expectedVaultID != vaultID {
             throw VaultCryptoError.unexpectedVault
         }
@@ -212,6 +220,30 @@ public enum VaultBootstrap {
         } catch {
             throw VaultCryptoError.authenticationFailed
         }
+    }
+
+    /// Reads only the fixed public bootstrap header. Callers must authenticate
+    /// another vault object with the root key before trusting a cloud-access
+    /// record based on this result.
+    public static func inspectHeader(_ bootstrap: Data) throws -> Header {
+        guard bootstrap.count > headerByteCount else {
+            throw VaultCryptoError.invalidEnvelope
+        }
+        var cursor = VaultDataCursor(data: bootstrap)
+        guard try cursor.read(count: 4) == magic else {
+            throw VaultCryptoError.invalidEnvelopeMagic
+        }
+        let version = try cursor.readUInt16()
+        guard version == VaultFormat.currentVersion else {
+            throw VaultCryptoError.unsupportedFormatVersion(version)
+        }
+        return Header(
+            formatVersion: version,
+            keyEpoch: try cursor.readUInt32(),
+            vaultID: VaultIdentifier(
+                rawValue: UUID(bytes: try cursor.read(count: 16))
+            )
+        )
     }
 
     private static func makeHeader(vaultID: VaultIdentifier, keyEpoch: UInt32) -> Data {

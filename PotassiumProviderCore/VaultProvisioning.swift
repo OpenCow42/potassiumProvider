@@ -40,6 +40,8 @@ public enum VaultProvisioningError: Error, Equatable, LocalizedError, Sendable {
     case missingRemoteLayout
     case checkpointNotFound
     case driveMismatch
+    case cloudRecordMismatch
+    case keyEpochMismatch
 
     public var errorDescription: String? {
         switch self {
@@ -51,6 +53,10 @@ public enum VaultProvisioningError: Error, Equatable, LocalizedError, Sendable {
             return "The authenticated vault checkpoint could not be found."
         case .driveMismatch:
             return "The recovery kit belongs to a different kDrive."
+        case .cloudRecordMismatch:
+            return "The iCloud Keychain record does not match the remote vault."
+        case .keyEpochMismatch:
+            return "The iCloud Keychain record belongs to a different vault key epoch."
         }
     }
 }
@@ -269,6 +275,150 @@ public struct VaultProvisioningService: Sendable {
         )
     }
 
+    /// Proves that a recovery kit opens the selected vault without copying its
+    /// root key into device custody. Recovery material is used only in memory
+    /// and is never sent to the object store.
+    public func verifyRecoveryKit(
+        _ recoveryKitText: String,
+        expectedConfiguration: ProviderVaultConfiguration,
+        expectedDriveID: Int
+    ) async throws {
+        let kit = try VaultRecoveryKit(encoded: recoveryKitText)
+        guard kit.driveID == expectedDriveID else {
+            throw VaultProvisioningError.driveMismatch
+        }
+        guard kit.vaultID == expectedConfiguration.vaultIdentifier,
+              kit.vaultRootFileID == expectedConfiguration.vaultRootFileID,
+              kit.vaultHeaderFileID == expectedConfiguration.vaultHeaderFileID
+        else {
+            throw VaultProvisioningError.recoveryConfirmationMismatch
+        }
+
+        let bootstrapURL = temporaryURL(prefix: "recovery-verification")
+        defer { try? FileManager.default.removeItem(at: bootstrapURL) }
+        try await objectStore.downloadObject(
+            fileID: kit.vaultHeaderFileID,
+            to: bootstrapURL
+        )
+        let unlocked = try VaultBootstrap.unlock(
+            Data(contentsOf: bootstrapURL, options: .mappedIfSafe),
+            recoverySecret: kit.recoverySecret,
+            expectedVaultID: kit.vaultID
+        )
+        guard unlocked.keyEpoch == expectedConfiguration.keyEpoch,
+              unlocked.remoteLayout == expectedConfiguration.remoteLayout,
+              let layout = unlocked.remoteLayout else {
+            throw VaultProvisioningError.cloudRecordMismatch
+        }
+
+        let checkpointObject = try await findObject(
+            token: layout.checkpointToken,
+            containerID: layout.checkpointContainerID
+        )
+        let checkpointURL = temporaryURL(prefix: "recovery-checkpoint")
+        defer { try? FileManager.default.removeItem(at: checkpointURL) }
+        try await objectStore.downloadObject(
+            fileID: checkpointObject.id,
+            to: checkpointURL
+        )
+        _ = try VaultCryptography.open(
+            VaultCheckpoint.self,
+            envelope: Data(contentsOf: checkpointURL, options: .mappedIfSafe),
+            expectedRole: .checkpoint,
+            expectedObjectToken: layout.checkpointToken,
+            rootKey: unlocked.rootKey,
+            vaultID: unlocked.vaultID,
+            keyEpoch: unlocked.keyEpoch
+        )
+
+        if let deviceKey = try await keyStore.loadRootKey(
+            vaultID: unlocked.vaultID
+        ), deviceKey != unlocked.rootKey {
+            throw VaultCloudAccessStoreError.conflictingRecord
+        }
+    }
+
+    /// Authenticates a synchronizable convenience record against the remote
+    /// bootstrap header, checkpoint, complete journal, and any returning-device
+    /// trusted frontier before copying its root key into device-local custody.
+    public func openExistingVault(
+        cloudAccessRecord record: VaultCloudAccessRecord,
+        expectedDriveID: Int
+    ) async throws -> ProviderVaultConfiguration {
+        guard record.driveID == expectedDriveID else {
+            throw VaultProvisioningError.driveMismatch
+        }
+        guard record.formatVersion == VaultFormat.currentVersion else {
+            throw VaultProvisioningError.cloudRecordMismatch
+        }
+
+        let bootstrapURL = temporaryURL(prefix: "cloud-bootstrap-download")
+        defer { try? FileManager.default.removeItem(at: bootstrapURL) }
+        try await objectStore.downloadObject(
+            fileID: record.vaultHeaderFileID,
+            to: bootstrapURL
+        )
+        let header = try VaultBootstrap.inspectHeader(
+            Data(contentsOf: bootstrapURL, options: .mappedIfSafe)
+        )
+        guard header.vaultID == record.vaultID,
+              header.formatVersion == record.formatVersion else {
+            throw VaultProvisioningError.cloudRecordMismatch
+        }
+        guard header.keyEpoch == record.keyEpoch else {
+            throw VaultProvisioningError.keyEpochMismatch
+        }
+
+        let checkpointObject = try await findObject(
+            token: record.remoteLayout.checkpointToken,
+            containerID: record.remoteLayout.checkpointContainerID
+        )
+        let checkpointURL = temporaryURL(prefix: "cloud-checkpoint-download")
+        defer { try? FileManager.default.removeItem(at: checkpointURL) }
+        try await objectStore.downloadObject(
+            fileID: checkpointObject.id,
+            to: checkpointURL
+        )
+        let checkpoint = try VaultCryptography.open(
+            VaultCheckpoint.self,
+            envelope: Data(contentsOf: checkpointURL, options: .mappedIfSafe),
+            expectedRole: .checkpoint,
+            expectedObjectToken: record.remoteLayout.checkpointToken,
+            rootKey: record.rootKey,
+            vaultID: record.vaultID,
+            keyEpoch: record.keyEpoch
+        )
+        let transactions = try await loadJournalTransactions(record: record)
+        let state = try VaultJournalReducer.reduce(
+            transactions,
+            checkpoint: checkpoint
+        )
+
+        let trustedState = try await keyStore.loadTrustedState(
+            vaultID: record.vaultID
+        )
+        if let trustedState, trustedState.keyEpoch != record.keyEpoch {
+            throw VaultProvisioningError.keyEpochMismatch
+        }
+        try VaultRollbackValidator.validate(
+            trustedState: trustedState,
+            currentState: state
+        )
+        if let existingKey = try await keyStore.loadRootKey(vaultID: record.vaultID),
+           existingKey != record.rootKey {
+            throw VaultCloudAccessStoreError.conflictingRecord
+        }
+
+        try await keyStore.saveTrustedState(VaultTrustedState(
+            vaultID: record.vaultID,
+            keyEpoch: record.keyEpoch,
+            frontier: state.frontier,
+            checkpointDigest: try VaultMerkleTree.root(for: transactions)
+        ))
+        try await keyStore.saveRootKey(record.rootKey, vaultID: record.vaultID)
+        return record.vaultConfiguration
+    }
+
     /// Rewraps the existing root key under a fresh recovery secret. This does
     /// not revoke an old recovery kit while an older bootstrap object or server
     /// backup remains reachable; device revocation requires full rekeying.
@@ -359,6 +509,39 @@ public struct VaultProvisioningService: Sendable {
             cursor = page.nextCursor
         } while cursor != nil
         throw VaultProvisioningError.checkpointNotFound
+    }
+
+    private func loadJournalTransactions(
+        record: VaultCloudAccessRecord
+    ) async throws -> [VaultTransaction] {
+        var transactionsByID: [UUID: VaultTransaction] = [:]
+        var cursor: String?
+        repeat {
+            let page = try await objectStore.listObjects(
+                containerID: record.remoteLayout.journalContainerID,
+                cursor: cursor
+            )
+            for object in page.objects {
+                let url = temporaryURL(prefix: "cloud-journal-download")
+                defer { try? FileManager.default.removeItem(at: url) }
+                try await objectStore.downloadObject(fileID: object.id, to: url)
+                let transaction = try VaultFixedTransactionCodec.open(
+                    Data(contentsOf: url, options: .mappedIfSafe),
+                    objectToken: object.token,
+                    rootKey: record.rootKey,
+                    vaultID: record.vaultID,
+                    keyEpoch: record.keyEpoch
+                )
+                guard transactionsByID.updateValue(
+                    transaction,
+                    forKey: transaction.id
+                ) == nil else {
+                    throw VaultJournalError.duplicateTransaction(transaction.id)
+                }
+            }
+            cursor = page.nextCursor
+        } while cursor != nil
+        return Array(transactionsByID.values)
     }
 
     private func temporaryURL(prefix: String) -> URL {
