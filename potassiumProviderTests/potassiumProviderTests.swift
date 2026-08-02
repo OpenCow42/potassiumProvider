@@ -1381,10 +1381,19 @@ struct PotassiumProviderCoreTests {
         #expect(authRejection.recovery == .notAuthenticated)
         #expect(serverRejection.recovery == .serverUnreachable)
         #expect(validationRejection.recovery == .cannotSynchronize)
+        #expect(KDriveRemoteErrorClassifier.isNameCollision(
+            APIClientError.unacceptableStatusCode(409, body: "Conflict")
+        ))
+        #expect(KDriveRemoteErrorClassifier.isNameCollision(
+            APIClientError.unacceptableStatusCode(422, body: "A file with this name already exists")
+        ))
+        #expect(!KDriveRemoteErrorClassifier.isNameCollision(
+            APIClientError.unacceptableStatusCode(422, body: "Invalid upload parameters")
+        ))
         #expect(KDriveRemoteErrorClassifier.apiRejection(from: NSError(domain: NSURLErrorDomain, code: -1009)) == nil)
     }
 
-    @Test func kdriveServiceReplacesFileByNameWithVersionConflictStrategy() async throws {
+    @Test func kdriveServiceConditionallyReplacesFileByID() async throws {
         await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.fileUploadResponseData)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
@@ -1400,8 +1409,10 @@ struct PotassiumProviderCoreTests {
 
         let item = try await service.replaceFile(
             driveID: 100,
-            parentID: 7,
-            fileName: "Edited.jpg",
+            fileID: 42,
+            expectedETag: "etag-before",
+            clientToken: "0123456789abcdef0123456789abcdef",
+            contentHash: "sha256:abcd",
             contents: contents,
             lastModifiedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
@@ -1420,12 +1431,16 @@ struct PotassiumProviderCoreTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+        #expect(request.value(forHTTPHeaderField: "If-Match") == "etag-before")
         #expect(query["total_size"] == "4")
-        #expect(query["directory_id"] == "7")
-        #expect(query["file_name"] == "Edited.jpg")
+        #expect(query["with"] == "etag")
+        #expect(query["client_token"] == "0123456789abcdef0123456789abcdef")
+        #expect(query["total_chunk_hash"] == "sha256:abcd")
         #expect(query["last_modified_at"] == "1700000001")
-        #expect(query["conflict"] == "version")
-        #expect(query["file_id"] == nil)
+        #expect(query["file_id"] == "42")
+        #expect(query["directory_id"] == nil)
+        #expect(query["file_name"] == nil)
+        #expect(query["conflict"] == nil)
     }
 
     @Test func kdriveServiceCreatesFileWithVersionConflictStrategy() async throws {
@@ -2050,7 +2065,8 @@ struct PotassiumProviderCoreTests {
         modifiedAt: Date = Date(timeIntervalSince1970: 200),
         updatedAt: Date = Date(timeIntervalSince1970: 300),
         type: String? = "file",
-        mimeType: String? = "text/plain"
+        mimeType: String? = "text/plain",
+        etag: String? = nil
     ) -> KDriveRemoteItem {
         KDriveRemoteItem(
             id: id,
@@ -2064,7 +2080,8 @@ struct PotassiumProviderCoreTests {
             mimeType: mimeType,
             createdAt: Date(timeIntervalSince1970: 100),
             modifiedAt: modifiedAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            etag: etag ?? "etag-\(Int(modifiedAt.timeIntervalSince1970))"
         )
     }
 
@@ -2649,15 +2666,19 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -2673,6 +2694,10 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
     }
 
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
         throw FakeKDriveFileProviderError.unimplemented
     }
 

@@ -411,11 +411,12 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage { throw WorkingSetRemoteMockError.unimplemented }
     func downloadFile(driveID: Int, fileID: Int) async throws -> Data { throw WorkingSetRemoteMockError.unimplemented }
     func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data { throw WorkingSetRemoteMockError.unimplemented }
-    func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?, conflictStrategy: KDriveUploadConflictStrategy) async throws -> KDriveRemoteItem { throw WorkingSetRemoteMockError.unimplemented }
-    func replaceFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem { throw WorkingSetRemoteMockError.unimplemented }
+    func uploadFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?, conflictStrategy: KDriveUploadConflictStrategy, clientToken: String?, contentHash: String?) async throws -> KDriveRemoteItem { throw WorkingSetRemoteMockError.unimplemented }
+    func replaceFile(driveID: Int, fileID: Int, expectedETag: String, clientToken: String, contentHash: String, contents: Data, lastModifiedAt: Date?) async throws -> KDriveRemoteItem { throw WorkingSetRemoteMockError.unimplemented }
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem { throw WorkingSetRemoteMockError.unimplemented }
     func renameItem(driveID: Int, fileID: Int, name: String) async throws { throw WorkingSetRemoteMockError.unimplemented }
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws { throw WorkingSetRemoteMockError.unimplemented }
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws { throw WorkingSetRemoteMockError.unimplemented }
     func trashItem(driveID: Int, fileID: Int) async throws { throw WorkingSetRemoteMockError.unimplemented }
     func deleteTrashedItem(driveID: Int, fileID: Int) async throws { throw WorkingSetRemoteMockError.unimplemented }
 }

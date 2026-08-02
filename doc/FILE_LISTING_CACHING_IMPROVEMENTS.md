@@ -46,16 +46,20 @@ Implemented:
   mutations
 - preserve-both stale content handling through app-group staging plus renamed
   `conflict=rename` upload
-- stale rename, move, trash, and delete blocked before server mutation
+- ETag/`If-Match` conditional replacement by stable `file_id`, with a
+  post-preflight 409/412 converted to a preserve-both conflict copy
+- local-intent rename and move handling, reversible local-intent trash, and
+  stale permanent delete rejected before server mutation
 - explicit `KDriveUploadConflictStrategy` for file uploads
 
 Partially addressed:
 
-- conflict bytes are staged for stale content conflict copies only; there is not
-  yet a durable pending-operation table or automatic staged-byte retry workflow
-- stale destructive/metadata mutations return a platform-compatible
-  `.cannotSynchronize` error with recovery text on this target, rather than a
-  more specific version-unavailable error
+- existing-item bytes are staged before network preflight and retained after
+  failure, with reveal/export recovery for indexed events; there is not yet a
+  provider-owned retry scheduler or complete staged-operation journal
+- stale permanent delete returns File Provider's `.deletionRejected`; the API
+  still exposes no documented conditional ETag primitive for closing the race
+  between delete preflight and accepted deletion
 - snapshot saves now publish immutable generations atomically and retain the
   active generation plus two predecessors for stable item/change paging
 

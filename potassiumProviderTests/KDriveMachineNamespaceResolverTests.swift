@@ -253,15 +253,19 @@ private actor MachineNamespaceRemote: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw MachineNamespaceRemoteError.unimplemented
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -278,6 +282,10 @@ private actor MachineNamespaceRemote: KDriveFileProviding {
         destinationParentID: Int,
         name: String?
     ) async throws {
+        throw MachineNamespaceRemoteError.unimplemented
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
         throw MachineNamespaceRemoteError.unimplemented
     }
 

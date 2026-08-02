@@ -42,8 +42,11 @@ data.
   to potassiumChannel service calls and visible kDrive endpoints.
 - [Mutations](doc/MUTATIONS.md): create, upload, replace, rename, move, trash,
   delete, server-authoritative returns, and later reconciliation.
+- [Conflict Resolution Truth Table And Safety Register](doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md):
+  mission-critical audited decisions, data-loss and soft-lock findings, user
+  recovery limits, and the mandatory maintenance procedure.
 - [Conflicts](doc/CONFLICTS.md): conflict cases, current resolution behavior,
-  risks, and safer future direction.
+  design context, risks, and safer future direction.
 - [File Provider Cleanup](doc/FILE_PROVIDER_CLEANUP.md): local development
   uninstall script, reset modes, stale registration repair, and safety boundary.
 - [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md): schemes,
@@ -139,8 +142,20 @@ local Xcode requires a more specific variant.
 
 - Do not commit bearer tokens, refresh tokens, account identifiers, private
   links, or user data.
-- The current conflict handling delegates many decisions to kDrive. Read
-  [Conflicts](doc/CONFLICTS.md) before relying on it for important files.
+- Conflict handling is mission-critical. Read the
+  [Conflict Resolution Truth Table And Safety Register](doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md)
+  before relying on the provider for important files. Any change to conflict
+  detection, mutation ordering, server conflict policy, retry/error behavior,
+  or user recovery must update that file in the same change; a stale table is a
+  release-blocking data-safety defect.
+- The current conflict handling still delegates some decisions to kDrive. Read
+  [Conflicts](doc/CONFLICTS.md) for the broader design context.
+- File creates stage bytes before their first network send. Existing-file
+  content uploads use kDrive ETags with `If-Match`, stage local bytes before
+  preflight, and preserve stale/raced edits as visible renamed copies unless
+  File Provider explicitly requests fail-on-conflict. Combined
+  move/rename/content/trash callbacks are applied in order; unapplied metadata
+  is returned as still pending.
 - SQLite snapshots cache metadata only. File contents and thumbnails are not
   stored there.
 - On macOS 15 or later, Desktop & Documents sync is an explicit, experimental

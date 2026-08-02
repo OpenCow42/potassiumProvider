@@ -1255,8 +1255,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/OpenCow42/potassiumChannel.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.0;
+				branch = "codex/kdrive-etag-revisions";
+				kind = branch;
 			};
 		};
 		C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */ = {

@@ -21,7 +21,9 @@ public protocol KDriveFileProviding: KDriveItemMetadataProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem
     func uploadFileOperation(
         driveID: Int,
@@ -29,25 +31,32 @@ public protocol KDriveFileProviding: KDriveItemMetadataProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) throws -> KDriveTransferOperation<KDriveRemoteItem>
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem
     func replaceFileOperation(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) throws -> KDriveTransferOperation<KDriveRemoteItem>
     func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem
     func renameItem(driveID: Int, fileID: Int, name: String) async throws
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws
     func trashItem(driveID: Int, fileID: Int) async throws
     func deleteTrashedItem(driveID: Int, fileID: Int) async throws
 }
@@ -100,7 +109,9 @@ public extension KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
         let progress = Progress(totalUnitCount: Int64(max(contents.count, 1)))
         return KDriveTransferOperation(progress: progress) {
@@ -110,7 +121,9 @@ public extension KDriveFileProviding {
                 fileName: fileName,
                 contents: contents,
                 lastModifiedAt: lastModifiedAt,
-                conflictStrategy: conflictStrategy
+                conflictStrategy: conflictStrategy,
+                clientToken: clientToken,
+                contentHash: contentHash
             )
             progress.completedUnitCount = progress.totalUnitCount
             return item
@@ -119,8 +132,10 @@ public extension KDriveFileProviding {
 
     func replaceFileOperation(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
@@ -128,8 +143,10 @@ public extension KDriveFileProviding {
         return KDriveTransferOperation(progress: progress) {
             let item = try await replaceFile(
                 driveID: driveID,
-                parentID: parentID,
-                fileName: fileName,
+                fileID: fileID,
+                expectedETag: expectedETag,
+                clientToken: clientToken,
+                contentHash: contentHash,
                 contents: contents,
                 lastModifiedAt: lastModifiedAt
             )
@@ -140,6 +157,7 @@ public extension KDriveFileProviding {
 }
 
 public enum KDriveUploadConflictStrategy: String, Sendable {
+    case error
     case version
     case rename
 }
@@ -188,7 +206,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
         try await performNetworkOperation("item") {
-            try await service.getFile(driveId: driveID, fileId: fileID).data.remoteItem
+            try await service.getFile(driveId: driveID, fileId: fileID, with: "etag").data.remoteItem
         }
     }
 
@@ -197,6 +215,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             let response = try await service.listDirectoryFiles(
                 driveId: driveID,
                 fileId: folderID,
+                with: "etag",
                 options: ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
             )
             return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
@@ -248,6 +267,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         try await performNetworkOperation("listTrash") {
             let response = try await service.listTrashFiles(
                 driveId: driveID,
+                with: "etag",
                 options: ListKDriveTrashOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
             )
             return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
@@ -256,10 +276,10 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
         try await performNetworkOperation("listWorkingSetRelevantItems") {
-            let latest = try await service.listLastModifiedFiles(driveId: driveID, limit: latestLimit).data
-            let favorites = try await service.listFavoriteFiles(driveId: driveID, limit: latestLimit).data
-            let myShared = try await service.listMySharedFiles(driveId: driveID, limit: latestLimit).data
-            let sharedWithMe = try await service.listSharedWithMeFiles(driveId: driveID, limit: latestLimit).data
+            let latest = try await service.listLastModifiedFiles(driveId: driveID, with: "etag", limit: latestLimit).data
+            let favorites = try await service.listFavoriteFiles(driveId: driveID, with: "etag", limit: latestLimit).data
+            let myShared = try await service.listMySharedFiles(driveId: driveID, with: "etag", limit: latestLimit).data
+            let sharedWithMe = try await service.listSharedWithMeFiles(driveId: driveID, with: "etag", limit: latestLimit).data
             var itemsByID: [Int: KDriveRemoteItem] = [:]
             for item in latest + favorites + myShared + sharedWithMe {
                 itemsByID[item.id] = item.remoteItem
@@ -280,6 +300,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         return try await performNetworkOperation("listPartialActivities") {
             let response = try await service.listPartialFileActivities(
                 driveId: driveID,
+                with: "file,file.etag",
                 options: ListKDrivePartialFileActivitiesOptions(
                     actions: [
                         "file_create", "file_delete", "file_trash", "file_restore",
@@ -339,7 +360,9 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String? = nil,
+        contentHash: String? = nil
     ) async throws -> KDriveRemoteItem {
         try await uploadFileOperation(
             driveID: driveID,
@@ -347,7 +370,9 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             fileName: fileName,
             contents: contents,
             lastModifiedAt: lastModifiedAt,
-            conflictStrategy: conflictStrategy
+            conflictStrategy: conflictStrategy,
+            clientToken: clientToken,
+            contentHash: contentHash
         ).value
     }
 
@@ -357,16 +382,21 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String? = nil,
+        contentHash: String? = nil
     ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
         let operation = try service.uploadFile(
             driveId: driveID,
             data: contents,
             options: UploadKDriveFileOptions(
+                with: "etag",
+                clientToken: clientToken,
                 conflict: conflictStrategy.rawValue,
                 directoryId: parentID,
                 fileName: fileName,
-                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
+                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp),
+                totalChunkHash: contentHash
             )
         )
         return KDriveTransferOperation(
@@ -382,15 +412,19 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
         try await replaceFileOperation(
             driveID: driveID,
-            parentID: parentID,
-            fileName: fileName,
+            fileID: fileID,
+            expectedETag: expectedETag,
+            clientToken: clientToken,
+            contentHash: contentHash,
             contents: contents,
             lastModifiedAt: lastModifiedAt
         ).value
@@ -398,8 +432,10 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func replaceFileOperation(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
@@ -407,10 +443,12 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             driveId: driveID,
             data: contents,
             options: UploadKDriveFileOptions(
-                conflict: KDriveUploadConflictStrategy.version.rawValue,
-                directoryId: parentID,
-                fileName: fileName,
-                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp)
+                with: "etag",
+                ifMatch: expectedETag,
+                clientToken: clientToken,
+                fileId: fileID,
+                lastModifiedAt: lastModifiedAt.map(Self.unixTimestamp),
+                totalChunkHash: contentHash
             )
         )
         return KDriveTransferOperation(
@@ -447,6 +485,16 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                 fileId: fileID,
                 destinationDirectoryId: destinationParentID,
                 options: MoveKDriveFileOptions(conflict: "rename", name: name)
+            )
+        }
+    }
+
+    public func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
+        _ = try await performNetworkOperation("updateModificationDate") {
+            try await service.updateFileLastModified(
+                driveId: driveID,
+                fileId: fileID,
+                lastModifiedAt: Self.unixTimestamp(date)
             )
         }
     }
@@ -511,7 +559,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                     try await service.getFileShareLink(driveId: driveID, fileId: fileID).data
                 )
             }
-        } catch APIClientError.unacceptableStatusCode(let statusCode, _) where statusCode == 404 {
+        } catch APIClientError.unacceptableStatusCode(let statusCode, _, _) where statusCode == 404 {
             return nil
         }
     }
@@ -700,7 +748,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
 public enum KDriveRemoteErrorClassifier {
     public static func apiRejection(from error: Error) -> KDriveRemoteAPIRejection? {
-        guard case let APIClientError.unacceptableStatusCode(statusCode, body) = error else {
+        guard case let APIClientError.unacceptableStatusCode(statusCode, body, _) = error else {
             return nil
         }
 
@@ -708,12 +756,40 @@ public enum KDriveRemoteErrorClassifier {
     }
 
     public static func isInvalidCursor(_ error: Error) -> Bool {
-        guard case let APIClientError.unacceptableStatusCode(_, body) = error else {
+        guard case let APIClientError.unacceptableStatusCode(_, body, _) = error else {
             return false
         }
 
         let lowercasedBody = body.lowercased()
         return lowercasedBody.contains("invalid") && lowercasedBody.contains("cursor")
+    }
+
+    /// Infomaniak documents `If-Match` support for uploads but does not specify
+    /// one exclusive rejection status. Accept both standard conflict responses.
+    public static func isConditionalConflict(_ error: Error) -> Bool {
+        guard let rejection = apiRejection(from: error) else { return false }
+        return rejection.statusCode == 409 || rejection.statusCode == 412
+    }
+
+    public static func isNotFound(_ error: Error) -> Bool {
+        apiRejection(from: error)?.statusCode == 404
+    }
+
+    public static func isNameCollision(_ error: Error) -> Bool {
+        guard let rejection = apiRejection(from: error) else {
+            return false
+        }
+        // A conflict response is unambiguous in the create/rename call sites
+        // that use this classifier. Do not make safe automatic renaming depend
+        // on the server returning a particular localized response body.
+        if rejection.statusCode == 409 {
+            return true
+        }
+        guard rejection.statusCode == 422 else { return false }
+        let body = rejection.responseBody.lowercased()
+        return body.contains("collision")
+            || body.contains("already exists")
+            || body.contains("name")
     }
 }
 
@@ -801,7 +877,9 @@ extension KDriveFileItem {
             isFavorite: isFavorite,
             createdAt: createdAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
             modifiedAt: Date(timeIntervalSince1970: TimeInterval(lastModifiedAt)),
-            updatedAt: Date(timeIntervalSince1970: TimeInterval(updatedAt))
+            revisedAt: revisedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            updatedAt: Date(timeIntervalSince1970: TimeInterval(updatedAt)),
+            etag: etag
         )
     }
 }
