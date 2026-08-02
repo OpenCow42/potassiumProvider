@@ -53,6 +53,43 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
+    func testEncryptedVaultWarningRequiresFiveSecondWait() throws {
+        let app = launchSetupFixture()
+        openSetup(in: app)
+        app.buttons["setup.account.ui-account"].tap()
+        app.buttons["account.drive.20"].tap()
+
+        let createVault = app.buttons["drive.createEncryptedVault"]
+        XCTAssertTrue(createVault.waitForExistence(timeout: 5))
+        XCTAssertTrue(createVault.isEnabled)
+        createVault.tap()
+
+        XCTAssertTrue(
+            text(containing: "complete and unrecoverable data loss", in: app)
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(
+            text(containing: "you are entirely on your own", in: app).exists
+        )
+
+        let continueButton = app.buttons["vault.unsupportedRiskContinue"]
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(continueButton.isEnabled)
+        XCTAssertTrue(
+            app.staticTexts["vault.unsupportedRiskCountdown"].exists
+        )
+
+        let enabledAfterDelay = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"),
+            object: continueButton
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [enabledAfterDelay], timeout: 7),
+            .completed
+        )
+    }
+
+    @MainActor
     func testConfiguredDrivePresentsRemovalConfirmation() throws {
         let app = launchSetupFixture()
         openSetup(in: app)

@@ -101,7 +101,8 @@ enum ProviderUITestFixture {
             initialDrivesByAccountIdentifier: [
                 account.accountIdentifier: [configuredDrive, availableDrive],
             ],
-            initialDomains: [configuration]
+            initialDomains: [configuration],
+            encryptedVaultsEnabled: true
         )
         if fixtureName == "setup-error-banner" {
             model.errorMessage = "Could not refresh kDrive details."

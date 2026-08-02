@@ -148,6 +148,8 @@ local Xcode requires a more specific variant.
   links, or user data.
 - Encrypted vaults are experimental and disabled by default pending independent
   cryptographic review. The feature flag is not a production-readiness claim.
+- Creation starts with a mandatory unsupported-feature and complete-data-loss
+  warning whose continuation remains disabled for five seconds.
 - Encrypted-vault onboarding always requires a verified offline recovery kit.
   Optional iCloud Keychain access is a separately gated convenience: it can
   open a vault on another trusted Apple device, but it does not replace offline

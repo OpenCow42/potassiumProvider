@@ -251,11 +251,15 @@ token or expiration, so reconnecting may be required when it stops working.
 ## Encrypted vault domains
 
 When the security-review feature flag is enabled, drive management offers
-Create Encrypted Vault and Open Existing Vault. Creation shows a one-time text
-and QR recovery kit and requires exact confirmation before saving the device
-key or registering the domain. Existing plaintext domains remain separately
-registered migration sources. Normal removal/logout retains vault keys; the
-separate Forget Key workflow requires the matching recovery kit.
+Create Encrypted Vault and Open Existing Vault. Before creation performs any
+remote preparation, it displays a mandatory warning that the unsupported
+experimental feature may cause complete, unrecoverable data loss and that the
+user proceeds entirely on their own. The acknowledgement button remains
+disabled for five seconds. Creation then shows a one-time text and QR recovery
+kit and requires exact confirmation before saving the device key or registering
+the domain. Existing plaintext domains remain separately registered migration
+sources. Normal removal/logout retains vault keys; the separate Forget Key
+workflow requires the matching recovery kit.
 
 Creation is a guided flow: threat-boundary overview, device-only versus optional
 iCloud Keychain custody, recovery confirmation, durable registration,

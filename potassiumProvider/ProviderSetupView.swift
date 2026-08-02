@@ -1182,6 +1182,10 @@ private struct EncryptedVaultSetupFlow: View {
     @State private var confirmation = ""
     @State private var useICloudKeychain = false
     @State private var didRunKnownFolderPreflight = false
+    @State private var riskWarningSecondsRemaining = Int(
+        PotassiumProviderAppModel.encryptedVaultRiskWarningDelaySeconds
+    )
+    @State private var isPreparingVault = false
 
     var body: some View {
         NavigationStack {
@@ -1201,17 +1205,72 @@ private struct EncryptedVaultSetupFlow: View {
                             dismiss()
                         }
                     }
+                    .disabled(isPreparingVault)
                 }
                 confirmationToolbar
             }
         }
         .interactiveDismissDisabled(model.vaultSetupStep != .complete)
         .frame(minWidth: 520, minHeight: 620)
+        .task(id: model.vaultSetupStep) {
+            guard model.vaultSetupStep == .unsupportedRiskWarning else {
+                return
+            }
+            riskWarningSecondsRemaining = Int(
+                PotassiumProviderAppModel.encryptedVaultRiskWarningDelaySeconds
+            )
+            while riskWarningSecondsRemaining > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+                riskWarningSecondsRemaining -= 1
+            }
+        }
     }
 
     @ViewBuilder
     private var setupContent: some View {
         switch model.vaultSetupStep {
+        case .unsupportedRiskWarning:
+            Section("Unsupported Experimental Feature") {
+                Label(
+                    "Complete Data Loss Is Possible",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.headline)
+                .foregroundStyle(.red)
+
+                Text(
+                    "Using this experimental encrypted-vault feature may result in complete and unrecoverable data loss."
+                )
+                Text(
+                    "This feature is not supported by OpenCow, Infomaniak, Apple, OpenAI, or anyone else. No person or organization can promise recovery or provide support if it fails."
+                )
+                Text("If you decide to continue, you are entirely on your own.")
+                    .fontWeight(.semibold)
+            }
+            .accessibilityIdentifier("vault.unsupportedRiskWarning")
+
+            Section {
+                if isPreparingVault {
+                    HStack {
+                        ProgressView()
+                        Text("Preparing the encrypted vault…")
+                    }
+                } else if riskWarningSecondsRemaining > 0 {
+                    Text(
+                        "Continue is available in \(riskWarningSecondsRemaining) second\(riskWarningSecondsRemaining == 1 ? "" : "s")."
+                    )
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("vault.unsupportedRiskCountdown")
+                } else {
+                    Text("You may continue only if you accept this risk without support.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
         case .overview:
             Section("End-to-End Encryption") {
                 Label(
@@ -1400,6 +1459,16 @@ private struct EncryptedVaultSetupFlow: View {
     private var confirmationToolbar: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
             switch model.vaultSetupStep {
+            case .unsupportedRiskWarning:
+                Button("I Understand — Continue") {
+                    isPreparingVault = true
+                    Task {
+                        await model.acceptEncryptedVaultRiskAndPrepare()
+                        isPreparingVault = false
+                    }
+                }
+                .disabled(riskWarningSecondsRemaining > 0 || isPreparingVault)
+                .accessibilityIdentifier("vault.unsupportedRiskContinue")
             case .overview:
                 Button("Continue") { model.setVaultSetupStep(.keyAccess) }
             case .keyAccess:
@@ -1431,6 +1500,8 @@ private struct EncryptedVaultSetupFlow: View {
 
     private var navigationTitle: String {
         switch model.vaultSetupStep {
+        case .unsupportedRiskWarning:
+            "Unsupported — Data Loss Risk"
         case .overview:
             "Encrypted Vault"
         case .keyAccess:

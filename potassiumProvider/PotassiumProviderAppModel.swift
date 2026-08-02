@@ -24,6 +24,7 @@ enum ProviderDriveAction: Equatable, Sendable {
 @MainActor
 final class PotassiumProviderAppModel: ObservableObject {
     private static let log = ProviderLog.app
+    static let encryptedVaultRiskWarningDelaySeconds: TimeInterval = 5
 
     @Published private(set) var accounts: [ProviderAccount] = []
     @Published private(set) var drivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:]
@@ -73,8 +74,11 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let vaultUserPresenceAuthorizer: any VaultUserPresenceAuthorizing
     private let vaultUXDefaults: UserDefaults
     private let computerNameProvider: @Sendable () throws -> String
+    private let currentDate: () -> Date
     private var pendingVaultAccountIdentifier: String?
+    private var pendingVaultDriveID: Int?
     private var pendingVaultDriveName: String?
+    private var vaultRiskWarningStartedAt: Date?
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
     private var fileProviderDomainChangeCancellable: AnyCancellable?
 
@@ -105,7 +109,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         encryptedVaultICloudKeychainEnabled: Bool = UserDefaults.standard.bool(
             forKey: ProviderConstants.encryptedVaultICloudKeychainFeatureFlag
         ),
-        computerNameProvider: @escaping @Sendable () throws -> String = { try KDriveMachineNamespaceName.current() }
+        computerNameProvider: @escaping @Sendable () throws -> String = { try KDriveMachineNamespaceName.current() },
+        currentDate: @escaping () -> Date = Date.init
     ) {
         self.accountStore = accountStore ?? Self.makeDefaultAccountStore()
         self.domainStore = domainStore ?? Self.makeDefaultDomainStore()
@@ -138,6 +143,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.encryptedVaultICloudKeychainEnabled =
             encryptedVaultICloudKeychainEnabled
         self.computerNameProvider = computerNameProvider
+        self.currentDate = currentDate
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
         domains = initialDomains
@@ -503,9 +509,9 @@ final class PotassiumProviderAppModel: ObservableObject {
         await addDomain(accountIdentifier: accountIdentifier)
     }
 
-    /// Creates the randomized remote vault and exposes its one-time recovery
-    /// kit in memory. No domain is registered and no key is committed to the
-    /// Keychain until `confirmEncryptedVault` succeeds.
+    /// Begins encrypted-vault onboarding without creating remote objects. The
+    /// unsupported-feature warning must remain visible for the configured delay
+    /// before `acceptEncryptedVaultRiskAndPrepare` can prepare the vault.
     func prepareEncryptedVault(
         accountIdentifier: String,
         drive: KDriveDriveSummary
@@ -515,29 +521,56 @@ final class PotassiumProviderAppModel: ObservableObject {
             statusMessage = nil
             return
         }
-        guard pendingVaultProvisioning == nil else {
+        guard pendingVaultProvisioning == nil, vaultSetupStep == nil else {
             errorMessage = "Finish or cancel the current vault setup first."
             return
         }
-        let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: drive.id)
+        pendingVaultAccountIdentifier = accountIdentifier
+        pendingVaultDriveID = drive.id
+        pendingVaultDriveName = drive.name
+        vaultRiskWarningStartedAt = currentDate()
+        vaultSetupStep = .unsupportedRiskWarning
+        vaultSetupOutcome = VaultSetupOutcome()
+        errorMessage = nil
+        statusMessage = "Read and acknowledge the unsupported encrypted-vault data-loss warning."
+    }
+
+    /// Creates the randomized remote vault only after the mandatory warning
+    /// delay. No domain is registered and no key is committed to the Keychain
+    /// until `confirmEncryptedVault` succeeds.
+    func acceptEncryptedVaultRiskAndPrepare() async {
+        guard vaultSetupStep == .unsupportedRiskWarning,
+              let warningStartedAt = vaultRiskWarningStartedAt,
+              currentDate().timeIntervalSince(warningStartedAt)
+                >= Self.encryptedVaultRiskWarningDelaySeconds else {
+            errorMessage = "Wait five seconds before continuing with this unsupported feature."
+            return
+        }
+        guard let accountIdentifier = pendingVaultAccountIdentifier,
+              let driveID = pendingVaultDriveID,
+              pendingVaultDriveName != nil else {
+            errorMessage = "There is no pending encrypted vault setup."
+            return
+        }
+        let key = ProviderDriveKey(accountIdentifier: accountIdentifier, driveID: driveID)
         guard beginDriveAction(.addingToFiles, for: key) else { return }
         defer { endDriveAction(for: key) }
 
         do {
             let token = try await usableToken(accountIdentifier: accountIdentifier)
             let service = VaultProvisioningService(
-                objectStore: objectStoreFactory(drive.id, token.accessToken),
+                objectStore: objectStoreFactory(driveID, token.accessToken),
                 keyStore: vaultKeyStore
             )
-            let pending = try await service.prepareNewVault(driveID: drive.id)
-            pendingVaultAccountIdentifier = accountIdentifier
-            pendingVaultDriveName = drive.name
+            let pending = try await service.prepareNewVault(driveID: driveID)
             pendingVaultProvisioning = pending
+            vaultRiskWarningStartedAt = nil
             vaultSetupStep = .overview
             vaultSetupOutcome = VaultSetupOutcome()
             errorMessage = nil
             statusMessage = "Review encrypted-vault protection before saving the recovery kit."
         } catch {
+            vaultSetupStep = .unsupportedRiskWarning
             errorMessage = "Could not prepare the encrypted vault: \(error.localizedDescription)"
             statusMessage = nil
         }
@@ -1526,7 +1559,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     private func clearPendingVault() {
         pendingVaultProvisioning = nil
         pendingVaultAccountIdentifier = nil
+        pendingVaultDriveID = nil
         pendingVaultDriveName = nil
+        vaultRiskWarningStartedAt = nil
     }
 
     private func advanceVaultSetupAfterRegistration(

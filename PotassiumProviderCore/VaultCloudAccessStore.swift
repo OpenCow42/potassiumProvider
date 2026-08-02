@@ -255,6 +255,7 @@ public enum VaultLocalKeyStatus: Equatable, Sendable {
 }
 
 public enum VaultSetupStep: String, Codable, Equatable, Sendable {
+    case unsupportedRiskWarning
     case overview
     case keyAccess
     case recoveryKit

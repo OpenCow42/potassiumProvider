@@ -133,6 +133,7 @@ struct VaultUXAppModelTests {
         )
         let keyStore = InMemoryVaultKeyStore()
         let objectStore = InMemoryOpaqueObjectStore()
+        var currentDate = Date(timeIntervalSince1970: 1_000)
         let model = PotassiumProviderAppModel(
             accountStore: ProviderAccountFileStore(
                 directoryURL: directory.appendingPathComponent("Accounts")
@@ -158,13 +159,32 @@ struct VaultUXAppModelTests {
                 suiteName: "VaultUXAppModelTests.\(UUID().uuidString)"
             ),
             encryptedVaultsEnabled: true,
-            encryptedVaultICloudKeychainEnabled: true
+            encryptedVaultICloudKeychainEnabled: true,
+            currentDate: { currentDate }
         )
 
         await model.prepareEncryptedVault(
             accountIdentifier: account.accountIdentifier,
             drive: drive
         )
+        #expect(model.vaultSetupStep == .unsupportedRiskWarning)
+        #expect(model.pendingVaultProvisioning == nil)
+        #expect(await objectStore.allTokens().isEmpty)
+
+        await model.acceptEncryptedVaultRiskAndPrepare()
+        #expect(model.vaultSetupStep == .unsupportedRiskWarning)
+        #expect(model.pendingVaultProvisioning == nil)
+        #expect(model.errorMessage?.contains("Wait five seconds") == true)
+        #expect(await objectStore.allTokens().isEmpty)
+
+        currentDate.addTimeInterval(4.999)
+        await model.acceptEncryptedVaultRiskAndPrepare()
+        #expect(model.vaultSetupStep == .unsupportedRiskWarning)
+        #expect(model.pendingVaultProvisioning == nil)
+        #expect(await objectStore.allTokens().isEmpty)
+
+        currentDate.addTimeInterval(0.001)
+        await model.acceptEncryptedVaultRiskAndPrepare()
         #expect(model.vaultSetupStep == .overview)
         let pending = try #require(model.pendingVaultProvisioning)
         #expect(
