@@ -209,7 +209,8 @@ stale writer does not overwrite newer cache state.
 - `serverCursor`: kDrive advanced listing cursor for normal folders
 - `isFullyEnumerated`: whether all pages have been fetched
 - `usesAdvancedListing`: whether this snapshot came from advanced listing
-- `items`: cached `KDriveRemoteItem` metadata
+- `items`: cached `KDriveRemoteItem` metadata, including nullable ETag and
+  `revisedAt`; older rows without ETags fail closed until refreshed
 
 ## Item Version Mapping
 

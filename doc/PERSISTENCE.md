@@ -86,8 +86,8 @@ Listing snapshots use three active tables:
 - commit timestamp
 
 `snapshot_generation_items` stores the ordered item metadata for a particular
-generation, including nullable `isFavorite` state. Its primary key is domain,
-container, generation, and item ID.
+generation, including nullable `isFavorite`, `revisedAt`, and authoritative
+ETag state. Its primary key is domain, container, generation, and item ID.
 
 The active generation and its two predecessors are retained. That keeps item
 and change page tokens stable while a newer snapshot commits, while deliberately
@@ -98,9 +98,10 @@ Initialization transactionally moves each legacy container into generation 1
 and deletes the migrated legacy rows without changing the working-set, conflict,
 or activity tables:
 
-Before that migration, initialization adds nullable `isFavorite` columns to
-both legacy and generation item tables when upgrading an older database.
-Existing rows remain `NULL`, preserving backward compatibility.
+Before that migration, initialization adds nullable `isFavorite`, `revisedAt`,
+and `etag` columns to both legacy and generation item tables when upgrading an
+older database. Existing rows remain `NULL`, preserving backward compatibility
+and causing version checks to fail closed until those items are refreshed.
 
 `container_snapshots`:
 
@@ -129,7 +130,9 @@ Existing rows remain `NULL`, preserving backward compatibility.
 - nullable `isFavorite`
 - `createdAt`
 - `modifiedAt`
+- nullable `revisedAt`
 - `itemUpdatedAt`
+- nullable `etag`
 
 New writes use only the generation tables. Domain cleanup removes both legacy
 and generation rows.
@@ -227,7 +230,8 @@ SQLite caches metadata needed to enumerate and diff containers:
 - type/status
 - size and MIME type
 - nullable kDrive favorite state
-- timestamps used for File Provider versions
+- ETag and revision timestamps used for authoritative File Provider content
+  versions
 - advanced-listing cursor state
 - whether the container has been fully enumerated
 - conflict/audit metadata needed by the app's Activities tab

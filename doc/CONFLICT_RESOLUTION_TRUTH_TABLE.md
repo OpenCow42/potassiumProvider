@@ -24,9 +24,13 @@ audited truth table takes precedence and the inconsistency must be corrected.
   - iOS Simulator app build passed on iPhone 17 / iOS 26.5 with code signing
     disabled
   - generic visionOS app build passed with code signing disabled
-  - Full macOS unit run: conflict/version/recovery tests passed; three existing
-    snapshot-store tests were flaky under parallel execution and the full
-    scheme UI runner could not finish because the host disk was full
+  - The first GitHub macOS run exposed that snapshot persistence omitted the
+    new ETag/revision fields; the schema, migration, and round-trip regression
+    have been updated. macOS `build-for-testing` passed against merged
+    `potassiumChannel` revision `81014d3`; the GitHub test rerun was pending at
+    this audit commit.
+  - The local full-scheme UI runner could not finish because the host disk was
+    full; focused tests avoid that environment-specific runner failure.
 - Live kDrive collision validation: not performed; server-dependent behavior is
   identified explicitly below
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
@@ -47,6 +51,8 @@ The table is derived from these implementation boundaries:
   compares base versions and selects mutation or conflict-copy behavior.
 - [`KDriveVersionConflictResolver`](../PotassiumProviderCore/KDriveModels.swift)
   defines content and metadata equality.
+- [`KDriveSnapshotSQLiteStore`](../PotassiumProviderCore/SQLiteSnapshotStore.swift)
+  persists ETags and revisions across cached enumeration and process restarts.
 - [`PotassiumKDriveService`](../PotassiumProviderCore/KDriveRemoteService.swift)
   selects kDrive conflict flags and constructs requests.
 - [`FileProviderRuntime`](../potassiumProviderFileProvider/FileProviderRuntime.swift)
@@ -147,7 +153,7 @@ pending and are never falsely acknowledged.
 | `CR-001` | Critical | Combined `changedFields` were mutually exclusive and falsely reported complete. | The implementation now applies move/rename, content/date, and trash in order and returns unsupported fields pending. End-to-end extension callback coverage is still required. | **Mitigated** |
 | `CR-002` | High | Existing-item mutations had a fetch-then-mutate race. | Content now uses ETag/`If-Match`; permanent delete still lacks a documented conditional server primitive. | **Mitigated** |
 | `CR-003` | High | Content replacement addressed latest parent/name instead of stable ID. | Replacement now uses `file_id`, authoritative ETag, and `If-Match`; conditional races preserve both. | **Resolved** |
-| `CR-004` | High | Content versions used only `modifiedAt`. | Versions now contain stable item ID plus ETag; legacy/missing ETags fail closed. | **Resolved** |
+| `CR-004` | High | Content versions used only `modifiedAt`, and the first ETag implementation did not persist ETags through SQLite snapshot round trips. | Versions now contain stable item ID plus ETag; snapshot schemas and in-place migrations retain ETag/revision metadata; legacy/missing ETags fail closed. | **Resolved** |
 | `CR-005` | High | Latest lookup happened before staging. | Bytes now stage first, but a preflight failure may leave an unindexed recovery copy because parent metadata is unavailable. | **Mitigated** |
 | `CR-006` | High | Contents+trash ignored the new bytes. | Content is replaced/preserved before trash; conflict item and original are both trashed when required. | **Resolved** |
 | `CR-007` | Medium | Failed uploads stranded private staged bytes. | Indexed failures have Activities reveal/export and deterministic replay; provider-owned scheduling and Retry Now remain absent. | **Mitigated** |

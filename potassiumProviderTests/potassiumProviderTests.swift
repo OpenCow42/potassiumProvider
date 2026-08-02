@@ -228,7 +228,12 @@ struct PotassiumProviderCoreTests {
             serverCursor: "root-cursor",
             isFullyEnumerated: true,
             usesAdvancedListing: true,
-            items: [makeItem(id: 1, name: "Root.txt")]
+            items: [makeItem(
+                id: 1,
+                name: "Root.txt",
+                revisedAt: Date(timeIntervalSince1970: 250),
+                etag: "root-etag"
+            )]
         )
         let trashSnapshot = KDriveSnapshot(anchor: "trash-anchor", items: [makeItem(id: 2, name: "Trash.txt")])
 
@@ -247,6 +252,37 @@ struct PotassiumProviderCoreTests {
 
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
+    }
+
+    @Test func snapshotStoreMigratesMissingRemoteVersionColumns() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+
+        // Create the complete pre-migration table set, then model a database
+        // written by the previous provider version before ETag persistence.
+        _ = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        do {
+            let database = try Connection(databaseURL.path)
+            try database.execute("ALTER TABLE snapshot_items DROP COLUMN revisedAt")
+            try database.execute("ALTER TABLE snapshot_items DROP COLUMN etag")
+            try database.execute("ALTER TABLE snapshot_generation_items DROP COLUMN revisedAt")
+            try database.execute("ALTER TABLE snapshot_generation_items DROP COLUMN etag")
+        }
+
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        let snapshot = KDriveSnapshot(
+            anchor: "migrated-anchor",
+            items: [makeItem(
+                id: 9,
+                name: "Migrated.txt",
+                revisedAt: Date(timeIntervalSince1970: 275),
+                etag: "migrated-etag"
+            )]
+        )
+        try await store.save(snapshot, domainIdentifier: "domain-1", containerIdentifier: "root")
+
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "root") == snapshot)
     }
 
     @Test func snapshotStoreReportsDomainStatistics() async throws {
@@ -2063,6 +2099,7 @@ struct PotassiumProviderCoreTests {
         name: String,
         parentID: Int = ProviderConstants.defaultRootFileID,
         modifiedAt: Date = Date(timeIntervalSince1970: 200),
+        revisedAt: Date? = nil,
         updatedAt: Date = Date(timeIntervalSince1970: 300),
         type: String? = "file",
         mimeType: String? = "text/plain",
@@ -2080,6 +2117,7 @@ struct PotassiumProviderCoreTests {
             mimeType: mimeType,
             createdAt: Date(timeIntervalSince1970: 100),
             modifiedAt: modifiedAt,
+            revisedAt: revisedAt,
             updatedAt: updatedAt,
             etag: etag ?? "etag-\(Int(modifiedAt.timeIntervalSince1970))"
         )

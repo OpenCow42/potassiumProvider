@@ -14,7 +14,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         let database = try Connection(databaseURL.path)
         try Self.configure(database)
         try Self.createTables(on: database)
-        try Self.migrateFavoriteMetadata(on: database)
+        try Self.migrateItemMetadataColumns(on: database)
         try Self.migrateLegacySnapshots(on: database)
         self.database = database
     }
@@ -865,7 +865,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             table.column(Schema.isFavorite)
             table.column(Schema.createdAt)
             table.column(Schema.modifiedAt)
+            table.column(Schema.revisedAt)
             table.column(Schema.itemUpdatedAt)
+            table.column(Schema.etag)
             table.primaryKey(Schema.domainIdentifier, Schema.containerIdentifier, Schema.itemID)
         })
 
@@ -909,7 +911,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             table.column(GenerationSchema.isFavorite)
             table.column(GenerationSchema.createdAt)
             table.column(GenerationSchema.modifiedAt)
+            table.column(GenerationSchema.revisedAt)
             table.column(GenerationSchema.itemUpdatedAt)
+            table.column(GenerationSchema.etag)
             table.primaryKey(
                 GenerationSchema.domainIdentifier,
                 GenerationSchema.containerIdentifier,
@@ -952,12 +956,24 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         })
     }
 
-    private static func migrateFavoriteMetadata(on database: Connection) throws {
+    private static func migrateItemMetadataColumns(on database: Connection) throws {
         if try tableHasColumn("isFavorite", table: "snapshot_items", database: database) == false {
             try database.run(Schema.snapshotItems.addColumn(Schema.isFavorite))
         }
+        if try tableHasColumn("revisedAt", table: "snapshot_items", database: database) == false {
+            try database.run(Schema.snapshotItems.addColumn(Schema.revisedAt))
+        }
+        if try tableHasColumn("etag", table: "snapshot_items", database: database) == false {
+            try database.run(Schema.snapshotItems.addColumn(Schema.etag))
+        }
         if try tableHasColumn("isFavorite", table: "snapshot_generation_items", database: database) == false {
             try database.run(GenerationSchema.items.addColumn(GenerationSchema.isFavorite))
+        }
+        if try tableHasColumn("revisedAt", table: "snapshot_generation_items", database: database) == false {
+            try database.run(GenerationSchema.items.addColumn(GenerationSchema.revisedAt))
+        }
+        if try tableHasColumn("etag", table: "snapshot_generation_items", database: database) == false {
+            try database.run(GenerationSchema.items.addColumn(GenerationSchema.etag))
         }
     }
 
@@ -1080,7 +1096,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             Schema.isFavorite <- item.isFavorite,
             Schema.createdAt <- item.createdAt?.timeIntervalSince1970,
             Schema.modifiedAt <- item.modifiedAt.timeIntervalSince1970,
+            Schema.revisedAt <- item.revisedAt?.timeIntervalSince1970,
             Schema.itemUpdatedAt <- item.updatedAt.timeIntervalSince1970,
+            Schema.etag <- item.etag,
         ]
     }
 
@@ -1108,7 +1126,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             GenerationSchema.isFavorite <- item.isFavorite,
             GenerationSchema.createdAt <- item.createdAt?.timeIntervalSince1970,
             GenerationSchema.modifiedAt <- item.modifiedAt.timeIntervalSince1970,
+            GenerationSchema.revisedAt <- item.revisedAt?.timeIntervalSince1970,
             GenerationSchema.itemUpdatedAt <- item.updatedAt.timeIntervalSince1970,
+            GenerationSchema.etag <- item.etag,
         ]
     }
 
@@ -1126,7 +1146,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             isFavorite: row[Schema.isFavorite],
             createdAt: row[Schema.createdAt].map { Date(timeIntervalSince1970: $0) },
             modifiedAt: Date(timeIntervalSince1970: row[Schema.modifiedAt]),
-            updatedAt: Date(timeIntervalSince1970: row[Schema.itemUpdatedAt])
+            revisedAt: row[Schema.revisedAt].map { Date(timeIntervalSince1970: $0) },
+            updatedAt: Date(timeIntervalSince1970: row[Schema.itemUpdatedAt]),
+            etag: row[Schema.etag]
         )
     }
 
@@ -1144,7 +1166,9 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             isFavorite: row[GenerationSchema.isFavorite],
             createdAt: row[GenerationSchema.createdAt].map { Date(timeIntervalSince1970: $0) },
             modifiedAt: Date(timeIntervalSince1970: row[GenerationSchema.modifiedAt]),
-            updatedAt: Date(timeIntervalSince1970: row[GenerationSchema.itemUpdatedAt])
+            revisedAt: row[GenerationSchema.revisedAt].map { Date(timeIntervalSince1970: $0) },
+            updatedAt: Date(timeIntervalSince1970: row[GenerationSchema.itemUpdatedAt]),
+            etag: row[GenerationSchema.etag]
         )
     }
 
@@ -1267,7 +1291,9 @@ private enum Schema {
     static let isFavorite = Expression<Bool?>("isFavorite")
     static let createdAt = Expression<Double?>("createdAt")
     static let modifiedAt = Expression<Double>("modifiedAt")
+    static let revisedAt = Expression<Double?>("revisedAt")
     static let itemUpdatedAt = Expression<Double>("itemUpdatedAt")
+    static let etag = Expression<String?>("etag")
 }
 
 private enum GenerationSchema {
@@ -1298,7 +1324,9 @@ private enum GenerationSchema {
     static let isFavorite = Expression<Bool?>("isFavorite")
     static let createdAt = Expression<Double?>("createdAt")
     static let modifiedAt = Expression<Double>("modifiedAt")
+    static let revisedAt = Expression<Double?>("revisedAt")
     static let itemUpdatedAt = Expression<Double>("itemUpdatedAt")
+    static let etag = Expression<String?>("etag")
 }
 
 private enum WorkingSetSchema {

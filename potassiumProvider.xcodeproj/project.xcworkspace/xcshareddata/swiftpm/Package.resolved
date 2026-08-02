@@ -6,8 +6,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/OpenCow42/potassiumChannel.git",
       "state" : {
-        "branch" : "codex/kdrive-etag-revisions",
-        "revision" : "1bed1613782e3d0a6f707e3ddc6ebda5e0bddec5"
+        "revision" : "81014d32428b2f367c74c7f1616793c7a5b2ba01"
       }
     },
     {
