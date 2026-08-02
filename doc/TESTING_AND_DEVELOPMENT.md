@@ -35,10 +35,10 @@ Swift package dependencies are resolved by Xcode:
 The app imports split potassiumChannel modules directly. It should not import an
 old monolithic `potassiumChannel` module name.
 
-The project requires the published potassiumChannel 0.2 release line.
-`Package.resolved` must stay locked to the validated 0.2.0 release unless a
-later compatible package version is adopted and the full validation matrix is
-rerun.
+Rate-limit recovery requires potassiumChannel 0.3.0 or later so rejected
+responses preserve safe `Retry-After` metadata. `Package.resolved` must stay
+locked to the validated release and the full validation matrix must be rerun
+when that package pin changes.
 
 ## Commands
 
@@ -129,6 +129,10 @@ Provider release gates remain outside its scope.
 - UI automation uses XCTest.
 - Existing URLProtocol-based tests use shared capture helpers, so the unit suite
   is serialized.
+- Rate-limit tests inject their clock, jitter source, and sleeper. They validate
+  server-directed and fallback delays without real waiting, and use a blocking
+  test sleeper only to prove cancellation interrupts backoff before another
+  request starts.
 - Live network checks should not be part of the default test path.
 
 ## Local State Caveats

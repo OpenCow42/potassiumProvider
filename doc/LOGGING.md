@@ -31,6 +31,13 @@ or file bytes. The service does not currently expose a kDrive request ID, so the
 optional durable `remoteRequestID` field remains empty unless a future typed API
 surface provides one safely.
 
+Rate-limit retries keep the original network correlation ID. Unified logs
+include the retry number, numeric delay in milliseconds, and whether the delay
+came from `Retry-After` or exponential fallback. They never include the raw
+header value or response body. Intermediate throttling is not persisted in the
+Activities database; only terminal exhaustion reaches the existing sanitized
+failure recorder.
+
 ## Durable Activity Data
 
 `KDriveProviderActivityEvent` records the operation, scope, outcome, severity,

@@ -210,6 +210,14 @@ updates late when the containing app and extension are suspended.
 errors to `.serverUnreachable`, preserves Cocoa/File Provider errors, and wraps
 unexpected errors as an XPC reply invalid error.
 
+Read-style kDrive calls retry HTTP 429 responses inside
+`PotassiumKDriveService` before an error reaches a File Provider callback.
+`Retry-After` is preferred and bounded; otherwise the service uses jittered
+exponential backoff for at most three retries. The sleep and any active
+download are cancelled with the callback task. If the budget is exhausted,
+429 maps to `.serverUnreachable`; mutation requests are never automatically
+replayed.
+
 The extension uses the same mapping decision to create a sanitized activity
 diagnostic. File Provider callback behavior stays unchanged: recording failures
 is best-effort, database write errors are sent only to `OSLog`, and the original
@@ -227,3 +235,6 @@ Generic failure activity is recorded at File Provider callback boundaries:
 Cancellations are not recorded as failures. Conflict-specific failures that
 already have `conflict_events` rows, such as stale mutation blocks and failed
 conflict-copy uploads, are not duplicated as generic failure activity.
+Intermediate 429 attempts are unified-log events only. A read that later
+succeeds does not create durable failure activity; exhausted retries create one
+sanitized terminal failure at the existing callback boundary.

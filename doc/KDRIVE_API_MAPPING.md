@@ -52,6 +52,30 @@ It preserves potassiumChannel's live Foundation progress, shared async result,
 and cancellation of the underlying URL session task. Async convenience methods
 remain available for callers that do not need to observe the transfer.
 
+## Rate-Limit Recovery
+
+potassiumChannel preserves the `Retry-After` response field as safe typed
+metadata on rejected HTTP responses. `PotassiumKDriveService` classifies HTTP
+429 as throttling and retries read-style work at the network-operation
+boundary:
+
+- metadata, drive, directory, trash, and working-set reads
+- read-only partial-activity and existence queries, even though those endpoints
+  use POST
+- thumbnails and downloads
+- trashed-item metadata, share-link lookup, and file-version listing
+
+The default budget is three retries after the initial request. A valid
+`Retry-After` delay or HTTP date is capped at 60 seconds and used without
+jitter. Missing or malformed values use 1, 2, and 4 second exponential delays
+with uniform ±20% jitter. Each download retry creates a fresh lazy transfer;
+the returned parent progress and cancellation boundary remain stable.
+
+Upload, create, replace, rename, move, trash, delete, favorite, duplicate,
+restore, share-link mutation, and version-restore requests are never
+automatically replayed. Safe metadata reads surrounding those mutations still
+use the read policy.
+
 ## Listing Options
 
 Legacy directory listing uses:
@@ -110,6 +134,12 @@ Directory create does not currently pass an explicit conflict policy.
 `KDriveRemoteErrorClassifier.isInvalidCursor(...)` detects invalid advanced
 listing cursors from `APIClientError.unacceptableStatusCode` bodies containing
 both "invalid" and "cursor".
+
+`KDriveRemoteErrorClassifier.apiRejection(...)` maps exhausted HTTP 429
+responses to `.serverUnreachable`. Existing mappings remain unchanged: 401 is
+`.notAuthenticated`, quota responses including 507 are `.insufficientQuota`,
+5xx is `.serverUnreachable`, and other API rejections are
+`.cannotSynchronize`.
 
 The partial-activity request is batched at 200 identifiers and uses the last
 durable successful-poll watermark. It includes create, delete, trash, restore,
