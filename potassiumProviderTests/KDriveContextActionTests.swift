@@ -242,19 +242,27 @@ struct KDriveContextActionTests {
             )
             #expect(predicate.contains("fileproviderItems.@count == 1"))
         }
+        let providerExtension = try extensionDictionary(
+            at: repositoryURL.appendingPathComponent("Config/potassiumProviderFileProviderInfo.plist")
+        )
+        #expect(providerExtension["NSExtensionFileProviderSupportsFailingUploadOnConflict"] as? Bool == true)
     }
 
     private func actionDictionaries(at url: URL) throws -> [[String: Any]] {
+        let extensionDictionary = try extensionDictionary(at: url)
+        return try #require(
+            extensionDictionary["NSExtensionFileProviderActions"] as? [[String: Any]]
+        )
+    }
+
+    private func extensionDictionary(at url: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: url)
         let propertyList = try PropertyListSerialization.propertyList(
             from: data,
             format: nil
         )
         let root = try #require(propertyList as? [String: Any])
-        let extensionDictionary = try #require(root["NSExtension"] as? [String: Any])
-        return try #require(
-            extensionDictionary["NSExtensionFileProviderActions"] as? [[String: Any]]
-        )
+        return try #require(root["NSExtension"] as? [String: Any])
     }
 
     private func actionIdentifier(_ dictionary: [String: Any]) -> String? {

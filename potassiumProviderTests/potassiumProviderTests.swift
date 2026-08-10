@@ -228,7 +228,12 @@ struct PotassiumProviderCoreTests {
             serverCursor: "root-cursor",
             isFullyEnumerated: true,
             usesAdvancedListing: true,
-            items: [makeItem(id: 1, name: "Root.txt")]
+            items: [makeItem(
+                id: 1,
+                name: "Root.txt",
+                revisedAt: Date(timeIntervalSince1970: 250),
+                etag: "root-etag"
+            )]
         )
         let trashSnapshot = KDriveSnapshot(anchor: "trash-anchor", items: [makeItem(id: 2, name: "Trash.txt")])
 
@@ -247,6 +252,37 @@ struct PotassiumProviderCoreTests {
 
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "root") == nil)
         #expect(try await store.snapshot(domainIdentifier: "domain/1", containerIdentifier: "trash") == nil)
+    }
+
+    @Test func snapshotStoreMigratesMissingRemoteVersionColumns() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("Snapshots.sqlite3")
+
+        // Create the complete pre-migration table set, then model a database
+        // written by the previous provider version before ETag persistence.
+        _ = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        do {
+            let database = try Connection(databaseURL.path)
+            try database.execute("ALTER TABLE snapshot_items DROP COLUMN revisedAt")
+            try database.execute("ALTER TABLE snapshot_items DROP COLUMN etag")
+            try database.execute("ALTER TABLE snapshot_generation_items DROP COLUMN revisedAt")
+            try database.execute("ALTER TABLE snapshot_generation_items DROP COLUMN etag")
+        }
+
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
+        let snapshot = KDriveSnapshot(
+            anchor: "migrated-anchor",
+            items: [makeItem(
+                id: 9,
+                name: "Migrated.txt",
+                revisedAt: Date(timeIntervalSince1970: 275),
+                etag: "migrated-etag"
+            )]
+        )
+        try await store.save(snapshot, domainIdentifier: "domain-1", containerIdentifier: "root")
+
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "root") == snapshot)
     }
 
     @Test func snapshotStoreReportsDomainStatistics() async throws {
@@ -1381,10 +1417,19 @@ struct PotassiumProviderCoreTests {
         #expect(authRejection.recovery == .notAuthenticated)
         #expect(serverRejection.recovery == .serverUnreachable)
         #expect(validationRejection.recovery == .cannotSynchronize)
+        #expect(KDriveRemoteErrorClassifier.isNameCollision(
+            APIClientError.unacceptableStatusCode(409, body: "Conflict")
+        ))
+        #expect(KDriveRemoteErrorClassifier.isNameCollision(
+            APIClientError.unacceptableStatusCode(422, body: "A file with this name already exists")
+        ))
+        #expect(!KDriveRemoteErrorClassifier.isNameCollision(
+            APIClientError.unacceptableStatusCode(422, body: "Invalid upload parameters")
+        ))
         #expect(KDriveRemoteErrorClassifier.apiRejection(from: NSError(domain: NSURLErrorDomain, code: -1009)) == nil)
     }
 
-    @Test func kdriveServiceReplacesFileByNameWithVersionConflictStrategy() async throws {
+    @Test func kdriveServiceConditionallyReplacesFileByID() async throws {
         await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.fileUploadResponseData)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
@@ -1400,8 +1445,10 @@ struct PotassiumProviderCoreTests {
 
         let item = try await service.replaceFile(
             driveID: 100,
-            parentID: 7,
-            fileName: "Edited.jpg",
+            fileID: 42,
+            expectedETag: "etag-before",
+            clientToken: "0123456789abcdef0123456789abcdef",
+            contentHash: "sha256:abcd",
             contents: contents,
             lastModifiedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
@@ -1420,12 +1467,16 @@ struct PotassiumProviderCoreTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+        #expect(request.value(forHTTPHeaderField: "If-Match") == "etag-before")
         #expect(query["total_size"] == "4")
-        #expect(query["directory_id"] == "7")
-        #expect(query["file_name"] == "Edited.jpg")
+        #expect(query["with"] == "etag")
+        #expect(query["client_token"] == "0123456789abcdef0123456789abcdef")
+        #expect(query["total_chunk_hash"] == "sha256:abcd")
         #expect(query["last_modified_at"] == "1700000001")
-        #expect(query["conflict"] == "version")
-        #expect(query["file_id"] == nil)
+        #expect(query["file_id"] == "42")
+        #expect(query["directory_id"] == nil)
+        #expect(query["file_name"] == nil)
+        #expect(query["conflict"] == nil)
     }
 
     @Test func kdriveServiceCreatesFileWithVersionConflictStrategy() async throws {
@@ -2048,9 +2099,11 @@ struct PotassiumProviderCoreTests {
         name: String,
         parentID: Int = ProviderConstants.defaultRootFileID,
         modifiedAt: Date = Date(timeIntervalSince1970: 200),
+        revisedAt: Date? = nil,
         updatedAt: Date = Date(timeIntervalSince1970: 300),
         type: String? = "file",
-        mimeType: String? = "text/plain"
+        mimeType: String? = "text/plain",
+        etag: String? = nil
     ) -> KDriveRemoteItem {
         KDriveRemoteItem(
             id: id,
@@ -2064,7 +2117,9 @@ struct PotassiumProviderCoreTests {
             mimeType: mimeType,
             createdAt: Date(timeIntervalSince1970: 100),
             modifiedAt: modifiedAt,
-            updatedAt: updatedAt
+            revisedAt: revisedAt,
+            updatedAt: updatedAt,
+            etag: etag ?? "etag-\(Int(modifiedAt.timeIntervalSince1970))"
         )
     }
 
@@ -2649,15 +2704,19 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw FakeKDriveFileProviderError.unimplemented
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -2673,6 +2732,10 @@ private struct FakeKDriveFileProvider: KDriveFileProviding {
     }
 
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
+        throw FakeKDriveFileProviderError.unimplemented
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
         throw FakeKDriveFileProviderError.unimplemented
     }
 

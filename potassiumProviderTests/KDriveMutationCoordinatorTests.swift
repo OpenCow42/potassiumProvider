@@ -1,13 +1,15 @@
 import Foundation
 import Testing
+import PotassiumChannelCore
 import PotassiumProviderCore
 
 @Suite(.serialized)
 struct KDriveMutationCoordinatorTests {
-    @Test func fileCreateUploadsWithVersionConflictStrategy() async throws {
+    @Test func fileCreateUsesCollisionSafeIdempotentUpload() async throws {
         let createdItem = makeItem(id: 101, name: "New.txt")
         let remote = RecordingKDriveFileProvider(uploadResult: createdItem)
-        let coordinator = makeCoordinator(remote: remote)
+        let stager = RecordingConflictStager(directoryURL: temporaryDirectory())
+        let coordinator = makeCoordinator(remote: remote, stager: stager)
         let contents = Data("new file".utf8)
         let lastModifiedAt = Date(timeIntervalSince1970: 500)
 
@@ -26,9 +28,37 @@ struct KDriveMutationCoordinatorTests {
                 fileName: "New.txt",
                 contents: contents,
                 lastModifiedAt: lastModifiedAt,
-                conflictStrategy: .version
+                conflictStrategy: .rename,
+                clientToken: KDriveMutationIdentity.clientToken([
+                    "domain-1", "create", String(Self.parentID), "New.txt",
+                    KDriveMutationIdentity.contentHash(contents),
+                ]),
+                contentHash: KDriveMutationIdentity.contentHash(contents)
             )
         ])
+        let stagedURL = try #require(await stager.stagedURLs().first)
+        #expect(await stager.removedURLs() == [stagedURL])
+        #expect(!FileManager.default.fileExists(atPath: stagedURL.path))
+    }
+
+    @Test func failedFileCreateRetainsStagedBytes() async throws {
+        let remote = RecordingKDriveFileProvider(uploadError: .uploadFailed)
+        let stager = RecordingConflictStager(directoryURL: temporaryDirectory())
+        let coordinator = makeCoordinator(remote: remote, stager: stager)
+        let contents = Data("unsent new file".utf8)
+
+        await #expect(throws: RecordingKDriveError.uploadFailed) {
+            _ = try await coordinator.createFile(
+                parentID: Self.parentID,
+                fileName: "New.txt",
+                contents: contents,
+                lastModifiedAt: nil
+            )
+        }
+
+        let stagedURL = try #require(await stager.stagedURLs().first)
+        #expect(try Data(contentsOf: stagedURL) == contents)
+        #expect(await stager.removedURLs().isEmpty)
     }
 
     @Test func directoryCreateCallsCreateDirectory() async throws {
@@ -72,13 +102,19 @@ struct KDriveMutationCoordinatorTests {
         )
 
         #expect(result == .replaced(replacedItem))
-        #expect(await stager.stagedURLs().isEmpty)
+        let stagedURL = try #require(await stager.stagedURLs().first)
+        #expect(await stager.removedURLs() == [stagedURL])
         #expect(await remote.calls() == [
             .item(driveID: Self.driveID, fileID: Self.fileID),
             .replaceFile(
                 driveID: Self.driveID,
-                parentID: latestItem.parentID,
-                fileName: latestItem.name,
+                fileID: Self.fileID,
+                expectedETag: try #require(latestItem.etag),
+                clientToken: KDriveMutationIdentity.clientToken([
+                    "domain-1", "replace", String(Self.fileID),
+                    try #require(latestItem.etag), KDriveMutationIdentity.contentHash(contents),
+                ]),
+                contentHash: KDriveMutationIdentity.contentHash(contents),
                 contents: contents,
                 lastModifiedAt: lastModifiedAt
             )
@@ -131,7 +167,12 @@ struct KDriveMutationCoordinatorTests {
                 fileName: "Report (conflict - Mac-One.Two - 1970-01-01 00.00.00).pdf",
                 contents: contents,
                 lastModifiedAt: lastModifiedAt,
-                conflictStrategy: .rename
+                conflictStrategy: .rename,
+                clientToken: KDriveMutationIdentity.clientToken([
+                    "domain-1", "conflict-copy", String(Self.fileID),
+                    latestItem.etag ?? "missing-etag", KDriveMutationIdentity.contentHash(contents),
+                ]),
+                contentHash: KDriveMutationIdentity.contentHash(contents)
             )
         ])
 
@@ -157,6 +198,81 @@ struct KDriveMutationCoordinatorTests {
         }
         #expect(resolvedContext.id == startedContext.id)
         #expect(resolvedConflictItem == conflictItem)
+    }
+
+    @Test func failOnConflictRetainsStagedBytesAndDoesNotMutateServer() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Report.txt")
+        let latestItem = makeItem(
+            id: Self.fileID,
+            name: "Report.txt",
+            modifiedAt: Date(timeIntervalSince1970: 260)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem]])
+        let stager = RecordingConflictStager(directoryURL: temporaryDirectory())
+        let coordinator = makeCoordinator(remote: remote, stager: stager)
+        let contents = Data("local edit".utf8)
+
+        do {
+            _ = try await coordinator.replaceContents(
+                itemIdentifier: String(Self.fileID),
+                fileID: Self.fileID,
+                localFilename: "Report.txt",
+                baseContentVersion: baseItem.contentVersion,
+                contents: contents,
+                lastModifiedAt: nil,
+                failOnConflict: true
+            )
+            Issue.record("Expected fail-on-conflict rejection")
+        } catch let error as KDriveMutationConflictError {
+            guard case .localContentConflict(let conflictItem, let stagedURL) = error else {
+                Issue.record("Expected localContentConflict")
+                return
+            }
+            #expect(conflictItem == latestItem)
+            #expect(FileManager.default.fileExists(atPath: stagedURL.path))
+        }
+
+        #expect(await remote.calls() == [.item(driveID: Self.driveID, fileID: Self.fileID)])
+        #expect(await stager.removedURLs().isEmpty)
+    }
+
+    @Test func conditionalReplaceRaceFallsBackToRenamedConflictCopy() async throws {
+        let baseItem = makeItem(id: Self.fileID, name: "Report.txt")
+        let racedItem = makeItem(
+            id: Self.fileID,
+            name: "Report.txt",
+            modifiedAt: Date(timeIntervalSince1970: 260)
+        )
+        let conflictItem = makeItem(id: 303, name: "Report (conflict - Mac-One.Two - 1970-01-01 00.00.00).txt")
+        let remote = RecordingKDriveFileProvider(
+            itemResults: [Self.fileID: [baseItem, racedItem]],
+            uploadResult: conflictItem,
+            replaceStatusCode: 412
+        )
+        let stager = RecordingConflictStager(directoryURL: temporaryDirectory())
+        let coordinator = makeCoordinator(remote: remote, stager: stager)
+        let contents = Data("local edit".utf8)
+
+        let result = try await coordinator.replaceContents(
+            itemIdentifier: String(Self.fileID),
+            fileID: Self.fileID,
+            localFilename: "Report.txt",
+            baseContentVersion: baseItem.contentVersion,
+            contents: contents,
+            lastModifiedAt: nil
+        )
+
+        #expect(result == .conflictCopy(conflictItem))
+        #expect(await remote.calls().map { call in
+            switch call {
+            case .item: return "item"
+            case .replaceFile: return "replace"
+            case .uploadFile: return "upload"
+            default: return "other"
+            }
+        } == ["item", "replace", "item", "upload"])
+        let stagedURL = try #require(await stager.stagedURLs().first)
+        #expect(await stager.removedURLs() == [stagedURL])
     }
 
     @Test func failedConflictUploadLeavesStagedBytesAndPropagatesError() async throws {
@@ -279,27 +395,32 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
-    @Test func staleRenameThrowsStaleVersionAndDoesNotRename() async throws {
+    @Test func concurrentRemoteRenameYieldsToLocalRenameIntent() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
         let latestItem = makeItem(
             id: Self.fileID,
             name: "Remote.txt",
             updatedAt: Date(timeIntervalSince1970: 350)
         )
-        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem]])
+        let renamedItem = makeItem(
+            id: Self.fileID,
+            name: "New.txt",
+            updatedAt: Date(timeIntervalSince1970: 360)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem, renamedItem]])
         let coordinator = makeCoordinator(remote: remote)
 
-        let staleItem = try await expectStaleVersion {
-            _ = try await coordinator.renameItem(
-                fileID: Self.fileID,
-                baseMetadataVersion: baseItem.metadataVersion,
-                name: "New.txt"
-            )
-        }
+        let result = try await coordinator.renameItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            name: "New.txt"
+        )
 
-        #expect(staleItem == latestItem)
+        #expect(result == renamedItem)
         #expect(await remote.calls() == [
-            .item(driveID: Self.driveID, fileID: Self.fileID)
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .renameItem(driveID: Self.driveID, fileID: Self.fileID, name: "New.txt"),
+            .item(driveID: Self.driveID, fileID: Self.fileID),
         ])
     }
 
@@ -418,7 +539,7 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
-    @Test func movedToDestinationWithUnexpectedNameStillBlocksCombinedMoveRename() async throws {
+    @Test func combinedMoveRenameAppliesLocalNameAtDestination() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
         let latestItem = makeItem(
             id: Self.fileID,
@@ -426,21 +547,27 @@ struct KDriveMutationCoordinatorTests {
             parentID: 901,
             updatedAt: Date(timeIntervalSince1970: 350)
         )
-        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem]])
+        let movedItem = makeItem(
+            id: Self.fileID,
+            name: "Moved.txt",
+            parentID: 901,
+            updatedAt: Date(timeIntervalSince1970: 360)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem, movedItem]])
         let coordinator = makeCoordinator(remote: remote)
 
-        let staleItem = try await expectStaleVersion {
-            _ = try await coordinator.moveItem(
-                fileID: Self.fileID,
-                baseMetadataVersion: baseItem.metadataVersion,
-                destinationParentID: 901,
-                name: "Moved.txt"
-            )
-        }
+        let result = try await coordinator.moveItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            destinationParentID: 901,
+            name: "Moved.txt"
+        )
 
-        #expect(staleItem == latestItem)
+        #expect(result == movedItem)
         #expect(await remote.calls() == [
-            .item(driveID: Self.driveID, fileID: Self.fileID)
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .moveItem(driveID: Self.driveID, fileID: Self.fileID, destinationParentID: 901, name: "Moved.txt"),
+            .item(driveID: Self.driveID, fileID: Self.fileID),
         ])
     }
 
@@ -502,7 +629,7 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
-    @Test func staleMoveThrowsStaleVersionAndDoesNotMove() async throws {
+    @Test func concurrentRemoteRenameIsPreservedByMoveOnlyIntent() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Old.txt")
         let latestItem = makeItem(
             id: Self.fileID,
@@ -510,21 +637,27 @@ struct KDriveMutationCoordinatorTests {
             parentID: 902,
             updatedAt: Date(timeIntervalSince1970: 350)
         )
-        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem]])
+        let movedItem = makeItem(
+            id: Self.fileID,
+            name: "Remote.txt",
+            parentID: 901,
+            updatedAt: Date(timeIntervalSince1970: 360)
+        )
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem, movedItem]])
         let coordinator = makeCoordinator(remote: remote)
 
-        let staleItem = try await expectStaleVersion {
-            _ = try await coordinator.moveItem(
-                fileID: Self.fileID,
-                baseMetadataVersion: baseItem.metadataVersion,
-                destinationParentID: 901,
-                name: nil
-            )
-        }
+        let result = try await coordinator.moveItem(
+            fileID: Self.fileID,
+            baseMetadataVersion: baseItem.metadataVersion,
+            destinationParentID: 901,
+            name: nil
+        )
 
-        #expect(staleItem == latestItem)
+        #expect(result == movedItem)
         #expect(await remote.calls() == [
-            .item(driveID: Self.driveID, fileID: Self.fileID)
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .moveItem(driveID: Self.driveID, fileID: Self.fileID, destinationParentID: 901, name: nil),
+            .item(driveID: Self.driveID, fileID: Self.fileID),
         ])
     }
 
@@ -564,7 +697,7 @@ struct KDriveMutationCoordinatorTests {
         ])
     }
 
-    @Test func staleTrashThrowsStaleVersionAndDoesNotTrash() async throws {
+    @Test func trashIntentWinsAfterConcurrentRemoteEdit() async throws {
         let baseItem = makeItem(id: Self.fileID, name: "Report.txt")
         let latestItem = makeItem(
             id: Self.fileID,
@@ -575,13 +708,15 @@ struct KDriveMutationCoordinatorTests {
         let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [latestItem]])
         let coordinator = makeCoordinator(remote: remote)
 
-        let staleItem = try await expectStaleVersion {
-            _ = try await coordinator.trashItem(fileID: Self.fileID, baseVersion: baseVersion(for: baseItem))
-        }
+        let result = try await coordinator.trashItem(
+            fileID: Self.fileID,
+            baseVersion: baseVersion(for: baseItem)
+        )
 
-        #expect(staleItem == latestItem)
+        #expect(result == latestItem)
         #expect(await remote.calls() == [
-            .item(driveID: Self.driveID, fileID: Self.fileID)
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .trashItem(driveID: Self.driveID, fileID: Self.fileID),
         ])
     }
 
@@ -685,7 +820,8 @@ struct KDriveMutationCoordinatorTests {
         modifiedAt: Date = Date(timeIntervalSince1970: 200),
         updatedAt: Date = Date(timeIntervalSince1970: 300),
         type: String? = "file",
-        mimeType: String? = "text/plain"
+        mimeType: String? = "text/plain",
+        etag: String? = nil
     ) -> KDriveRemoteItem {
         KDriveRemoteItem(
             id: id,
@@ -699,7 +835,8 @@ struct KDriveMutationCoordinatorTests {
             mimeType: mimeType,
             createdAt: Date(timeIntervalSince1970: 100),
             modifiedAt: modifiedAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            etag: etag ?? "etag-\(Int(modifiedAt.timeIntervalSince1970))"
         )
     }
 
@@ -719,6 +856,9 @@ struct KDriveMutationCoordinatorTests {
             switch error {
             case .staleVersion(let latestItem):
                 return latestItem
+            case .localContentConflict(let latestItem, _):
+                Issue.record("Expected stale metadata version, received local content conflict")
+                return latestItem
             }
         }
 
@@ -735,12 +875,23 @@ private enum RecordingKDriveCall: Equatable, Sendable {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     )
-    case replaceFile(driveID: Int, parentID: Int, fileName: String, contents: Data, lastModifiedAt: Date?)
+    case replaceFile(
+        driveID: Int,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
+        contents: Data,
+        lastModifiedAt: Date?
+    )
     case createDirectory(driveID: Int, parentID: Int, name: String)
     case renameItem(driveID: Int, fileID: Int, name: String)
     case moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?)
+    case updateModificationDate(driveID: Int, fileID: Int, date: Date)
     case trashItem(driveID: Int, fileID: Int)
     case deleteTrashedItem(driveID: Int, fileID: Int)
 }
@@ -761,6 +912,7 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
     private let uploadResult: KDriveRemoteItem?
     private let uploadError: RecordingKDriveError?
     private let replaceResult: KDriveRemoteItem?
+    private let replaceStatusCode: Int?
     private let directoryResult: KDriveRemoteItem?
     private var recordedCalls: [RecordingKDriveCall] = []
 
@@ -769,12 +921,14 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
         uploadResult: KDriveRemoteItem? = nil,
         uploadError: RecordingKDriveError? = nil,
         replaceResult: KDriveRemoteItem? = nil,
+        replaceStatusCode: Int? = nil,
         directoryResult: KDriveRemoteItem? = nil
     ) {
         self.itemResults = itemResults
         self.uploadResult = uploadResult
         self.uploadError = uploadError
         self.replaceResult = replaceResult
+        self.replaceStatusCode = replaceStatusCode
         self.directoryResult = directoryResult
     }
 
@@ -822,7 +976,9 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         recordedCalls.append(.uploadFile(
             driveID: driveID,
@@ -830,7 +986,9 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
             fileName: fileName,
             contents: contents,
             lastModifiedAt: lastModifiedAt,
-            conflictStrategy: conflictStrategy
+            conflictStrategy: conflictStrategy,
+            clientToken: clientToken,
+            contentHash: contentHash
         ))
         if let uploadError {
             throw uploadError
@@ -843,18 +1001,28 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
         recordedCalls.append(.replaceFile(
             driveID: driveID,
-            parentID: parentID,
-            fileName: fileName,
+            fileID: fileID,
+            expectedETag: expectedETag,
+            clientToken: clientToken,
+            contentHash: contentHash,
             contents: contents,
             lastModifiedAt: lastModifiedAt
         ))
+        if let replaceStatusCode {
+            throw APIClientError.unacceptableStatusCode(
+                replaceStatusCode,
+                body: "conditional upload conflict"
+            )
+        }
         guard let replaceResult else {
             throw RecordingKDriveError.missingReplaceResult
         }
@@ -880,6 +1048,10 @@ private actor RecordingKDriveFileProvider: KDriveFileProviding {
             destinationParentID: destinationParentID,
             name: name
         ))
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
+        recordedCalls.append(.updateModificationDate(driveID: driveID, fileID: fileID, date: date))
     }
 
     func trashItem(driveID: Int, fileID: Int) async throws {

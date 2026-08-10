@@ -399,15 +399,19 @@ private struct KnownFolderLifecycleRemote: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw KnownFolderLifecycleTestError.releaseFailed
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -429,6 +433,10 @@ private struct KnownFolderLifecycleRemote: KDriveFileProviding {
     }
 
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
+        throw KnownFolderLifecycleTestError.releaseFailed
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
         throw KnownFolderLifecycleTestError.releaseFailed
     }
 
