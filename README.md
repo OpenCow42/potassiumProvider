@@ -21,7 +21,7 @@ data.
 
 ## Documentation Index
 
-- [0.3.0 Release Notes](CHANGELOG.md): actionable kDrive behavior, dependency
+- [0.4.0 Release Notes](CHANGELOG.md): actionable kDrive behavior, dependency
   state, validation, and remaining manual release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.

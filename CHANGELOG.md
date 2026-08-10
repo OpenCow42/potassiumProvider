@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.4.0
+
+Released 2026-08-10.
+
+### Added
+
+- Experimental end-to-end encrypted kDrive vault format v2, with opaque
+  File Provider identifiers and ciphertext, deterministic journal replay,
+  authenticated checkpoint padding, offline recovery kits, and optional
+  iCloud Keychain access.
+- Guided encrypted-vault creation and recovery flows with an explicit
+  complete-data-loss warning and a mandatory five-second delay before any
+  activation side effect.
+- A normative conflict-resolution truth table and safety register covering
+  plaintext and encrypted domains, including recovery paths and open gates.
+
+### Changed
+
+- Existing-file uploads now use authoritative kDrive ETags and conditional
+  replacement by stable file ID. Local bytes are staged before network work,
+  and stale or raced edits are preserved as visible conflict copies.
+- Combined File Provider changes now apply move/rename, content/date, and
+  trash operations in deterministic order while returning unsupported fields
+  as still pending.
+- Drive discovery exposes only verified-owned kDrives and fails closed when
+  ownership cannot be determined. Existing configured domains are preserved.
+- Release version is `0.4.0` with build number `5`.
+
+### Fixed
+
+- Persist kDrive ETags and revisions across snapshot migrations and process
+  restarts so conflict checks retain their authoritative content base.
+- Reject stale permanent deletion, surface retained staged copies in
+  Activities, and signal recovery after transient File Provider failures.
+- Prevent encrypted-vault parent cycles, unsafe recursive trash restoration,
+  generated conflict-name collisions, and ABA stale writes during version
+  restoration.
+
+### Dependency state
+
+- potassiumChannel is pinned to immutable revision
+  `81014d32428b2f367c74c7f1616793c7a5b2ba01` for conditional uploads and
+  conflict-aware mutation support.
+
+### Security and release scope
+
+- Encrypted vaults remain disabled by default and are not approved for
+  production use. Independent cryptographic and adversarial synchronization
+  review is still a critical release gate.
+- External history witnessing, safe journal compaction, complete key
+  revocation/rekeying, and safe plaintext-to-vault migration remain open.
+- Live kDrive collision testing was not performed for the conflict-resolution
+  changes; the release relies on unit, integration, and CI coverage described
+  in the safety register.
+
 ## 0.3.0
 
 ### Added
