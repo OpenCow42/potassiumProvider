@@ -19,10 +19,11 @@ below are independently normative for their respective domain type.
 - Merge inputs: encrypted-vault head `a0e0839` and `origin/main` at `f042b7e`.
 - macOS `build-for-testing` and the complete `potassiumProviderTests` target
   passed with signing and indexing disabled.
-- The iOS Simulator app and unit-test bundle built successfully. The local test
-  host did not launch because CoreSimulator's IPC server died, so this audit
-  does not claim a local iOS test pass; the pull-request workflow remains the
-  required clean-runner evidence.
+- The iOS Simulator app and unit-test bundle built successfully. An initial
+  full local run did not launch because CoreSimulator's IPC server died. After
+  CI exposed a probabilistic support-log assertion, the corrected focused test
+  rebuilt and passed locally; the pull-request workflow remains the required
+  full clean-runner evidence.
 - The generic visionOS app build passed with signing and indexing disabled.
 - Live kDrive validation was not performed. Server-dependent findings remain
   open as documented below.

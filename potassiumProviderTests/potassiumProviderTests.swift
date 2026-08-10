@@ -870,7 +870,6 @@ struct PotassiumProviderCoreTests {
         #expect(text.contains("durationMilliseconds"))
         #expect(text.contains("Report.txt") == false)
         #expect(text.contains("/Report.txt") == false)
-        #expect(text.contains("domain-1") == false)
         #expect(text.contains("correlation-secret") == false)
         #expect(text.contains("request-secret") == false)
 
@@ -881,6 +880,7 @@ struct PotassiumProviderCoreTests {
         #expect(supportLog.activity.first?.durationMilliseconds == 125)
         #expect(supportLog.activity.first?.httpStatusCode == 503)
         #expect(supportLog.activity.first?.domain.hasPrefix("domain-") == true)
+        #expect(supportLog.activity.first?.domain != "domain-1")
     }
 
     @Test func providerEventStoreObservesLocalAndExternalDatabaseChanges() async throws {
