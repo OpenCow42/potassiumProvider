@@ -219,6 +219,7 @@ struct ProviderSetupViewTests {
             id: id,
             name: name,
             accountID: 1,
+            ownership: .owned,
             role: role,
             status: isInMaintenance ? "maintenance" : "active",
             isInMaintenance: isInMaintenance

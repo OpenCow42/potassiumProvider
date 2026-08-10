@@ -64,6 +64,7 @@ enum ProviderUITestFixture {
             id: 10,
             name: "Shared Projects",
             accountID: 1,
+            ownership: .owned,
             role: "admin",
             status: "active",
             isInMaintenance: false
@@ -72,6 +73,7 @@ enum ProviderUITestFixture {
             id: 20,
             name: "Archive",
             accountID: 1,
+            ownership: .owned,
             role: "user",
             status: "maintenance",
             isInMaintenance: true
