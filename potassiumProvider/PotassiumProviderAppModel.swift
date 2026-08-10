@@ -446,34 +446,25 @@ final class PotassiumProviderAppModel: ObservableObject {
             errorMessage = nil
 
             let discoveredDrives = try await fileProviderFactory(token.accessToken).listDrives()
-            guard discoveredDrives.contains(where: { $0.ownership == .indeterminate }) == false else {
-                throw KDriveDriveOwnershipError.indeterminate
-            }
-
-            let ownedDrives = discoveredDrives.filter { $0.ownership == .owned }
-            drivesByAccountIdentifier[accountIdentifier] = ownedDrives
+            let usableDrives = discoveredDrives.filter(\.isUsableInternalDrive)
+            drivesByAccountIdentifier[accountIdentifier] = usableDrives
             await refreshVaultAccessState()
             if selectedDriveIDs[accountIdentifier] == nil ||
-                ownedDrives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
-                selectedDriveIDs[accountIdentifier] = ownedDrives.first?.id
+                usableDrives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
+                selectedDriveIDs[accountIdentifier] = usableDrives.first?.id
             }
             refreshDraftFromSelectedDrive(accountIdentifier: accountIdentifier)
-            statusMessage = ownedDrives.isEmpty
-                ? "No owned kDrives found for \(account.displayName)."
-                : "Loaded \(ownedDrives.count) owned kDrive\(ownedDrives.count == 1 ? "" : "s") for \(account.displayName)."
+            statusMessage = usableDrives.isEmpty
+                ? "No usable kDrives found for \(account.displayName)."
+                : "Loaded \(usableDrives.count) usable kDrive\(usableDrives.count == 1 ? "" : "s") for \(account.displayName)."
         } catch {
-            let ownershipIsIndeterminate = error is KDriveDriveOwnershipError
             await recordAppFailure(
                 kind: .driveDiscovery,
-                summary: ownershipIsIndeterminate
-                    ? "Could not verify owned kDrives."
-                    : "Could not load owned kDrives.",
+                summary: "Could not load kDrives.",
                 error: error,
-                category: ownershipIsIndeterminate ? .validation : .api
+                category: .api
             )
-            errorMessage = ownershipIsIndeterminate
-                ? "Could not verify which kDrives are owned by this account. Refresh and try again."
-                : "Could not load owned kDrives. Refresh and try again."
+            errorMessage = "Could not load kDrives. Refresh and try again."
             statusMessage = nil
         }
     }
@@ -2028,8 +2019,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private func canCreateDomain(for drive: KDriveDriveSummary) -> Bool {
-        guard drive.ownership == .owned else {
-            errorMessage = "Only kDrives owned by this account can be added to Files."
+        guard drive.isUsableInternalDrive else {
+            errorMessage = "Only usable internal kDrives can be added to Files."
             statusMessage = nil
             return false
         }

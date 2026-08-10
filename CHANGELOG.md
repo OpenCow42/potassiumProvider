@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Restore OAuth drive discovery by following the official iOS kDrive client:
+  load `GET /2/drive/init` directly and expose drives whose role is neither
+  `none` nor `external`, without requiring `/1/account` authorization.
+
 ## 0.4.0
 
 Released 2026-08-10.

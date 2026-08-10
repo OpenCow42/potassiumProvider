@@ -1,44 +1,24 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// The verified relationship between a discovered kDrive and the connected account.
-public enum KDriveDriveOwnership: String, Codable, Equatable, Sendable {
-    /// The connected account owns the kDrive's Infomaniak account.
-    case owned
-
-    /// The kDrive is accessible to the connected account but is not owned by it.
-    case notOwned
-
-    /// The remote account relationship could not be classified safely.
-    case indeterminate
-}
-
-/// A recoverable failure to establish whether a discovered kDrive is owned.
-public enum KDriveDriveOwnershipError: Error, Equatable, LocalizedError, Sendable {
-    case indeterminate
-
-    public var errorDescription: String? {
-        switch self {
-        case .indeterminate:
-            return "Could not verify kDrive ownership."
-        }
-    }
-}
-
 public struct KDriveDriveSummary: Codable, Equatable, Identifiable, Sendable {
     public let id: Int
     public let name: String
     public let accountID: Int
-    public let ownership: KDriveDriveOwnership
     public let role: String
     public let status: String
     public let isInMaintenance: Bool
+
+    /// Matches the official iOS kDrive eligibility rule for a drive belonging
+    /// to the signed-in user rather than an unavailable or external share.
+    public var isUsableInternalDrive: Bool {
+        role != "none" && role != "external"
+    }
 
     public init(
         id: Int,
         name: String,
         accountID: Int,
-        ownership: KDriveDriveOwnership,
         role: String,
         status: String,
         isInMaintenance: Bool
@@ -46,7 +26,6 @@ public struct KDriveDriveSummary: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.name = name
         self.accountID = accountID
-        self.ownership = ownership
         self.role = role
         self.status = status
         self.isInMaintenance = isInMaintenance

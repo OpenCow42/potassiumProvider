@@ -87,18 +87,18 @@ tokens and expired non-refreshable tokens are skipped silently so the account ca
 be refreshed manually or reconnected without creating repeated setup-page
 errors.
 
-Discovery uses the account's bearer token to load both accessible kDrives and
-the token holder's Infomaniak organization-account relationships. A discovered
-drive is shown only when its `accountId` matches a relationship with type
-`owner`; delegated administrators, members, clients, and shared drives are
-excluded. These remote identifiers and relationships remain transient and are
-never stored in `ProviderAccount` or shown in diagnostics.
+Discovery uses the account's bearer token to call the kDrive
+`GET /2/drive/init?with=drives` endpoint. A discovered drive is usable when its
+role is neither `none` nor `external`, matching the official iOS kDrive client.
+Admin and ordinary internal-user drives are shown; unavailable and external
+shared drives are excluded from new File Provider domains. The app does not
+call the general `/1/account` API or claim that eligibility proves product
+ownership.
 
-An account's drive list is the union of verified-owned remote discovery and
-stored domain configurations. A configured drive therefore remains manageable
-when ownership discovery is unavailable or no longer returns that drive. Its
-detail screen uses the saved drive name and explicitly marks remote details as
-unavailable.
+An account's drive list is the union of usable remote discovery and stored
+domain configurations. A configured drive therefore remains manageable when
+discovery is unavailable or no longer returns that drive. Its detail screen
+uses the saved drive name and explicitly marks remote details as unavailable.
 
 ## Domain Configuration
 
@@ -131,11 +131,10 @@ The add flow is:
 
 1. The user adds an account through OAuth or by saving a manual access token.
 2. The app creates a local account record and saves the token under that account.
-3. The app loads and verifies owned kDrives for that account through
-   `PotassiumKDriveService.listDrives()`. A refresh with indeterminate
-   ownership fails closed and leaves previous discovery and stored domains in
-   place.
-4. The user opens a verified-owned discovered drive and chooses **Add to Files** on its
+3. The app loads kDrives for that account through
+   `PotassiumKDriveService.listDrives()` and keeps drives whose role is neither
+   `none` nor `external`.
+4. The user opens a usable internal drive and chooses **Add to Files** on its
    management screen.
 5. `PotassiumProviderAppModel.addDomain()` creates a
    `ProviderDomainConfiguration` whose display name is derived from the drive

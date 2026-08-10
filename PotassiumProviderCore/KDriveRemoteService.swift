@@ -186,31 +186,20 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func listDrives() async throws -> [KDriveDriveSummary] {
         try await performNetworkOperation("listDrives") {
-            let accountResponse = try await apiClient.send(APIRequest<InfomaniakResponse<[KDriveOrganisationAccount]>>(
-                method: .get,
-                path: "/1/account",
-                queryParameters: [
-                    QueryParameter(name: "with", value: .string("logo")),
-                    QueryParameter(name: "order_by", value: .string("name")),
-                ]
-            ))
-            let relationshipsByAccountID = Dictionary(grouping: accountResponse.data, by: \.id)
-                .mapValues { Set($0.map(\.type)) }
-
-            let response = try await driveClient.send(APIRequest<InfomaniakResponse<KDriveInitPayload>>(
-                method: .get,
-                path: "/2/drive/init",
-                queryParameters: [QueryParameter(name: "with", value: .string("drives"))]
-            ))
+            let response = try await performDriveDiscoveryRequest(
+                endpoint: "/2/drive/init"
+            ) {
+                try await driveClient.send(APIRequest<InfomaniakResponse<KDriveInitPayload>>(
+                    method: .get,
+                    path: "/2/drive/init",
+                    queryParameters: [QueryParameter(name: "with", value: .string("drives"))]
+                ))
+            }
             return response.data.drives.map {
                 KDriveDriveSummary(
                     id: $0.id,
                     name: $0.name,
                     accountID: $0.accountId,
-                    ownership: Self.ownership(
-                        for: $0.accountId,
-                        relationshipsByAccountID: relationshipsByAccountID
-                    ),
                     role: $0.role,
                     status: $0.status ?? "ok",
                     isInMaintenance: $0.inMaintenance ?? false
@@ -734,26 +723,28 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         return components.isEmpty ? "Unknown editor" : components.joined(separator: " ")
     }
 
-    private static func ownership(
-        for driveAccountID: Int,
-        relationshipsByAccountID: [Int: Set<String>]
-    ) -> KDriveDriveOwnership {
-        guard let relationshipTypes = relationshipsByAccountID[driveAccountID] else {
-            return .notOwned
-        }
+    private func performDriveDiscoveryRequest<Value>(
+        endpoint: String,
+        _ work: () async throws -> Value
+    ) async throws -> Value {
+        ProviderLog.network.debug(
+            "drive discovery request endpoint(\(endpoint, privacy: .public))"
+        )
 
-        if relationshipTypes == Set([KDriveOrganisationAccountRelationship.owner.rawValue]) {
-            return .owned
+        do {
+            let value = try await work()
+            ProviderLog.network.info(
+                "drive discovery success endpoint(\(endpoint, privacy: .public))"
+            )
+            return value
+        } catch {
+            let statusCode = KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode
+            let nsError = error as NSError
+            ProviderLog.network.error(
+                "drive discovery failure endpoint(\(endpoint, privacy: .public)) httpStatusCode(\(statusCode ?? 0, privacy: .public)) errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))"
+            )
+            throw error
         }
-
-        let knownNonOwnerTypes = Set(KDriveOrganisationAccountRelationship.allCases
-            .filter { $0 != .owner }
-            .map(\.rawValue))
-        if relationshipTypes.isSubset(of: knownNonOwnerTypes) {
-            return .notOwned
-        }
-
-        return .indeterminate
     }
 
     private func performNetworkOperation<Value>(
@@ -897,18 +888,6 @@ private struct KDriveInitDrive: Decodable, Sendable {
     let role: String
     let status: String?
     let inMaintenance: Bool?
-}
-
-private struct KDriveOrganisationAccount: Decodable, Sendable {
-    let id: Int
-    let type: String
-}
-
-private enum KDriveOrganisationAccountRelationship: String, CaseIterable {
-    case owner
-    case admin
-    case normal
-    case client
 }
 
 extension KDriveFileItem {
