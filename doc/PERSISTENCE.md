@@ -60,6 +60,11 @@ UUID and local display name. Filenames are sanitized from stable configuration
 identifiers. Removing a domain deletes its configuration JSON only after the
 exact registered File Provider domain is removed.
 
+Only legacy plaintext configurations may transition between these locations.
+Encrypted vault trust state is keyed by the current `domainIdentifier`; because
+a placement transition replaces that identifier, encrypted relocation is
+rejected until an atomic trust-state migration is designed and reviewed.
+
 macOS Desktop & Documents activation is not persisted here or in SQLite. The app
 derives it from each registered `NSFileProviderDomain.replicatedKnownFolders`.
 Domain JSON does persist `knownFolderLayout`, which distinguishes the legacy

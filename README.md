@@ -148,11 +148,12 @@ local Xcode requires a more specific variant.
 
 ## External File Provider Storage On macOS
 
-On macOS 15 or later, a kDrive File Provider domain can be placed on this Mac or
-on an eligible external volume. The picker accepts a folder only so the user can
-grant access; the app normalizes that choice to its containing volume, and macOS
-chooses the provider-managed folder on that volume. It is not arbitrary-folder
-sync and the selected folder is not used as a kDrive root.
+On macOS 15 or later, a legacy plaintext kDrive File Provider domain can be
+placed on this Mac or on an eligible external volume. The picker accepts a
+folder only so the user can grant access; the app normalizes that choice to its
+containing volume, and macOS chooses the provider-managed folder on that volume.
+It is not arbitrary-folder sync and the selected folder is not used as a kDrive
+root.
 
 Before registration, the app asks Apple's
 [`checkDomainsCanBeStoredOnVolume(at:)`](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/checkdomainscanbestoredonvolume(at:))
@@ -175,6 +176,12 @@ unsafe removal/logout until the drive is reconnected or the placement is
 repaired. See [App And Domains](doc/APP_AND_DOMAINS.md) and
 [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md) for the lifecycle and
 physical-drive validation matrix.
+
+Encrypted vault domains remain On This Mac. Relocation replaces the File
+Provider domain identifier, which also identifies the vault's trusted local
+rollback state. Until that state can be migrated atomically, the app hides the
+storage control and rejects encrypted relocation before creating a journal or
+mutating a system domain.
 
 ## Safety Notes
 
@@ -210,8 +217,9 @@ physical-drive validation matrix.
   presenting Apple's consent UI, then upload only opaque vault ciphertext.
   A legacy plaintext Potassium owner blocks the encrypted known-folder claim.
   Safe migration and destructive source purge are not implemented.
-- External File Provider storage is experimental and must be validated with a
-  disposable encrypted APFS volume and non-customer data before relying on it.
+- External File Provider storage for legacy plaintext domains is experimental
+  and must be validated with a disposable encrypted APFS volume and
+  non-customer data before relying on it.
 
 ## License
 

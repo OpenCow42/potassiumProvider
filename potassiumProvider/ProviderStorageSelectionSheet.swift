@@ -19,7 +19,7 @@ enum ProviderStorageSelectionPurpose {
     var explanation: String {
         switch self {
         case .add:
-            "Choose where macOS stores this File Provider domain and its local files."
+            "Choose where macOS stores this legacy plaintext File Provider domain and its local files."
         case .move(_, let currentStorageLocation):
             "Currently stored on \(currentStorageLocation.userFacingTitle). Choose a new location."
         }

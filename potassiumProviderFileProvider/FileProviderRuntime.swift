@@ -223,6 +223,11 @@ struct FileProviderRuntime: Sendable {
             FileProviderLog.runtime.error("unsupported experimental encrypted vault v1 for domain(\(domain.identifier.rawValue, privacy: .public)); returning cannotSynchronize")
             throw NSFileProviderError(.cannotSynchronize)
         }
+        if case .externalVolume = configuration.storageLocation,
+           configuration.supportsStorageRelocation == false {
+            FileProviderLog.runtime.error("unsupported encrypted-vault external placement for domain(\(domain.identifier.rawValue, privacy: .public)); returning cannotSynchronize")
+            throw NSFileProviderError(.cannotSynchronize)
+        }
     }
 
     static func markMachineNamespaceLayout(domain: NSFileProviderDomain) async throws {

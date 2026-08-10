@@ -8,6 +8,34 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct PotassiumProviderAppModelExternalStorageLifecycleTests {
+    @Test func encryptedVaultStorageRelocationFailsClosedBeforeSideEffects() async throws {
+        let context = try await makeContext(
+            knownFolderState: .inactive,
+            encryptionMode: .opaqueVaultV2
+        )
+        defer { try? FileManager.default.removeItem(at: context.directoryURL) }
+        let storedConfigurationBeforeMove = try #require(try await context.domainStore.configuration(
+            configurationIdentifier: context.sourceConfiguration.configurationIdentifier
+        ))
+
+        await context.model.moveDomain(
+            context.sourceConfiguration,
+            toExternalVolume: context.externalVolume
+        )
+
+        #expect(try await context.domainStore.configuration(
+            configurationIdentifier: context.sourceConfiguration.configurationIdentifier
+        ) == storedConfigurationBeforeMove)
+        #expect(context.registrar.events.isEmpty)
+        #expect(try await context.journalStore.journal(
+            configurationIdentifier: context.sourceConfiguration.configurationIdentifier
+        ) == nil)
+        #expect(await context.snapshotStore.removedDomainIdentifiers.isEmpty)
+        #expect(await context.eventStore.removedDomainIdentifiers.isEmpty)
+        #expect(context.model.statusMessage == nil)
+        #expect(context.model.errorMessage?.contains("rollback witness") == true)
+    }
+
     @Test func movingInternalDomainToExternalStoragePreservesIdentityAndClearsOldState() async throws {
         let context = try await makeContext(knownFolderState: .inactive)
         defer { try? FileManager.default.removeItem(at: context.directoryURL) }
@@ -204,6 +232,7 @@ struct PotassiumProviderAppModelExternalStorageLifecycleTests {
 
     private func makeContext(
         knownFolderState: ProviderKnownFolderSyncState,
+        encryptionMode: ProviderEncryptionMode = .legacyPlaintext,
         failExternalRegistration: Bool = false,
         failKnownFolderClaim: Bool = false
     ) async throws -> ExternalStorageLifecycleContext {
@@ -236,6 +265,7 @@ struct PotassiumProviderAppModelExternalStorageLifecycleTests {
             driveID: 42,
             driveName: "Test Drive",
             rootFileID: 1,
+            encryptionMode: encryptionMode,
             storageLocation: .onThisMac,
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 1)
@@ -639,15 +669,19 @@ private struct ExternalStorageLifecycleRemote: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw ExternalStorageLifecycleTestError.unexpectedRemoteCall
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -668,6 +702,10 @@ private struct ExternalStorageLifecycleRemote: KDriveFileProviding {
         destinationParentID: Int,
         name: String?
     ) async throws {
+        throw ExternalStorageLifecycleTestError.unexpectedRemoteCall
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
         throw ExternalStorageLifecycleTestError.unexpectedRemoteCall
     }
 

@@ -84,6 +84,12 @@ in the app group/keychain on the Mac. A selected folder is normalized to its
 containing volume before the app asks Apple to create the system-managed domain;
 no arbitrary user folder becomes part of the provider architecture.
 
+Placement changes are limited to legacy plaintext configurations. Encrypted
+vault local trust and rollback state is keyed by `domainIdentifier`, while a
+placement change necessarily creates a replacement identifier. The UI, app
+model, and extension reject that combination until the trust state has a
+reviewed atomic migration design.
+
 ## Runtime Flow
 
 At runtime, the extension constructs a `FileProviderRuntime` for each callback.
@@ -94,11 +100,12 @@ runtime uses the resulting configuration's `accountIdentifier` to load and
 refresh the correct OAuth token from keychain when needed, creates a
 `PotassiumKDriveService`, and opens the SQLite snapshot store.
 
-Changing placement is explicitly transactional at the application level rather
-than an in-place mutation: stabilize, release known folders when active, prepare
-the target, remove the source while preserving dirty data, save/register the
-target, clean old domain-keyed rows, and reclaim known folders. The durable
-`DomainRelocations` journal is the recovery boundary across crashes and relaunch.
+Changing eligible plaintext placement is explicitly transactional at the
+application level rather than an in-place mutation: stabilize, release known
+folders when active, prepare the target, remove the source while preserving
+dirty data, save/register the target, clean old domain-keyed rows, and reclaim
+known folders. The durable `DomainRelocations` journal is the recovery boundary
+across crashes and relaunch.
 
 Neither extension keeps a long-lived process-level sync engine. Each File
 Provider callback or contextual panel loads account-scoped runtime state,

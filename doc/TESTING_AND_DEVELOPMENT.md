@@ -155,6 +155,13 @@ removal or logout cannot continue after a release failure.
 
 ## External Storage Validation
 
+The supported matrix is intentionally limited to legacy plaintext domains.
+Regression tests must continue proving that encrypted vault relocation returns
+before journal creation, domain preparation/removal, or local-state cleanup.
+Do not extend the physical matrix to encrypted vaults until their domain-keyed
+rollback witness can be migrated atomically and the conflict safety register is
+updated after independent review.
+
 Unit tests use injected File Provider and volume services to cover exact prepared
 domain identity, generated identifiers, opaque binding validation, eligibility
 reason mapping, folder-to-volume normalization, balanced security-scoped access,
@@ -167,10 +174,11 @@ test data. Start with `scripts/uninstall-file-provider.sh --dry-run`, and record
 the selected volume UUID and the current generated domain ID without recording
 account or credential data.
 
-1. Add the same test kDrive On This Mac, remove it, then add it to an encrypted
-   APFS external drive. Select a nested folder in the picker and confirm the UI
-   reports the containing volume—not the folder—as storage. Confirm Finder shows
-   the domain and materialization is physically backed by that volume.
+1. Add the same test kDrive as a legacy plaintext domain On This Mac, remove it,
+   then add it to an encrypted APFS external drive. Select a nested folder in
+   the picker and confirm the UI reports the containing volume—not the folder—as
+   storage. Confirm Finder shows the domain and materialization is physically
+   backed by that volume.
 2. Try representative ineligible targets: unencrypted APFS, non-APFS, read-only,
    and network storage. When practical also verify quarantined/unknown results.
    Confirm the sheet reports Apple's specific reason and registration remains

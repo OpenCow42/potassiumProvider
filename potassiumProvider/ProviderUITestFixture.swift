@@ -102,6 +102,9 @@ enum ProviderUITestFixture {
                 account.accountIdentifier: [configuredDrive, availableDrive],
             ],
             initialDomains: [configuration],
+            initialPlacementStatesByConfigurationIdentifier: [
+                configuration.configurationIdentifier: .connected,
+            ],
             encryptedVaultsEnabled: true
         )
         if fixtureName == "setup-error-banner" {

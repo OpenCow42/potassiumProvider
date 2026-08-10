@@ -201,6 +201,13 @@ public enum ProviderDomainStorageLocation: Codable, Equatable, Sendable {
 public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sendable {
     public var id: String { configurationIdentifier }
 
+    /// Storage relocation replaces the system domain identifier. Encrypted
+    /// vault state uses that identifier as part of its local rollback witness,
+    /// so it must not be relocated until that state can be migrated atomically.
+    public var supportsStorageRelocation: Bool {
+        encryptionMode == .legacyPlaintext
+    }
+
     public let configurationIdentifier: String
     public var domainIdentifier: String
     public var accountIdentifier: String

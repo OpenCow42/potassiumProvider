@@ -607,18 +607,19 @@ private struct ProviderDriveManagementView: View {
                 .accessibilityIdentifier("drive.refresh")
             }
         }
-        .confirmationDialog(
+        .alert(
             "Remove \(descriptor?.name ?? "this drive") from Files?",
-            isPresented: $isRemovalConfirmationPresented,
-            titleVisibility: .visible
+            isPresented: $isRemovalConfirmationPresented
         ) {
             Button("Remove from Files", role: .destructive) {
                 guard let configuration = descriptor?.configuration else { return }
                 Task { await model.removeDomain(configuration) }
             }
+            .accessibilityIdentifier("drive.confirmRemoval")
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the File Provider domain, cached snapshots, activities, conflicts, and other provider-local state. Remote kDrive files are not deleted.")
+                .accessibilityIdentifier("drive.removalWarning")
         }
         .sheet(isPresented: vaultSetupBinding) {
             EncryptedVaultSetupFlow(model: model)
@@ -948,7 +949,9 @@ private struct ProviderDriveManagementView: View {
             #if os(macOS)
             if let configuration = descriptor.configuration,
                configuration.encryptionMode != .opaqueVaultV1 {
-                storageSection(configuration)
+                if configuration.supportsStorageRelocation {
+                    storageSection(configuration)
+                }
                 knownFolderSection(configuration)
             }
             #endif
@@ -971,6 +974,7 @@ private struct ProviderDriveManagementView: View {
                 }
             }
         }
+        .accessibilityIdentifier("drive.management")
     }
 
     @ViewBuilder

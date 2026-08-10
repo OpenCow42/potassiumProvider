@@ -172,6 +172,13 @@ relocation journals become repair states instead of silent replacement domains.
 
 ## External Volume Storage On macOS 15 Or Later
 
+External placement currently supports legacy plaintext domains only. Encrypted
+vault v1 and v2 configurations fail closed before relocation begins. A move
+replaces `domainIdentifier`, but encrypted vault rollback state is keyed by that
+identifier; treating the replacement as a new local witness could accept remote
+history hidden from the original domain. Setup therefore omits Change Storage
+for encrypted vaults, and the app model and extension enforce the same boundary.
+
 External placement is volume selection, not folder selection. The open panel
 accepts any folder so macOS can grant security-scoped access, but the app resolves
 the containing volume root before inspection and registration. Apple's File
@@ -203,8 +210,8 @@ Provider operation.
 
 ## Changing Storage And Recovery
 
-File Provider has no in-place domain move operation, so Change Storage is a
-remove-and-recreate transition:
+For eligible legacy plaintext domains, File Provider has no in-place domain move
+operation, so Change Storage is a remove-and-recreate transition:
 
 1. Record the source, target, and known-folder state in a relocation journal,
    then wait for the source domain to stabilize.

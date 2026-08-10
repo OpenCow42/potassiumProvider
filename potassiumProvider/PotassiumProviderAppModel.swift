@@ -115,6 +115,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         initialAccounts: [ProviderAccount] = [],
         initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
         initialDomains: [ProviderDomainConfiguration] = [],
+        initialPlacementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState] = [:],
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) },
         objectStoreFactory: @escaping (Int, String) -> any KDriveObjectStoreProviding = {
             PotassiumKDriveObjectStore(driveID: $0, bearerToken: $1)
@@ -172,6 +173,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
         domains = initialDomains
+        placementStatesByConfigurationIdentifier = initialPlacementStatesByConfigurationIdentifier
         isReloadingStoredState = automaticallyReloadStoredState
         statusMessage = initialAccounts.isEmpty
             ? "No accounts connected."
@@ -1232,6 +1234,12 @@ final class PotassiumProviderAppModel: ObservableObject {
         _ configuration: ProviderDomainConfiguration,
         toExternalVolume externalVolume: ProviderExternalVolume?
     ) async {
+        guard configuration.supportsStorageRelocation else {
+            errorMessage = PotassiumProviderAppModelError.unsupportedStorageRelocation.localizedDescription
+            statusMessage = nil
+            return
+        }
+
         let targetStorageLocation: ProviderDomainStorageLocation
         if let externalVolume {
             guard case .eligible = externalVolume.eligibility else {
@@ -1283,6 +1291,12 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func repairDomain(_ configuration: ProviderDomainConfiguration) async {
+        guard configuration.supportsStorageRelocation else {
+            errorMessage = PotassiumProviderAppModelError.unsupportedStorageRelocation.localizedDescription
+            statusMessage = nil
+            return
+        }
+
         guard domainTransitionConfigurationIdentifiers.insert(configuration.configurationIdentifier).inserted else {
             return
         }
@@ -1922,6 +1936,10 @@ final class PotassiumProviderAppModel: ObservableObject {
         targetStorageLocation: ProviderDomainStorageLocation,
         targetVolumeURL: URL?
     ) async throws {
+        guard sourceConfiguration.supportsStorageRelocation else {
+            throw PotassiumProviderAppModelError.unsupportedStorageRelocation
+        }
+
         try await refreshKnownFolderSyncStates()
         let knownFoldersWereActive: Bool
         switch knownFolderSyncState(for: sourceConfiguration) {
@@ -2337,6 +2355,10 @@ final class PotassiumProviderAppModel: ObservableObject {
         targetStorageLocation: ProviderDomainStorageLocation,
         targetVolumeURL: URL?
     ) throws -> ProviderPreparedDomain {
+        guard sourceConfiguration.supportsStorageRelocation else {
+            throw PotassiumProviderAppModelError.unsupportedStorageRelocation
+        }
+
         let target: ProviderDomainPreparationTarget
         switch targetStorageLocation {
         case .onThisMac:
@@ -3006,6 +3028,7 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
     case externalVolumeUnavailable
     case externalVolumeIdentityMismatch
     case registeredTargetMissing
+    case unsupportedStorageRelocation
     case storageMoveAndRecoveryFailed(move: String, recovery: String)
 
     var errorDescription: String? {
@@ -3022,6 +3045,8 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
             return "The selected drive changed while File Provider was preparing it."
         case .registeredTargetMissing:
             return "The replacement File Provider domain is no longer registered."
+        case .unsupportedStorageRelocation:
+            return "Encrypted vault storage cannot be moved because changing the File Provider domain identity would discard its local rollback witness."
         case .storageMoveAndRecoveryFailed(let move, let recovery):
             return "The storage move failed (\(move)) and the original placement could not be recovered (\(recovery))."
         }

@@ -12,6 +12,12 @@ initializer. `volumeURL` is the normalized volume root. It tells File Provider
 which volume should hold the system-managed domain; it does not select a folder
 inside that volume and does not map an arbitrary local folder into kDrive.
 
+This path is available only to legacy plaintext domains. Encrypted vault local
+rollback state is keyed by the current domain identifier, and external placement
+or relocation would replace that identifier. The UI does not offer the move,
+the app model rejects it before writing a relocation journal, and runtime loading
+rejects a persisted encrypted/external combination with `.cannotSynchronize`.
+
 The app first calls
 [`NSFileProviderManager.checkDomainsCanBeStoredOnVolume(at:)`](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/checkdomainscanbestoredonvolume(at:)).
 Eligible targets are writable, local, encrypted APFS volumes. The implementation
@@ -42,6 +48,7 @@ Most callbacks begin by loading `FileProviderRuntime`:
 1. Load the domain configuration from app group JSON. Local domains resolve by
    current domain identifier; external domains resolve by the stable opaque
    configuration binding and verify the generated domain ID and volume UUID.
+   Reject unsupported encrypted-vault external placement.
 2. Load the account-scoped OAuth token from keychain using the domain
    configuration's `accountIdentifier`.
 3. Refresh that account's token when needed and possible.
