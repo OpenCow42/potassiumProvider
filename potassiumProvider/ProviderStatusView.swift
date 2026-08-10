@@ -85,20 +85,25 @@ struct ProviderStatusView: View {
             accounts: appModel.accounts,
             domains: appModel.domains,
             drivesByAccountIdentifier: appModel.drivesByAccountIdentifier,
-            loadingDriveAccountIdentifiers: appModel.loadingDriveAccountIdentifiers
+            loadingDriveAccountIdentifiers: appModel.loadingDriveAccountIdentifiers,
+            placementStatesByConfigurationIdentifier: appModel.placementStatesByConfigurationIdentifier
         )
     }
 
     private var statusRefreshID: String {
         var parts: [String] = []
         parts.append(appModel.accounts.map { "\($0.accountIdentifier):\($0.displayName):\($0.authenticationKind.rawValue)" }.joined(separator: ","))
-        parts.append(appModel.domains.map { "\($0.domainIdentifier):\($0.accountIdentifier):\($0.driveID):\($0.displayName):\($0.driveName)" }.joined(separator: ","))
+        parts.append(appModel.domains.map { "\($0.configurationIdentifier):\($0.domainIdentifier):\($0.accountIdentifier):\($0.driveID):\($0.displayName):\($0.driveName)" }.joined(separator: ","))
         parts.append(appModel.loadingDriveAccountIdentifiers.sorted().joined(separator: ","))
         parts.append(appModel.drivesByAccountIdentifier.keys.sorted().map { accountIdentifier in
             let drives = appModel.drivesByAccountIdentifier[accountIdentifier, default: []]
                 .map { "\($0.id):\($0.name):\($0.role):\($0.status):\($0.isInMaintenance)" }
                 .joined(separator: ",")
             return "\(accountIdentifier)=\(drives)"
+        }.joined(separator: "|"))
+        parts.append(appModel.placementStatesByConfigurationIdentifier.keys.sorted().map { configurationIdentifier in
+            let state = appModel.placementStatesByConfigurationIdentifier[configurationIdentifier] ?? .registering
+            return "\(configurationIdentifier)=\(state.statusRefreshIdentifier)"
         }.joined(separator: "|"))
         return parts.joined(separator: "#")
     }
@@ -200,6 +205,21 @@ struct ProviderStatusInput: Equatable {
     let domains: [ProviderDomainConfiguration]
     let drivesByAccountIdentifier: [String: [KDriveDriveSummary]]
     let loadingDriveAccountIdentifiers: Set<String>
+    let placementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState]
+
+    init(
+        accounts: [ProviderAccount],
+        domains: [ProviderDomainConfiguration],
+        drivesByAccountIdentifier: [String: [KDriveDriveSummary]],
+        loadingDriveAccountIdentifiers: Set<String>,
+        placementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState] = [:]
+    ) {
+        self.accounts = accounts
+        self.domains = domains
+        self.drivesByAccountIdentifier = drivesByAccountIdentifier
+        self.loadingDriveAccountIdentifiers = loadingDriveAccountIdentifiers
+        self.placementStatesByConfigurationIdentifier = placementStatesByConfigurationIdentifier
+    }
 }
 
 struct ProviderStatusDashboard: Equatable {
@@ -252,7 +272,9 @@ struct ProviderStatusDashboard: Equatable {
                 let snapshotStats = snapshotStatisticsByDomain[domain.domainIdentifier] ?? KDriveSnapshotDomainStatistics(domainIdentifier: domain.domainIdentifier)
                 let eventStats = eventStatisticsByDomain[domain.domainIdentifier] ?? KDriveProviderEventDomainStatistics(domainIdentifier: domain.domainIdentifier)
                 let accountName = accountsByIdentifier[domain.accountIdentifier]?.displayName ?? "Account"
+                let placementState = input.placementStatesByConfigurationIdentifier[domain.configurationIdentifier] ?? .registering
                 return ProviderStatusDrive(
+                    configurationIdentifier: domain.configurationIdentifier,
                     domainIdentifier: domain.domainIdentifier,
                     accountIdentifier: domain.accountIdentifier,
                     accountName: accountName,
@@ -260,6 +282,8 @@ struct ProviderStatusDashboard: Equatable {
                     driveID: domain.driveID,
                     driveName: domain.driveName,
                     rootFileID: domain.rootFileID,
+                    storageLocation: domain.storageLocation,
+                    placementState: placementState,
                     role: loadedDrive?.role,
                     status: loadedDrive?.status,
                     isInMaintenance: loadedDrive?.isInMaintenance ?? false,
@@ -347,8 +371,9 @@ struct ProviderStatusAccount: Equatable, Identifiable {
 }
 
 struct ProviderStatusDrive: Equatable, Identifiable {
-    var id: String { domainIdentifier }
+    var id: String { configurationIdentifier }
 
+    let configurationIdentifier: String
     let domainIdentifier: String
     let accountIdentifier: String
     let accountName: String
@@ -356,6 +381,8 @@ struct ProviderStatusDrive: Equatable, Identifiable {
     let driveID: Int
     let driveName: String
     let rootFileID: Int
+    let storageLocation: ProviderDomainStorageLocation
+    let placementState: ProviderDomainPlacementState
     let role: String?
     let status: String?
     let isInMaintenance: Bool
@@ -374,8 +401,38 @@ struct ProviderStatusDrive: Equatable, Identifiable {
     let latestActivityAt: Date?
 
     var issueCount: Int {
-        unresolvedConflictCount + blockedConflictCount + failedConflictCount + recentFailureCount + (isInMaintenance ? 1 : 0)
+        unresolvedConflictCount
+            + blockedConflictCount
+            + failedConflictCount
+            + recentFailureCount
+            + (isInMaintenance ? 1 : 0)
+            + (placementState.isAttentionRequired ? 1 : 0)
     }
+
+    var storageTitle: String {
+        switch storageLocation {
+        case .onThisMac:
+            "On This Mac"
+        case .externalVolume:
+            "External Drive"
+        }
+    }
+
+    var storageVolume: String? {
+        guard case .externalVolume(_, let displayName) = storageLocation else { return nil }
+        return displayName
+    }
+
+    var storageDetail: String {
+        if let storageVolume {
+            return "\(storageTitle) · \(storageVolume)"
+        }
+        return storageTitle
+    }
+
+    var placementTitle: String { placementState.title }
+    var placementDetail: String? { placementState.detail }
+    var placementRequiresAttention: Bool { placementState.isAttentionRequired }
 
     var health: ProviderStatusDriveHealth {
         if issueCount > 0 { return .attention }
@@ -644,6 +701,33 @@ private struct ProviderStatusDriveCard: View {
                     .labelStyle(.titleAndIcon)
             }
 
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Label("Storage: \(drive.storageDetail)", systemImage: drive.storageVolume == nil ? "internaldrive" : "externaldrive")
+
+                Spacer(minLength: 8)
+
+                Label("Placement: \(drive.placementTitle)", systemImage: drive.placementState.statusSystemImage)
+                    .foregroundStyle(drive.placementState.statusTint)
+            }
+            .font(.caption.weight(.medium))
+
+            if drive.placementRequiresAttention {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(drive.placementTitle, systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.semibold))
+
+                    if let placementDetail = drive.placementDetail {
+                        Text(placementDetail)
+                            .font(.caption)
+                    }
+                }
+                .foregroundStyle(.orange)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityElement(children: .combine)
+            }
+
             Divider()
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], alignment: .leading, spacing: 8) {
@@ -706,5 +790,52 @@ private extension View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(.quaternary, lineWidth: 1)
             }
+    }
+}
+
+private extension ProviderDomainPlacementState {
+    var statusRefreshIdentifier: String {
+        switch self {
+        case .connected:
+            "connected"
+        case .authenticationRequired:
+            "authentication-required"
+        case .volumeUnavailable:
+            "volume-unavailable"
+        case .registering:
+            "registering"
+        case .moving:
+            "moving"
+        case .needsRepair(let detail):
+            "needs-repair:\(detail)"
+        }
+    }
+
+    var statusSystemImage: String {
+        switch self {
+        case .connected:
+            "checkmark.circle"
+        case .authenticationRequired:
+            "person.crop.circle.badge.exclamationmark"
+        case .volumeUnavailable:
+            "externaldrive.badge.exclamationmark"
+        case .registering:
+            "arrow.trianglehead.2.clockwise.rotate.90"
+        case .moving:
+            "arrow.left.arrow.right"
+        case .needsRepair:
+            "wrench.and.screwdriver"
+        }
+    }
+
+    var statusTint: Color {
+        switch self {
+        case .connected:
+            .green
+        case .registering, .moving:
+            .blue
+        case .authenticationRequired, .volumeUnavailable, .needsRepair:
+            .orange
+        }
     }
 }

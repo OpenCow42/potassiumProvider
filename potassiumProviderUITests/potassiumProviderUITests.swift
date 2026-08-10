@@ -49,6 +49,7 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(
             app.buttons["drive.createEncryptedVault"].waitForExistence(timeout: 5)
         )
+        XCTAssertTrue(app.buttons["drive.addToFiles"].exists)
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
 
@@ -96,11 +97,19 @@ final class potassiumProviderUITests: XCTestCase {
         app.buttons["setup.account.ui-account"].tap()
         app.buttons["account.drive.10"].tap()
 
+        #if os(macOS)
+        let driveManagement = app.descendants(matching: .any)["drive.management"]
+        XCTAssertTrue(driveManagement.waitForExistence(timeout: 5))
+        driveManagement.scroll(byDeltaX: 0, deltaY: -2_000)
+        #endif
+
         let remove = app.buttons["drive.removeFromFiles"]
         XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertTrue(remove.isEnabled)
         remove.tap()
 
-        XCTAssertTrue(app.buttons["Remove from Files"].waitForExistence(timeout: 5))
+        let confirmRemoval = app.buttons["drive.confirmRemoval"]
+        XCTAssertTrue(confirmRemoval.waitForExistence(timeout: 5))
         XCTAssertTrue(
             text(containing: "Remote kDrive files are not deleted", in: app).exists
         )

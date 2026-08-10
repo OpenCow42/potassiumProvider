@@ -84,7 +84,7 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
                     perThumbnailCompletionHandler(itemIdentifier, nil, nil)
                     return
                 }
-                let plaintextURL = temporaryDirectoryURL
+                let plaintextURL = try operationTemporaryDirectoryURL()
                     .appendingPathComponent("thumbnail-\(UUID().uuidString)")
                     .appendingPathExtension((item.filename as NSString).pathExtension)
                 defer { try? FileManager.default.removeItem(at: plaintextURL) }

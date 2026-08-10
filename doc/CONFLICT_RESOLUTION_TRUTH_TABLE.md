@@ -16,14 +16,14 @@ below are independently normative for their respective domain type.
 ## Merge Integration Audit Status
 
 - Integration reviewed: 2026-08-10.
-- Merge inputs: encrypted-vault head `a0e0839` and `origin/main` at `f042b7e`.
-- macOS `build-for-testing` and the complete `potassiumProviderTests` target
-  passed with signing and indexing disabled.
-- The iOS Simulator app and unit-test bundle built successfully. An initial
-  full local run did not launch because CoreSimulator's IPC server died. After
-  CI exposed a probabilistic support-log assertion, the corrected focused test
-  rebuilt and passed locally; the pull-request workflow remains the required
-  full clean-runner evidence.
+- Merge inputs: external-storage PR head `69e54fd` rebased onto `origin/main`
+  at `d006b17`, which includes encrypted-vault format v2.
+- macOS `build-for-testing` passed. The added external-storage lifecycle and
+  configuration suites passed by direct test-bundle execution, and the
+  previously failing removal-confirmation UI test passed through `xcodebuild`.
+- The complete `potassiumProviderTests` target passed on iPhone 17 / iOS 26.5
+  and Apple Vision Pro / visionOS 26.5 simulators after the final integration
+  guards and UI-fixture correction.
 - The generic visionOS app build passed with signing and indexing disabled.
 - Live kDrive validation was not performed. Server-dependent findings remain
   open as documented below.
@@ -44,6 +44,7 @@ below are independently normative for their respective domain type.
 | A historical file version is restored | Authenticate and decrypt the selected immutable revision, then encrypt and publish it as a fresh content object with a fresh logical revision. A stale client holding the historical revision must not pass an ABA check. | No old ciphertext deletion | `VaultProvisioningTests.restoringVersionPublishesFreshRevisionAndRejectsABAStaleWrite` |
 | Siblings normalize to the same filename, including a pre-existing generated conflict name | Keep every item. Reserve all existing normalized names, then allocate deterministic numbered suffixes until unique. | No | `VaultJournalTests.siblingConflictAllocatorSkipsExistingGeneratedName` |
 | Remote journal omits a transaction previously trusted by this device | Reject synchronization as rollback; never fill the omission from cache and call it current. | No | `VaultProvisioningTests.returningDeviceRejectsOmittedRemoteJournalObject` |
+| File Provider storage relocation or external placement is requested for an encrypted vault | Reject before writing a relocation journal or changing the system domain. A replacement domain identifier would address a different local rollback witness; no trusted atomic migration exists. Persisted encrypted/external combinations fail runtime loading with `.cannotSynchronize`. | **No** | `PotassiumProviderAppModelExternalStorageLifecycleTests.encryptedVaultStorageRelocationFailsClosedBeforeSideEffects`, `VaultDomainConfigurationTests.storageRelocationSupportIsPlaintextOnly`, and the extension runtime guard |
 | Maintenance observes ciphertext unreferenced by this device's current state | Record/report it only. Never delete it because an offline device may later publish a valid reference. | **No** | `VaultProvisioningTests.maintenanceNeverDeletesCiphertextThatAnOfflineDeviceMayReference` |
 | A checkpoint is uploaded or opened | Use authenticated 64 KiB–256 MiB power-of-two padding. Reject unpadded, malformed, tampered, or out-of-range objects. | No | `VaultCryptographyTests.checkpointsHideExactMetadataSizeAndRejectUnpaddedObjects` |
 | User creates a vault or opens one with a recovery kit or iCloud Keychain | Show the complete-data-loss/no-support warning and enforce at least five seconds of monotonic elapsed time before any activation side effect. | No side effect before delay | `VaultUXAppModelTests.failedCloudPublicationKeepsRegisteredVaultAndRecoveryBoundary`, `recoveryAndICloudOpenCannotBypassRiskDelay`, and the warning UI test |
@@ -67,6 +68,7 @@ below are independently normative for their respective domain type.
 | EV-012 | High | Open release gate | Safe plaintext-to-vault migration and destructive source purge are unavailable. Do not offer ownership cutover from a legacy Potassium domain. |
 | EV-013 | High | Open release gate | Account/drive identity, object counts and buckets, timing, IP metadata, access patterns, and fetched-object linkage remain visible to the service. This is an accepted architectural limitation, not zero-knowledge storage. |
 | EV-014 | Critical | Open release gate | Independent cryptographic and adversarial synchronization review has not approved v2. Both feature flags must remain off by default. |
+| EV-015 | High | Open release gate | Encrypted-vault File Provider placement cannot move to external storage because relocation replaces the domain identifier that keys the local rollback witness. The UI, app model, and extension fail closed until an atomic trust-state migration is designed, tested, and independently reviewed. |
 
 ## Encrypted-Vault Audit Evidence
 
@@ -75,9 +77,10 @@ Local success does not close EV-014.
 - macOS: `xcodebuild build-for-testing -destination 'platform=macOS'` succeeded
   with signing and indexing disabled. Direct execution then passed 33 focused
   tests: all journal, provisioning/maintenance, cryptography, and domain-format
-  suites. The normal local macOS test host ran the activation-model assertions
-  but hung while finalizing its Xcode result bundle, so this evidence does not
-  claim a clean full-host exit.
+  suites. The added external-storage lifecycle and configuration suites also
+  passed. The normal local macOS unit-test host ran the activation-model
+  assertions but hung while finalizing its Xcode result bundle, so this evidence
+  does not claim a clean full-unit-host exit.
 - iOS Simulator: the complete `potassiumProviderTests` target passed on
   `platform=iOS Simulator,OS=26.5,name=iPhone 17` with signing and indexing
   disabled.
@@ -87,9 +90,11 @@ Local success does not close EV-014.
   final fail-closed guards.
 - Builds: iOS Simulator and generic visionOS builds succeeded with signing
   disabled.
-- UI warning automation: the targeted macOS UI test passed and verifies the
-  warning copy and disabled continuation for creation; route unification and
-  the monotonic delay are covered in unit tests.
+- UI automation: targeted macOS tests passed for both the encrypted-vault risk
+  warning and the configured-drive removal alert. The removal regression now
+  verifies a connected fixture, an enabled remove action, a distinct
+  confirmation action, and the remote-file preservation warning. Route
+  unification and the monotonic risk-warning delay are covered in unit tests.
 - Independent security review: not completed.
 
 ### Encrypted-Vault Maintenance Rule

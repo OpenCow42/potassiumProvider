@@ -45,8 +45,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var domains: [ProviderDomainConfiguration] = []
     @Published private(set) var isConnecting = false
     @Published private(set) var loadingDriveAccountIdentifiers: Set<String> = []
-    @Published private(set) var knownFolderSyncStatesByDomainIdentifier: [String: ProviderKnownFolderSyncState] = [:]
-    @Published private(set) var knownFolderTransitionDomainIdentifiers: Set<String> = []
+    @Published private(set) var knownFolderSyncStatesByConfigurationIdentifier: [String: ProviderKnownFolderSyncState] = [:]
+    @Published private(set) var domainTransitionConfigurationIdentifiers: Set<String> = []
     @Published private(set) var activeDriveActions: [ProviderDriveKey: ProviderDriveAction] = [:]
     @Published private(set) var isReloadingStoredState = false
     @Published private(set) var pendingVaultProvisioning: PendingVaultProvisioning?
@@ -66,6 +66,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         [VaultIdentifier: VaultUXPreferences] = [:]
     @Published private(set) var encryptedVaultsEnabled: Bool
     @Published private(set) var encryptedVaultICloudKeychainEnabled: Bool
+    @Published private(set) var placementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState] = [:]
+    @Published var preservedDataLocation: ProviderPreservedDataLocation?
     @Published private(set) var statusMessage: String?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
@@ -78,6 +80,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let tokenStore: any OAuthTokenStoring
     private let oauthAuthenticator: any KDriveOAuthAuthenticating
     private let domainRegistrar: any ProviderDomainRegistering
+    private let relocationJournalStore: any ProviderDomainRelocationJournaling
+    private let externalVolumeSelector: any ProviderExternalVolumeSelecting
     private let snapshotStore: (any KDriveSnapshotStoring)?
     private let eventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
@@ -103,12 +107,15 @@ final class PotassiumProviderAppModel: ObservableObject {
         tokenStore: (any OAuthTokenStoring)? = nil,
         oauthAuthenticator: (any KDriveOAuthAuthenticating)? = nil,
         domainRegistrar: (any ProviderDomainRegistering)? = nil,
+        relocationJournalStore: (any ProviderDomainRelocationJournaling)? = nil,
+        externalVolumeSelector: (any ProviderExternalVolumeSelecting)? = nil,
         snapshotStore: (any KDriveSnapshotStoring)? = nil,
         eventStore: (any KDriveProviderEventStoring)? = nil,
         automaticallyReloadStoredState: Bool = true,
         initialAccounts: [ProviderAccount] = [],
         initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
         initialDomains: [ProviderDomainConfiguration] = [],
+        initialPlacementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState] = [:],
         fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) },
         objectStoreFactory: @escaping (Int, String) -> any KDriveObjectStoreProviding = {
             PotassiumKDriveObjectStore(driveID: $0, bearerToken: $1)
@@ -134,6 +141,8 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.tokenStore = tokenStore ?? KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
         self.domainRegistrar = domainRegistrar ?? FileProviderDomainRegistrar()
+        self.relocationJournalStore = relocationJournalStore ?? Self.makeDefaultRelocationJournalStore()
+        self.externalVolumeSelector = externalVolumeSelector ?? ProviderExternalVolumeSelectionService()
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
         self.eventStore = eventStore ?? Self.makeDefaultEventStore()
         self.fileProviderFactory = fileProviderFactory
@@ -164,6 +173,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         accounts = initialAccounts
         drivesByAccountIdentifier = initialDrivesByAccountIdentifier
         domains = initialDomains
+        placementStatesByConfigurationIdentifier = initialPlacementStatesByConfigurationIdentifier
         isReloadingStoredState = automaticallyReloadStoredState
         statusMessage = initialAccounts.isEmpty
             ? "No accounts connected."
@@ -225,7 +235,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func knownFolderSyncState(for configuration: ProviderDomainConfiguration) -> ProviderKnownFolderSyncState {
-        knownFolderSyncStatesByDomainIdentifier[configuration.domainIdentifier] ?? .unavailable
+        knownFolderSyncStatesByConfigurationIdentifier[configuration.configurationIdentifier] ?? .unavailable
     }
 
     func knownFolderPreflight(
@@ -275,7 +285,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func isChangingKnownFolderSync(for configuration: ProviderDomainConfiguration) -> Bool {
-        knownFolderTransitionDomainIdentifiers.contains(configuration.domainIdentifier)
+        domainTransitionConfigurationIdentifiers.contains(configuration.configurationIdentifier)
     }
 
     func knownFolderRemotePath(for configuration: ProviderDomainConfiguration) -> String {
@@ -302,6 +312,36 @@ final class PotassiumProviderAppModel: ObservableObject {
             return false
         }
         return activeDriveActions[driveKey(for: configuration)] != nil
+    }
+
+    func placementState(for configuration: ProviderDomainConfiguration) -> ProviderDomainPlacementState {
+        placementStatesByConfigurationIdentifier[configuration.configurationIdentifier] ?? .registering
+    }
+
+    func isTransitioning(_ configuration: ProviderDomainConfiguration) -> Bool {
+        domainTransitionConfigurationIdentifiers.contains(configuration.configurationIdentifier)
+    }
+
+    func canMutate(_ configuration: ProviderDomainConfiguration) -> Bool {
+        guard isTransitioning(configuration) == false else { return false }
+        switch placementState(for: configuration) {
+        case .connected:
+            return true
+        case .authenticationRequired, .volumeUnavailable, .registering, .moving, .needsRepair:
+            return false
+        }
+    }
+
+    func selectExternalVolume() async -> ProviderExternalVolume? {
+        do {
+            let volume = try await externalVolumeSelector.selectExternalVolume()
+            errorMessage = nil
+            return volume
+        } catch {
+            errorMessage = "Could not inspect the external drive: \(error.localizedDescription)"
+            statusMessage = nil
+            return nil
+        }
     }
 
     func selectedDriveID(for accountIdentifier: String) -> Int? {
@@ -338,7 +378,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
-            try await refreshKnownFolderSyncStates()
+            try await refreshDomainSystemStates()
             await refreshVaultAccessState()
             seedDraftState()
 
@@ -501,7 +541,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             if let registrationError = synchronizedState.registrationError {
                 throw registrationError
             }
-            try await refreshKnownFolderSyncStates()
+            try await refreshDomainSystemStates()
             statusMessage = "Added \(configuration.driveName) to Files."
             errorMessage = nil
         } catch {
@@ -1102,16 +1142,284 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
+    func addDomain(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary,
+        externalVolume: ProviderExternalVolume
+    ) async {
+        selectedDriveIDs[accountIdentifier] = drive.id
+        manualDriveIDs[accountIdentifier] = String(drive.id)
+        manualDriveNames[accountIdentifier] = drive.name
+
+        guard account(accountIdentifier: accountIdentifier) != nil else {
+            errorMessage = "Choose an account before adding a domain."
+            statusMessage = nil
+            return
+        }
+        guard isConfigured(accountIdentifier: accountIdentifier, driveID: drive.id) == false else {
+            errorMessage = "\(drive.name) is already available in Files."
+            statusMessage = nil
+            return
+        }
+        guard case .eligible = externalVolume.eligibility else {
+            errorMessage = "Choose an eligible encrypted APFS drive."
+            statusMessage = nil
+            return
+        }
+
+        let configurationIdentifier = UUID().uuidString
+        domainTransitionConfigurationIdentifiers.insert(configurationIdentifier)
+        placementStatesByConfigurationIdentifier[configurationIdentifier] = .registering
+        defer { domainTransitionConfigurationIdentifiers.remove(configurationIdentifier) }
+
+        var savedConfiguration: ProviderDomainConfiguration?
+        do {
+            let configuration = try await externalVolumeSelector.withSecurityScopedAccess(
+                to: externalVolume
+            ) { volumeURL in
+                let prepared = try self.domainRegistrar.prepareDomain(
+                    configurationIdentifier: configurationIdentifier,
+                    domainIdentifier: UUID().uuidString,
+                    displayName: ProviderDomainConfiguration.finderDisplayName(forDriveName: drive.name),
+                    target: .externalVolume(volumeURL)
+                )
+                guard let preparedVolumeUUID = prepared.volumeUUID,
+                      preparedVolumeUUID == externalVolume.uuid
+                else {
+                    throw PotassiumProviderAppModelError.externalVolumeIdentityMismatch
+                }
+
+                let now = Date()
+                let configuration = ProviderDomainConfiguration(
+                    configurationIdentifier: configurationIdentifier,
+                    domainIdentifier: prepared.domainIdentifier,
+                    accountIdentifier: accountIdentifier,
+                    displayName: ProviderDomainConfiguration.finderDisplayName(forDriveName: drive.name),
+                    driveID: drive.id,
+                    driveName: drive.name,
+                    storageLocation: .externalVolume(
+                        uuid: preparedVolumeUUID,
+                        displayName: externalVolume.displayName
+                    ),
+                    createdAt: now,
+                    updatedAt: now
+                )
+                try await self.domainStore.save(configuration)
+                savedConfiguration = configuration
+                try await self.domainRegistrar.addPreparedDomain(prepared)
+                return configuration
+            }
+
+            domains = try await domainStore.allConfigurations()
+            try await refreshDomainSystemStates()
+            statusMessage = "Added \(configuration.driveName) to Files on \(externalVolume.displayName)."
+            errorMessage = nil
+        } catch {
+            if let savedConfiguration {
+                await rollbackFailedDomainAddition(savedConfiguration)
+            }
+            placementStatesByConfigurationIdentifier[configurationIdentifier] = nil
+            await recordAppFailure(
+                kind: .domainManagement,
+                summary: "Could not add the provider domain on an external drive.",
+                error: error,
+                category: .fileProvider
+            )
+            errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func moveDomain(
+        _ configuration: ProviderDomainConfiguration,
+        toExternalVolume externalVolume: ProviderExternalVolume?
+    ) async {
+        guard configuration.supportsStorageRelocation else {
+            errorMessage = PotassiumProviderAppModelError.unsupportedStorageRelocation.localizedDescription
+            statusMessage = nil
+            return
+        }
+
+        let targetStorageLocation: ProviderDomainStorageLocation
+        if let externalVolume {
+            guard case .eligible = externalVolume.eligibility else {
+                errorMessage = "Choose an eligible encrypted APFS drive."
+                statusMessage = nil
+                return
+            }
+            targetStorageLocation = .externalVolume(
+                uuid: externalVolume.uuid,
+                displayName: externalVolume.displayName
+            )
+        } else {
+            targetStorageLocation = .onThisMac
+        }
+
+        guard targetStorageLocation != configuration.storageLocation else { return }
+        guard canMutate(configuration),
+              domainTransitionConfigurationIdentifiers.insert(configuration.configurationIdentifier).inserted
+        else { return }
+        placementStatesByConfigurationIdentifier[configuration.configurationIdentifier] = .moving
+        defer { domainTransitionConfigurationIdentifiers.remove(configuration.configurationIdentifier) }
+
+        do {
+            if let externalVolume {
+                try await externalVolumeSelector.withSecurityScopedAccess(to: externalVolume) { volumeURL in
+                    try await self.performDomainMove(
+                        configuration,
+                        targetStorageLocation: targetStorageLocation,
+                        targetVolumeURL: volumeURL
+                    )
+                }
+            } else {
+                try await performDomainMove(
+                    configuration,
+                    targetStorageLocation: targetStorageLocation,
+                    targetVolumeURL: nil
+                )
+            }
+        } catch {
+            await recordAppFailure(
+                kind: .domainManagement,
+                summary: "Could not change File Provider storage.",
+                error: error,
+                category: .fileProvider
+            )
+            errorMessage = "Could not change storage for \(configuration.driveName): \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    func repairDomain(_ configuration: ProviderDomainConfiguration) async {
+        guard configuration.supportsStorageRelocation else {
+            errorMessage = PotassiumProviderAppModelError.unsupportedStorageRelocation.localizedDescription
+            statusMessage = nil
+            return
+        }
+
+        guard domainTransitionConfigurationIdentifiers.insert(configuration.configurationIdentifier).inserted else {
+            return
+        }
+        placementStatesByConfigurationIdentifier[configuration.configurationIdentifier] = .moving
+        defer { domainTransitionConfigurationIdentifiers.remove(configuration.configurationIdentifier) }
+
+        do {
+            guard var journal = try await relocationJournalStore.journal(
+                configurationIdentifier: configuration.configurationIdentifier
+            ) else {
+                if case .authenticationRequired = placementState(for: configuration) {
+                    try await domainRegistrar.reconnectDomain(for: configuration)
+                    try await refreshDomainSystemStates()
+                    errorMessage = nil
+                    return
+                }
+
+                let repairJournal = ProviderDomainRelocationJournal(
+                    configurationIdentifier: configuration.configurationIdentifier,
+                    sourceConfiguration: configuration,
+                    targetStorageLocation: configuration.storageLocation,
+                    knownFoldersWereActive: false,
+                    phase: .needsRepair
+                )
+                try await relocationJournalStore.save(repairJournal)
+                try await registerRepairTarget(from: repairJournal)
+                statusMessage = "Repaired File Provider storage for \(configuration.driveName)."
+                errorMessage = nil
+                return
+            }
+
+            let registeredStates = try await domainRegistrar.registeredDomainStates()
+            let registeredDomainIdentifiers = Set(registeredStates.map(\.domainIdentifier))
+            let currentConfiguration = try await domainStore.configuration(
+                configurationIdentifier: configuration.configurationIdentifier
+            )
+
+            if journal.phase == .knownFolderReclaimRequired {
+                try await reclaimKnownFolders(for: configuration)
+                try await relocationJournalStore.remove(
+                    configurationIdentifier: configuration.configurationIdentifier
+                )
+                try await refreshDomainSystemStates()
+                statusMessage = "Repaired Desktop and Documents for \(configuration.driveName)."
+                errorMessage = nil
+                return
+            }
+
+
+            if let currentConfiguration,
+               currentConfiguration.domainIdentifier == journal.targetDomainIdentifier,
+               registeredDomainIdentifiers.contains(currentConfiguration.domainIdentifier) {
+                try await snapshotStore?.removeSnapshots(
+                    domainIdentifier: journal.sourceConfiguration.domainIdentifier
+                )
+                try await eventStore?.removeEvents(
+                    domainIdentifier: journal.sourceConfiguration.domainIdentifier
+                )
+                if journal.knownFoldersWereActive {
+                    try await reclaimKnownFolders(for: currentConfiguration)
+                }
+                try await relocationJournalStore.remove(
+                    configurationIdentifier: configuration.configurationIdentifier
+                )
+                domains = try await domainStore.allConfigurations()
+                try await refreshDomainSystemStates()
+                statusMessage = "Finished repairing \(configuration.driveName)."
+                errorMessage = nil
+                return
+            }
+
+            if let currentConfiguration,
+               currentConfiguration.domainIdentifier == journal.sourceConfiguration.domainIdentifier,
+               registeredDomainIdentifiers.contains(journal.sourceConfiguration.domainIdentifier) {
+                if journal.knownFoldersWereActive {
+                    try await refreshKnownFolderSyncStates()
+                    if knownFolderSyncState(for: currentConfiguration) != .active {
+                        try await reclaimKnownFolders(for: currentConfiguration)
+                    }
+                }
+                try await relocationJournalStore.remove(
+                    configurationIdentifier: configuration.configurationIdentifier
+                )
+                try await refreshDomainSystemStates()
+                statusMessage = "Restored the original storage for \(configuration.driveName)."
+                errorMessage = nil
+                return
+            }
+
+            journal.phase = .needsRepair
+            journal.updatedAt = Date()
+            try await relocationJournalStore.save(journal)
+            try await registerRepairTarget(from: journal)
+            statusMessage = "Repaired File Provider storage for \(configuration.driveName)."
+            errorMessage = nil
+        } catch {
+            placementStatesByConfigurationIdentifier[configuration.configurationIdentifier] = .needsRepair(
+                error.localizedDescription
+            )
+            errorMessage = "Could not repair \(configuration.driveName): \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
     func removeDomain(_ configuration: ProviderDomainConfiguration) async {
         let key = driveKey(for: configuration)
-        guard beginDriveAction(.removingFromFiles, for: key) else { return }
-        defer { endDriveAction(for: key) }
+        guard canMutate(configuration),
+              beginDriveAction(.removingFromFiles, for: key),
+              domainTransitionConfigurationIdentifiers.insert(configuration.configurationIdentifier).inserted
+        else {
+            endDriveAction(for: key)
+            return
+        }
+        defer {
+            domainTransitionConfigurationIdentifiers.remove(configuration.configurationIdentifier)
+            endDriveAction(for: key)
+        }
 
         do {
             try await removeDomainAndLocalState(configuration)
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
-            try await refreshKnownFolderSyncStates()
+            try await refreshDomainSystemStates()
             statusMessage = "Removed \(configuration.displayName) from Files."
             errorMessage = nil
         } catch {
@@ -1406,8 +1714,20 @@ final class PotassiumProviderAppModel: ObservableObject {
             return
         }
 
+        let accountDomains = domains(for: account.accountIdentifier)
+        guard let unavailableDomain = accountDomains.first(where: { canMutate($0) == false }) else {
+            let identifiers = Set(accountDomains.map(\.configurationIdentifier))
+            domainTransitionConfigurationIdentifiers.formUnion(identifiers)
+            defer { domainTransitionConfigurationIdentifiers.subtract(identifiers) }
+            await performLogout(account, domains: accountDomains)
+            return
+        }
+        errorMessage = "Connect \(unavailableDomain.storageLocation.userFacingTitle) and finish or repair its File Provider operation before logging out."
+        statusMessage = nil
+    }
+
+    private func performLogout(_ account: ProviderAccount, domains accountDomains: [ProviderDomainConfiguration]) async {
         do {
-            let accountDomains = domains(for: account.accountIdentifier)
             for domain in accountDomains {
                 try await removeDomainAndLocalState(domain)
             }
@@ -1423,7 +1743,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
-            try await refreshKnownFolderSyncStates()
+            try await refreshDomainSystemStates()
             statusMessage = "Logged out \(account.displayName)."
             errorMessage = nil
         } catch {
@@ -1447,7 +1767,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             accounts = try await accountStore.allAccounts()
             let synchronizedState = try await synchronizedDomainConfigurations()
             domains = synchronizedState.configurations
-            try await refreshKnownFolderSyncStates()
+            try await refreshDomainSystemStates()
             errorMessage = nil
         } catch {
             await recordAppFailure(
@@ -1607,6 +1927,163 @@ final class PotassiumProviderAppModel: ObservableObject {
             try await refreshKnownFolderSyncStates()
         } catch {
             await rollbackFailedDomainAddition(configuration)
+            throw error
+        }
+    }
+
+    private func performDomainMove(
+        _ sourceConfiguration: ProviderDomainConfiguration,
+        targetStorageLocation: ProviderDomainStorageLocation,
+        targetVolumeURL: URL?
+    ) async throws {
+        guard sourceConfiguration.supportsStorageRelocation else {
+            throw PotassiumProviderAppModelError.unsupportedStorageRelocation
+        }
+
+        try await refreshKnownFolderSyncStates()
+        let knownFoldersWereActive: Bool
+        switch knownFolderSyncState(for: sourceConfiguration) {
+        case .active, .partial:
+            knownFoldersWereActive = true
+        case .inactive, .unavailable:
+            knownFoldersWereActive = false
+        }
+
+        var journal = ProviderDomainRelocationJournal(
+            configurationIdentifier: sourceConfiguration.configurationIdentifier,
+            sourceConfiguration: sourceConfiguration,
+            targetStorageLocation: targetStorageLocation,
+            knownFoldersWereActive: knownFoldersWereActive
+        )
+        try await relocationJournalStore.save(journal)
+
+        var sourceWasRemoved = false
+        var targetWasRegistered = false
+        do {
+            try await domainRegistrar.waitForStabilization(for: sourceConfiguration)
+            if knownFoldersWereActive {
+                try await domainRegistrar.releaseKnownFolders(for: sourceConfiguration)
+                journal.phase = .knownFoldersReleased
+                journal.updatedAt = Date()
+                try await relocationJournalStore.save(journal)
+                try await domainRegistrar.waitForStabilization(for: sourceConfiguration)
+            }
+
+            let prepared = try prepareReplacementDomain(
+                for: sourceConfiguration,
+                targetStorageLocation: targetStorageLocation,
+                targetVolumeURL: targetVolumeURL
+            )
+            journal.targetDomainIdentifier = prepared.domainIdentifier
+            journal.updatedAt = Date()
+            try await relocationJournalStore.save(journal)
+
+            let preservedURL = try await domainRegistrar.removeDomainPreservingDirtyUserData(
+                for: sourceConfiguration
+            )
+            sourceWasRemoved = true
+            if let preservedURL {
+                preservedDataLocation = ProviderPreservedDataLocation(
+                    url: preservedURL,
+                    driveName: sourceConfiguration.driveName
+                )
+            }
+            journal.phase = .sourceRemoved
+            journal.updatedAt = Date()
+            try await relocationJournalStore.save(journal)
+
+            var replacementConfiguration = sourceConfiguration
+            replacementConfiguration.domainIdentifier = prepared.domainIdentifier
+            replacementConfiguration.storageLocation = targetStorageLocation
+            replacementConfiguration.updatedAt = Date()
+            try await domainStore.save(replacementConfiguration)
+            journal.phase = .targetConfigurationSaved
+            journal.updatedAt = Date()
+            try await relocationJournalStore.save(journal)
+
+            try await domainRegistrar.addPreparedDomain(prepared)
+            targetWasRegistered = true
+            journal.phase = .targetRegistered
+            journal.updatedAt = Date()
+            try await relocationJournalStore.save(journal)
+
+            domains = try await domainStore.allConfigurations()
+            try await snapshotStore?.removeSnapshots(
+                domainIdentifier: sourceConfiguration.domainIdentifier
+            )
+            try await eventStore?.removeEvents(
+                domainIdentifier: sourceConfiguration.domainIdentifier
+            )
+
+            if knownFoldersWereActive {
+                do {
+                    try await reclaimKnownFolders(for: replacementConfiguration)
+                } catch {
+                    journal.phase = .knownFolderReclaimRequired
+                    journal.updatedAt = Date()
+                    try await relocationJournalStore.save(journal)
+                    placementStatesByConfigurationIdentifier[sourceConfiguration.configurationIdentifier] = .needsRepair(
+                        "Storage changed, but Desktop & Documents still need permission."
+                    )
+                    statusMessage = "Moved \(sourceConfiguration.driveName), but Desktop and Documents need repair."
+                    errorMessage = nil
+                    return
+                }
+            }
+
+            try await relocationJournalStore.remove(
+                configurationIdentifier: sourceConfiguration.configurationIdentifier
+            )
+            try await refreshDomainSystemStates()
+            statusMessage = "Moved \(sourceConfiguration.driveName) to \(targetStorageLocation.userFacingTitle)."
+            errorMessage = nil
+        } catch {
+            let registeredStatesAfterFailure = try? await domainRegistrar.registeredDomainStates()
+            let targetIsInRegisteredStates = registeredStatesAfterFailure?.contains {
+                $0.domainIdentifier == journal.targetDomainIdentifier
+            } == true
+            let targetAppearsRegistered = targetWasRegistered || targetIsInRegisteredStates
+            if targetAppearsRegistered {
+                journal.phase = .targetRegistered
+                journal.updatedAt = Date()
+                try? await relocationJournalStore.save(journal)
+                placementStatesByConfigurationIdentifier[sourceConfiguration.configurationIdentifier] = .needsRepair(
+                    "The new storage is registered, but cleanup still needs to finish."
+                )
+            } else if sourceWasRemoved {
+                do {
+                    try await recoverSourcePlacement(from: journal)
+                } catch let recoveryError {
+                    journal.phase = .needsRepair
+                    journal.updatedAt = Date()
+                    try? await relocationJournalStore.save(journal)
+                    placementStatesByConfigurationIdentifier[sourceConfiguration.configurationIdentifier] = .needsRepair(
+                        recoveryError.localizedDescription
+                    )
+                    throw PotassiumProviderAppModelError.storageMoveAndRecoveryFailed(
+                        move: error.localizedDescription,
+                        recovery: recoveryError.localizedDescription
+                    )
+                }
+            } else {
+                if knownFoldersWereActive, journal.phase == .knownFoldersReleased {
+                    do {
+                        try await reclaimKnownFolders(for: sourceConfiguration)
+                    } catch {
+                        journal.phase = .knownFolderReclaimRequired
+                        journal.updatedAt = Date()
+                        try? await relocationJournalStore.save(journal)
+                        placementStatesByConfigurationIdentifier[sourceConfiguration.configurationIdentifier] = .needsRepair(
+                            "Desktop & Documents need permission after the canceled storage change."
+                        )
+                        throw error
+                    }
+                }
+                try? await relocationJournalStore.remove(
+                    configurationIdentifier: sourceConfiguration.configurationIdentifier
+                )
+                try? await refreshDomainSystemStates()
+            }
             throw error
         }
     }
@@ -1873,25 +2350,182 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
+    private func prepareReplacementDomain(
+        for sourceConfiguration: ProviderDomainConfiguration,
+        targetStorageLocation: ProviderDomainStorageLocation,
+        targetVolumeURL: URL?
+    ) throws -> ProviderPreparedDomain {
+        guard sourceConfiguration.supportsStorageRelocation else {
+            throw PotassiumProviderAppModelError.unsupportedStorageRelocation
+        }
+
+        let target: ProviderDomainPreparationTarget
+        switch targetStorageLocation {
+        case .onThisMac:
+            target = .onThisMac
+        case .externalVolume(let expectedVolumeUUID, _):
+            guard let targetVolumeURL else {
+                throw PotassiumProviderAppModelError.externalVolumeUnavailable
+            }
+            target = .externalVolume(targetVolumeURL)
+            let prepared = try domainRegistrar.prepareDomain(
+                configurationIdentifier: sourceConfiguration.configurationIdentifier,
+                domainIdentifier: UUID().uuidString,
+                displayName: sourceConfiguration.displayName,
+                target: target
+            )
+            guard prepared.volumeUUID == expectedVolumeUUID else {
+                throw PotassiumProviderAppModelError.externalVolumeIdentityMismatch
+            }
+            return prepared
+        }
+
+        return try domainRegistrar.prepareDomain(
+            configurationIdentifier: sourceConfiguration.configurationIdentifier,
+            domainIdentifier: UUID().uuidString,
+            displayName: sourceConfiguration.displayName,
+            target: target
+        )
+    }
+
+    private func recoverSourcePlacement(
+        from journal: ProviderDomainRelocationJournal
+    ) async throws {
+        let source = journal.sourceConfiguration
+        let recovered: ProviderDomainConfiguration
+
+        switch source.storageLocation {
+        case .onThisMac:
+            recovered = try await prepareSaveAndRegisterRecovery(
+                source,
+                targetStorageLocation: .onThisMac,
+                volumeURL: nil
+            )
+        case .externalVolume(let volumeUUID, _):
+            guard let mountedVolume = try externalVolumeSelector.mountedVolume(uuid: volumeUUID) else {
+                throw PotassiumProviderAppModelError.externalVolumeUnavailable
+            }
+            recovered = try await externalVolumeSelector.withSecurityScopedAccess(to: mountedVolume) { volumeURL in
+                try await self.prepareSaveAndRegisterRecovery(
+                    source,
+                    targetStorageLocation: source.storageLocation,
+                    volumeURL: volumeURL
+                )
+            }
+        }
+
+        try await snapshotStore?.removeSnapshots(domainIdentifier: source.domainIdentifier)
+        try await eventStore?.removeEvents(domainIdentifier: source.domainIdentifier)
+        if journal.knownFoldersWereActive {
+            try await reclaimKnownFolders(for: recovered)
+        }
+        try await relocationJournalStore.remove(
+            configurationIdentifier: source.configurationIdentifier
+        )
+        domains = try await domainStore.allConfigurations()
+        try await refreshDomainSystemStates()
+    }
+
+    private func prepareSaveAndRegisterRecovery(
+        _ source: ProviderDomainConfiguration,
+        targetStorageLocation: ProviderDomainStorageLocation,
+        volumeURL: URL?
+    ) async throws -> ProviderDomainConfiguration {
+        let prepared = try prepareReplacementDomain(
+            for: source,
+            targetStorageLocation: targetStorageLocation,
+            targetVolumeURL: volumeURL
+        )
+        var recovered = source
+        recovered.domainIdentifier = prepared.domainIdentifier
+        recovered.storageLocation = targetStorageLocation
+        recovered.updatedAt = Date()
+        try await domainStore.save(recovered)
+        try await domainRegistrar.addPreparedDomain(prepared)
+        return recovered
+    }
+
+    private func registerRepairTarget(
+        from journal: ProviderDomainRelocationJournal
+    ) async throws {
+        let source = journal.sourceConfiguration
+        let repaired: ProviderDomainConfiguration
+        switch journal.targetStorageLocation {
+        case .onThisMac:
+            repaired = try await prepareSaveAndRegisterRecovery(
+                source,
+                targetStorageLocation: .onThisMac,
+                volumeURL: nil
+            )
+        case .externalVolume(let volumeUUID, _):
+            guard let mountedVolume = try externalVolumeSelector.mountedVolume(uuid: volumeUUID) else {
+                throw PotassiumProviderAppModelError.externalVolumeUnavailable
+            }
+            repaired = try await externalVolumeSelector.withSecurityScopedAccess(to: mountedVolume) { volumeURL in
+                try await self.prepareSaveAndRegisterRecovery(
+                    source,
+                    targetStorageLocation: journal.targetStorageLocation,
+                    volumeURL: volumeURL
+                )
+            }
+        }
+
+        try await snapshotStore?.removeSnapshots(domainIdentifier: source.domainIdentifier)
+        try await eventStore?.removeEvents(domainIdentifier: source.domainIdentifier)
+        if journal.knownFoldersWereActive {
+            do {
+                try await reclaimKnownFolders(for: repaired)
+            } catch {
+                var reclaimJournal = journal
+                reclaimJournal.phase = .knownFolderReclaimRequired
+                reclaimJournal.updatedAt = Date()
+                try await relocationJournalStore.save(reclaimJournal)
+                domains = try await domainStore.allConfigurations()
+                try await refreshDomainSystemStates()
+                return
+            }
+        }
+        try await relocationJournalStore.remove(configurationIdentifier: source.configurationIdentifier)
+        domains = try await domainStore.allConfigurations()
+        try await refreshDomainSystemStates()
+    }
+
+    private func reclaimKnownFolders(for configuration: ProviderDomainConfiguration) async throws {
+        let token = try await usableToken(accountIdentifier: configuration.accountIdentifier)
+        let parentFileID = try await KDrivePrivateDirectoryResolver.resolveFileID(
+            driveID: configuration.driveID,
+            rootFileID: configuration.rootFileID,
+            remote: fileProviderFactory(token.accessToken)
+        )
+        try await domainRegistrar.claimKnownFolders(
+            for: configuration,
+            parentFileID: parentFileID
+        )
+    }
+
     private func removeDomainAndLocalState(_ configuration: ProviderDomainConfiguration) async throws {
         try await releaseKnownFoldersBeforeRemovingDomain(configuration)
         try await domainRegistrar.removeDomain(for: configuration)
         try await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
         try await eventStore?.removeEvents(domainIdentifier: configuration.domainIdentifier)
-        try await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
-        knownFolderSyncStatesByDomainIdentifier[configuration.domainIdentifier] = nil
+        try await domainStore.remove(configurationIdentifier: configuration.configurationIdentifier)
+        try await relocationJournalStore.remove(
+            configurationIdentifier: configuration.configurationIdentifier
+        )
+        knownFolderSyncStatesByConfigurationIdentifier[configuration.configurationIdentifier] = nil
     }
 
     private func rollbackFailedDomainAddition(_ configuration: ProviderDomainConfiguration) async {
+        try? await domainRegistrar.removeDomain(for: configuration)
         try? await snapshotStore?.removeSnapshots(domainIdentifier: configuration.domainIdentifier)
-        try? await domainStore.remove(domainIdentifier: configuration.domainIdentifier)
+        try? await domainStore.remove(configurationIdentifier: configuration.configurationIdentifier)
 
         if let synchronizedState = try? await synchronizedDomainConfigurations() {
             domains = synchronizedState.configurations
         } else if let storedDomains = try? await domainStore.allConfigurations() {
             domains = storedDomains
         } else {
-            domains.removeAll { $0.domainIdentifier == configuration.domainIdentifier }
+            domains.removeAll { $0.configurationIdentifier == configuration.configurationIdentifier }
         }
     }
 
@@ -1937,18 +2571,23 @@ final class PotassiumProviderAppModel: ObservableObject {
     ) -> Bool {
         let key = driveKey(for: configuration)
         guard beginDriveAction(action, for: key) else { return false }
-        knownFolderTransitionDomainIdentifiers.insert(configuration.domainIdentifier)
+        guard domainTransitionConfigurationIdentifiers.insert(
+            configuration.configurationIdentifier
+        ).inserted else {
+            endDriveAction(for: key)
+            return false
+        }
         return true
     }
 
     private func endKnownFolderTransition(for configuration: ProviderDomainConfiguration) {
-        knownFolderTransitionDomainIdentifiers.remove(configuration.domainIdentifier)
+        domainTransitionConfigurationIdentifiers.remove(configuration.configurationIdentifier)
         endDriveAction(for: driveKey(for: configuration))
     }
 
     private func replaceDomainConfiguration(_ configuration: ProviderDomainConfiguration) {
         guard let index = domains.firstIndex(where: {
-            $0.domainIdentifier == configuration.domainIdentifier
+            $0.configurationIdentifier == configuration.configurationIdentifier
         }) else {
             return
         }
@@ -1957,12 +2596,83 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     private func refreshKnownFolderSyncStates() async throws {
         let systemStates = try await domainRegistrar.knownFolderSyncStates()
-        knownFolderSyncStatesByDomainIdentifier = Dictionary(uniqueKeysWithValues: domains.map { configuration in
+        knownFolderSyncStatesByConfigurationIdentifier = Dictionary(uniqueKeysWithValues: domains.map { configuration in
             (
-                configuration.domainIdentifier,
+                configuration.configurationIdentifier,
                 systemStates[configuration.domainIdentifier] ?? .unavailable
             )
         })
+    }
+
+    private func refreshDomainSystemStates() async throws {
+        try await refreshKnownFolderSyncStates()
+        try await refreshPlacementStates()
+    }
+
+    private func refreshPlacementStates() async throws {
+        let registeredStates = try await domainRegistrar.registeredDomainStates()
+        let registeredByDomainIdentifier = Dictionary(
+            uniqueKeysWithValues: registeredStates.map { ($0.domainIdentifier, $0) }
+        )
+        let journals = try await relocationJournalStore.allJournals()
+        let journalsByConfigurationIdentifier = Dictionary(
+            uniqueKeysWithValues: journals.map { ($0.configurationIdentifier, $0) }
+        )
+
+        var states: [String: ProviderDomainPlacementState] = [:]
+        for configuration in domains {
+            if let journal = journalsByConfigurationIdentifier[configuration.configurationIdentifier] {
+                switch journal.phase {
+                case .preparing, .knownFoldersReleased, .sourceRemoved,
+                     .targetConfigurationSaved, .targetRegistered:
+                    states[configuration.configurationIdentifier] = .needsRepair(
+                        "A storage change was interrupted. Repair it before continuing."
+                    )
+                case .knownFolderReclaimRequired:
+                    states[configuration.configurationIdentifier] = .needsRepair(
+                        "Storage changed, but Desktop & Documents still need permission."
+                    )
+                case .needsRepair:
+                    states[configuration.configurationIdentifier] = .needsRepair(
+                        "File Provider could not finish the storage change."
+                    )
+                }
+                continue
+            }
+
+            if let registeredState = registeredByDomainIdentifier[configuration.domainIdentifier] {
+                if case .externalVolume(let volumeUUID, _) = configuration.storageLocation,
+                   registeredState.configurationIdentifier != configuration.configurationIdentifier ||
+                    registeredState.volumeUUID != volumeUUID {
+                    states[configuration.configurationIdentifier] = .needsRepair(
+                        "The registered external domain does not match this Mac's configuration."
+                    )
+                } else if registeredState.isDisconnected {
+                    states[configuration.configurationIdentifier] = .authenticationRequired
+                } else {
+                    states[configuration.configurationIdentifier] = .connected
+                }
+                continue
+            }
+
+            switch configuration.storageLocation {
+            case .onThisMac:
+                #if os(macOS)
+                states[configuration.configurationIdentifier] = .needsRepair(
+                    "The File Provider domain is missing from this Mac."
+                )
+                #else
+                // Other platforms do not expose registered-domain state.
+                states[configuration.configurationIdentifier] = .connected
+                #endif
+            case .externalVolume(let volumeUUID, _):
+                let mountedVolume = try externalVolumeSelector.mountedVolume(uuid: volumeUUID)
+                states[configuration.configurationIdentifier] = mountedVolume == nil
+                    ? .volumeUnavailable
+                    : .needsRepair("The drive is connected, but its File Provider domain is missing.")
+            }
+        }
+        placementStatesByConfigurationIdentifier = states
     }
 
     private func releaseKnownFoldersBeforeRemovingDomain(_ configuration: ProviderDomainConfiguration) async throws {
@@ -1985,6 +2695,7 @@ final class PotassiumProviderAppModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     try? await self?.refreshKnownFolderSyncStates()
+                    try? await self?.refreshPlacementStates()
                 }
             }
         #endif
@@ -2043,6 +2754,22 @@ final class PotassiumProviderAppModel: ObservableObject {
             directoryURL: applicationSupport
                 .appendingPathComponent("potassiumProvider", isDirectory: true)
                 .appendingPathComponent("DomainConfigurations", isDirectory: true)
+        )
+    }
+
+    private static func makeDefaultRelocationJournalStore() -> any ProviderDomainRelocationJournaling {
+        if let appGroupStore = try? ProviderDomainRelocationFileStore(
+            appGroupIdentifier: ProviderConstants.appGroupIdentifier
+        ) {
+            return appGroupStore
+        }
+
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first ?? FileManager.default.temporaryDirectory
+        return ProviderDomainRelocationFileStore(
+            directoryURL: applicationSupport
+                .appendingPathComponent("potassiumProvider", isDirectory: true)
+                .appendingPathComponent("DomainRelocations", isDirectory: true)
         )
     }
 
@@ -2105,12 +2832,15 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     private func synchronizedDomainConfigurations() async throws -> (configurations: [ProviderDomainConfiguration], registrationError: Error?) {
         var configurations = try await domainStore.allConfigurations()
+        let pendingRelocationConfigurationIdentifiers = Set(
+            try await relocationJournalStore.allJournals().map(\.configurationIdentifier)
+        )
         let accountLookup = Dictionary(uniqueKeysWithValues: accounts.map { ($0.accountIdentifier, $0) })
         let displayNames = desiredDomainDisplayNames(for: configurations, accounts: accountLookup)
         var registrationError: Error?
 
         for index in configurations.indices {
-            let desiredDisplayName = displayNames[configurations[index].domainIdentifier] ?? configurations[index].displayName
+            let desiredDisplayName = displayNames[configurations[index].configurationIdentifier] ?? configurations[index].displayName
             if configurations[index].displayName != desiredDisplayName {
                 configurations[index].displayName = desiredDisplayName
                 configurations[index].updatedAt = Date()
@@ -2125,10 +2855,15 @@ final class PotassiumProviderAppModel: ObservableObject {
                 continue
             }
 
-            do {
-                try await domainRegistrar.addDomain(for: configurations[index])
-            } catch {
-                registrationError = registrationError ?? error
+            if case .onThisMac = configurations[index].storageLocation,
+               pendingRelocationConfigurationIdentifiers.contains(
+                    configurations[index].configurationIdentifier
+               ) == false {
+                do {
+                    try await domainRegistrar.addDomain(for: configurations[index])
+                } catch {
+                    registrationError = registrationError ?? error
+                }
             }
         }
 
@@ -2149,23 +2884,23 @@ final class PotassiumProviderAppModel: ObservableObject {
             let displayName = $0.encryptionMode == .opaqueVaultV2
                 ? "\(driveName) — Encrypted"
                 : driveName
-            return ($0.domainIdentifier, displayName)
+            return ($0.configurationIdentifier, displayName)
         })
         let groupedByBaseName = Dictionary(grouping: configurations) { configuration in
-            baseNames[configuration.domainIdentifier]?.localizedLowercase ?? configuration.driveName.localizedLowercase
+            baseNames[configuration.configurationIdentifier]?.localizedLowercase ?? configuration.driveName.localizedLowercase
         }
 
         var names: [String: String] = [:]
         for (_, group) in groupedByBaseName {
             if group.count == 1, let configuration = group.first {
-                names[configuration.domainIdentifier] = baseNames[configuration.domainIdentifier]
+                names[configuration.configurationIdentifier] = baseNames[configuration.configurationIdentifier]
                 continue
             }
 
             for configuration in group {
-                let baseName = baseNames[configuration.domainIdentifier] ?? "kDrive"
+                let baseName = baseNames[configuration.configurationIdentifier] ?? "kDrive"
                 let accountName = accounts[configuration.accountIdentifier]?.displayName ?? "Account"
-                names[configuration.domainIdentifier] = "\(baseName) (\(accountName))"
+                names[configuration.configurationIdentifier] = "\(baseName) (\(accountName))"
             }
         }
 
@@ -2180,14 +2915,14 @@ final class PotassiumProviderAppModel: ObservableObject {
         suffix: (ProviderDomainConfiguration) -> String
     ) -> [String: String] {
         let groupedNames = Dictionary(grouping: configurations) { configuration in
-            names[configuration.domainIdentifier] ?? configuration.displayName
+            names[configuration.configurationIdentifier] ?? configuration.displayName
         }
         var updatedNames = names
 
         for (_, group) in groupedNames where group.count > 1 {
             for configuration in group {
-                let currentName = updatedNames[configuration.domainIdentifier] ?? configuration.displayName
-                updatedNames[configuration.domainIdentifier] = currentName + suffix(configuration)
+                let currentName = updatedNames[configuration.configurationIdentifier] ?? configuration.displayName
+                updatedNames[configuration.configurationIdentifier] = currentName + suffix(configuration)
             }
         }
 
@@ -2290,6 +3025,11 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
     case missingAccount
     case missingToken
     case expiredToken
+    case externalVolumeUnavailable
+    case externalVolumeIdentityMismatch
+    case registeredTargetMissing
+    case unsupportedStorageRelocation
+    case storageMoveAndRecoveryFailed(move: String, recovery: String)
 
     var errorDescription: String? {
         switch self {
@@ -2299,6 +3039,16 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
             return "Connect to kDrive before loading drives."
         case .expiredToken:
             return "The saved access token has expired. Reconnect to kDrive."
+        case .externalVolumeUnavailable:
+            return "Connect the configured external drive and try again."
+        case .externalVolumeIdentityMismatch:
+            return "The selected drive changed while File Provider was preparing it."
+        case .registeredTargetMissing:
+            return "The replacement File Provider domain is no longer registered."
+        case .unsupportedStorageRelocation:
+            return "Encrypted vault storage cannot be moved because changing the File Provider domain identity would discard its local rollback witness."
+        case .storageMoveAndRecoveryFailed(let move, let recovery):
+            return "The storage move failed (\(move)) and the original placement could not be recovered (\(recovery))."
         }
     }
 }

@@ -10,6 +10,8 @@ flowchart LR
     User["User / Files app"] --> FP["potassiumProviderFileProvider"]
     User --> Actions["potassiumProviderActions"]
     App["SwiftUI app"] --> Domain["NSFileProviderManager domains"]
+    Domain --> LocalStorage["System-managed local storage"]
+    Domain --> ExternalVolume["Eligible encrypted APFS volume (macOS 15+)"]
     App --> Core["PotassiumProviderCore"]
     FP --> Core
     Actions --> Core
@@ -19,6 +21,7 @@ flowchart LR
     Core --> AppGroup["App group storage"]
     AppGroup --> Accounts["Accounts/*.json"]
     AppGroup --> DomainJSON["DomainConfigurations/*.json"]
+    AppGroup --> Relocations["DomainRelocations/*.json"]
     AppGroup --> Snapshots["Snapshots.sqlite3"]
 ```
 
@@ -26,8 +29,8 @@ flowchart LR
 
 - `potassiumProvider`: SwiftUI app used to connect multiple local accounts,
   load kDrives per account, register File Provider domains, remove configured
-  domains, control macOS Desktop & Documents sync, and log out accounts
-  independently.
+  domains, choose and change macOS storage placement, repair interrupted moves,
+  control Desktop & Documents sync, and log out accounts independently.
 - `potassiumProviderFileProvider`: `NSFileProviderReplicatedExtension`
   implementation used by the system to enumerate, fetch, create, modify, trash,
   and delete items, provide macOS known-folder locations, and execute
@@ -46,12 +49,16 @@ flowchart LR
 
 ## Ownership Boundaries
 
-- The app owns account setup, domain registration, live known-folder state,
-  user-triggered claim/release, domain removal, and independent account logout.
+- The app owns account setup, domain registration, external-volume selection and
+  eligibility checks, durable relocation/recovery, live placement and
+  known-folder state, user-triggered claim/release, domain removal, and
+  independent account logout.
 - The File Provider extension owns Apple's runtime callbacks and maps those
   callbacks to `KDriveFileProviding` operations. On macOS it also maps Desktop
   and Documents to `Private/<current Mac name>` on the selected drive, while
-  preserving active legacy domains that still point directly at `Private`.
+  preserving active legacy domains that still point directly at `Private`. For
+  an external domain it approves connection only after validating the opaque
+  local binding, current volume UUID, and usable same-Mac keychain credentials.
 - `PotassiumProviderCore` owns typed provider models, persistence protocols,
   OAuth utilities, and the `PotassiumKDriveService` adapter.
 - `potassiumChannel` owns the typed request builders and service calls for
@@ -61,13 +68,44 @@ flowchart LR
 - The keychain access group is the shared credential boundary. Tokens are keyed
   by local account identifier.
 
+## Domain And Placement Identity
+
+`configurationIdentifier` is the stable app identity for one configured kDrive.
+It keys app-group JSON, relocation journals, SwiftUI/status identity, and the
+opaque external-domain binding. `domainIdentifier` identifies the current system
+domain and can change when storage is recreated; Apple generates it for domains
+created with the external-volume initializer. SQLite snapshots and activity are
+keyed by this current domain identifier, so a successful move removes the old
+domain's rows.
+
+External `NSFileProviderDomain.userInfo` contains only a schema version and the
+stable configuration identifier. Account selection and all credentials remain
+in the app group/keychain on the Mac. A selected folder is normalized to its
+containing volume before the app asks Apple to create the system-managed domain;
+no arbitrary user folder becomes part of the provider architecture.
+
+Placement changes are limited to legacy plaintext configurations. Encrypted
+vault local trust and rollback state is keyed by `domainIdentifier`, while a
+placement change necessarily creates a replacement identifier. The UI, app
+model, and extension reject that combination until the trust state has a
+reviewed atomic migration design.
+
 ## Runtime Flow
 
 At runtime, the extension constructs a `FileProviderRuntime` for each callback.
-That runtime loads the domain configuration from the app group, uses the
-configuration's `accountIdentifier` to load and refresh the correct OAuth token
-from keychain when needed, creates a `PotassiumKDriveService`, and opens the
-SQLite snapshot store.
+A local domain resolves configuration by its current domain identifier. An
+external domain decodes its stable configuration binding, then verifies that the
+stored current domain identifier and volume UUID match the system domain. The
+runtime uses the resulting configuration's `accountIdentifier` to load and
+refresh the correct OAuth token from keychain when needed, creates a
+`PotassiumKDriveService`, and opens the SQLite snapshot store.
+
+Changing eligible plaintext placement is explicitly transactional at the
+application level rather than an in-place mutation: stabilize, release known
+folders when active, prepare the target, remove the source while preserving
+dirty data, save/register the target, clean old domain-keyed rows, and reclaim
+known folders. The durable `DomainRelocations` journal is the recovery boundary
+across crashes and relaunch.
 
 Neither extension keeps a long-lived process-level sync engine. Each File
 Provider callback or contextual panel loads account-scoped runtime state,

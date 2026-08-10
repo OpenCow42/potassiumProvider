@@ -3,6 +3,10 @@ import SwiftUI
 import CoreImage
 import CoreImage.CIFilterBuiltins
 
+#if os(macOS)
+import AppKit
+#endif
+
 enum ProviderSetupRoute: Hashable {
     case addAccount
     case account(String)
@@ -115,6 +119,25 @@ struct ProviderSetupView: View {
             reduceMotion ? .easeOut(duration: 0.16) : .snappy(duration: 0.28, extraBounce: 0),
             value: model.errorMessage
         )
+        #if os(macOS)
+        .alert(
+            "Local Data Preserved",
+            isPresented: preservedDataAlertBinding,
+            presenting: model.preservedDataLocation
+        ) { location in
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([location.url])
+                model.preservedDataLocation = nil
+            }
+            .accessibilityIdentifier("preserved-data-reveal-in-finder")
+            Button("Dismiss", role: .cancel) {
+                model.preservedDataLocation = nil
+            }
+            .accessibilityIdentifier("preserved-data-dismiss")
+        } message: { location in
+            Text("macOS preserved local data from \(location.driveName) at \(location.url.path). Review it before deleting it.")
+        }
+        #endif
     }
 
     private var accountList: some View {
@@ -222,6 +245,18 @@ struct ProviderSetupView: View {
         .topBarTrailing
         #endif
     }
+
+    #if os(macOS)
+    private var preservedDataAlertBinding: Binding<Bool> {
+        Binding {
+            model.preservedDataLocation != nil
+        } set: { isPresented in
+            if isPresented == false {
+                model.preservedDataLocation = nil
+            }
+        }
+    }
+    #endif
 }
 
 private struct ProviderAccountRow: View {
@@ -538,6 +573,9 @@ private struct ProviderDriveManagementView: View {
     @State private var isRecoveryVerificationPresented = false
     @State private var isCloudRemovalConfirmationPresented = false
     @State private var isKnownFolderPreflightPresented = false
+    #if os(macOS)
+    @State private var isStorageSelectionPresented = false
+    #endif
 
     var body: some View {
         Group {
@@ -569,18 +607,19 @@ private struct ProviderDriveManagementView: View {
                 .accessibilityIdentifier("drive.refresh")
             }
         }
-        .confirmationDialog(
+        .alert(
             "Remove \(descriptor?.name ?? "this drive") from Files?",
-            isPresented: $isRemovalConfirmationPresented,
-            titleVisibility: .visible
+            isPresented: $isRemovalConfirmationPresented
         ) {
             Button("Remove from Files", role: .destructive) {
                 guard let configuration = descriptor?.configuration else { return }
                 Task { await model.removeDomain(configuration) }
             }
+            .accessibilityIdentifier("drive.confirmRemoval")
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the File Provider domain, cached snapshots, activities, conflicts, and other provider-local state. Remote kDrive files are not deleted.")
+                .accessibilityIdentifier("drive.removalWarning")
         }
         .sheet(isPresented: vaultSetupBinding) {
             EncryptedVaultSetupFlow(model: model)
@@ -646,6 +685,16 @@ private struct ProviderDriveManagementView: View {
         } message: {
             Text("macOS will stop replicating both folders with kDrive. Remote files in \(knownFolderRemotePath) are not deleted.")
         }
+        .sheet(isPresented: $isStorageSelectionPresented) {
+            if let descriptor {
+                ProviderStorageSelectionSheet(
+                    purpose: storageSelectionPurpose(for: descriptor),
+                    selectExternalVolume: model.selectExternalVolume
+                ) { externalVolume in
+                    applyStorageSelection(externalVolume, to: descriptor)
+                }
+            }
+        }
         #endif
     }
 
@@ -662,7 +711,13 @@ private struct ProviderDriveManagementView: View {
     }
 
     private var isBusy: Bool {
-        activeAction != nil || model.isLoadingDrives(for: key.accountIdentifier)
+        activeAction != nil ||
+        model.isLoadingDrives(for: key.accountIdentifier) ||
+        (descriptor?.configuration.map(model.isTransitioning) ?? false)
+    }
+
+    private var canMutateConfiguredDomain: Bool {
+        descriptor?.configuration.map(model.canMutate) ?? true
     }
 
     private var vaultSetupBinding: Binding<Bool> {
@@ -718,6 +773,30 @@ private struct ProviderDriveManagementView: View {
                 LabeledContent("Availability") {
                     Text(descriptor.isConfigured ? "In Files" : "Not in Files")
                         .foregroundStyle(descriptor.isConfigured ? .green : .secondary)
+                }
+
+                if descriptor.configuration == nil, let remote = descriptor.remote {
+                    Button {
+                        #if os(macOS)
+                        isStorageSelectionPresented = true
+                        #else
+                        Task {
+                            await model.addDomain(
+                                accountIdentifier: key.accountIdentifier,
+                                drive: remote
+                            )
+                        }
+                        #endif
+                    } label: {
+                        actionLabel(
+                            title: "Add to Files",
+                            systemImage: "folder.badge.plus",
+                            action: .addingToFiles
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy)
+                    .accessibilityIdentifier("drive.addToFiles")
                 }
 
                 if descriptor.encryptedConfiguration == nil, let remote = descriptor.remote {
@@ -822,7 +901,9 @@ private struct ProviderDriveManagementView: View {
                         #endif
                     }
                     .disabled(
-                        isBusy || configuration.encryptionMode == .opaqueVaultV1
+                        isBusy ||
+                        canMutateConfiguredDomain == false ||
+                        configuration.encryptionMode == .opaqueVaultV1
                     )
                     .accessibilityIdentifier("drive.showInFiles")
 
@@ -836,7 +917,9 @@ private struct ProviderDriveManagementView: View {
                         )
                     }
                     .disabled(
-                        isBusy || configuration.encryptionMode == .opaqueVaultV1
+                        isBusy ||
+                        canMutateConfiguredDomain == false ||
+                        configuration.encryptionMode == .opaqueVaultV1
                     )
                     .accessibilityIdentifier("drive.syncNow")
 
@@ -866,6 +949,9 @@ private struct ProviderDriveManagementView: View {
             #if os(macOS)
             if let configuration = descriptor.configuration,
                configuration.encryptionMode != .opaqueVaultV1 {
+                if configuration.supportsStorageRelocation {
+                    storageSection(configuration)
+                }
                 knownFolderSection(configuration)
             }
             #endif
@@ -881,13 +967,14 @@ private struct ProviderDriveManagementView: View {
                     Button("Remove from Files", role: .destructive) {
                         isRemovalConfirmationPresented = true
                     }
-                    .disabled(isBusy)
+                    .disabled(isBusy || canMutateConfiguredDomain == false)
                     .accessibilityIdentifier("drive.removeFromFiles")
                 } footer: {
                     Text("Removing this drive clears its provider-local state but does not delete remote kDrive files.")
                 }
             }
         }
+        .accessibilityIdentifier("drive.management")
     }
 
     @ViewBuilder
@@ -1034,6 +1121,103 @@ private struct ProviderDriveManagementView: View {
     }
 
     #if os(macOS)
+    private func storageSection(_ configuration: ProviderDomainConfiguration) -> some View {
+        let state = model.placementState(for: configuration)
+        return Section {
+            LabeledContent("Location", value: configuration.storageLocation.userFacingTitle)
+            Label(state.title, systemImage: placementStateSystemImage(state))
+                .foregroundStyle(state.isAttentionRequired ? .orange : .secondary)
+                .accessibilityIdentifier("domain-storage-state-\(configuration.configurationIdentifier)")
+
+            if let detail = state.detail {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if model.isTransitioning(configuration) {
+                HStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(state.title)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            } else if state.isAttentionRequired {
+                Button("Repair Storage") {
+                    Task { await model.repairDomain(configuration) }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("domain-storage-repair-\(configuration.configurationIdentifier)")
+            } else {
+                Button("Change Storage") {
+                    isStorageSelectionPresented = true
+                }
+                .disabled(isBusy || model.canMutate(configuration) == false)
+                .accessibilityIdentifier("domain-storage-change-\(configuration.configurationIdentifier)")
+            }
+        } header: {
+            Text("Storage")
+        } footer: {
+            Text("Changing storage recreates the local File Provider cache. Offline files may be downloaded again.")
+        }
+        .accessibilityIdentifier("domain-storage-\(configuration.configurationIdentifier)")
+    }
+
+    private func storageSelectionPurpose(
+        for descriptor: ProviderDriveDescriptor
+    ) -> ProviderStorageSelectionPurpose {
+        if let configuration = descriptor.configuration {
+            return .move(
+                driveName: descriptor.name,
+                currentStorageLocation: configuration.storageLocation
+            )
+        }
+        return .add(driveName: descriptor.name)
+    }
+
+    private func applyStorageSelection(
+        _ externalVolume: ProviderExternalVolume?,
+        to descriptor: ProviderDriveDescriptor
+    ) {
+        Task {
+            if let configuration = descriptor.configuration {
+                await model.moveDomain(
+                    configuration,
+                    toExternalVolume: externalVolume
+                )
+            } else if let remote = descriptor.remote {
+                if let externalVolume {
+                    await model.addDomain(
+                        accountIdentifier: key.accountIdentifier,
+                        drive: remote,
+                        externalVolume: externalVolume
+                    )
+                } else {
+                    await model.addDomain(
+                        accountIdentifier: key.accountIdentifier,
+                        drive: remote
+                    )
+                }
+            }
+        }
+    }
+
+    private func placementStateSystemImage(_ state: ProviderDomainPlacementState) -> String {
+        switch state {
+        case .connected:
+            "checkmark.circle.fill"
+        case .authenticationRequired:
+            "person.crop.circle.badge.exclamationmark"
+        case .volumeUnavailable:
+            "externaldrive.badge.exclamationmark"
+        case .registering, .moving:
+            "arrow.triangle.2.circlepath"
+        case .needsRepair:
+            "wrench.and.screwdriver.fill"
+        }
+    }
+
     private func knownFolderSection(_ configuration: ProviderDomainConfiguration) -> some View {
         let state = model.knownFolderSyncState(for: configuration)
         let remotePath = model.knownFolderRemotePath(for: configuration)
@@ -1055,7 +1239,7 @@ private struct ProviderDriveManagementView: View {
                 Button("Stop Syncing", role: .destructive) {
                     isStopSyncConfirmationPresented = true
                 }
-                .disabled(isBusy)
+                .disabled(isBusy || canMutateConfiguredDomain == false)
                 .accessibilityIdentifier("drive.stopKnownFolders")
             case .inactive:
                 Button {
@@ -1071,7 +1255,7 @@ private struct ProviderDriveManagementView: View {
                     )
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isBusy)
+                .disabled(isBusy || canMutateConfiguredDomain == false)
                 .accessibilityIdentifier("drive.enableKnownFolders")
             case .unavailable:
                 Label("File Provider status unavailable", systemImage: "exclamationmark.circle")
