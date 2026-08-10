@@ -186,6 +186,17 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func listDrives() async throws -> [KDriveDriveSummary] {
         try await performNetworkOperation("listDrives") {
+            let accountResponse = try await apiClient.send(APIRequest<InfomaniakResponse<[KDriveOrganisationAccount]>>(
+                method: .get,
+                path: "/1/account",
+                queryParameters: [
+                    QueryParameter(name: "with", value: .string("logo")),
+                    QueryParameter(name: "order_by", value: .string("name")),
+                ]
+            ))
+            let relationshipsByAccountID = Dictionary(grouping: accountResponse.data, by: \.id)
+                .mapValues { Set($0.map(\.type)) }
+
             let response = try await driveClient.send(APIRequest<InfomaniakResponse<KDriveInitPayload>>(
                 method: .get,
                 path: "/2/drive/init",
@@ -196,6 +207,10 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                     id: $0.id,
                     name: $0.name,
                     accountID: $0.accountId,
+                    ownership: Self.ownership(
+                        for: $0.accountId,
+                        relationshipsByAccountID: relationshipsByAccountID
+                    ),
                     role: $0.role,
                     status: $0.status ?? "ok",
                     isInMaintenance: $0.inMaintenance ?? false
@@ -719,6 +734,28 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         return components.isEmpty ? "Unknown editor" : components.joined(separator: " ")
     }
 
+    private static func ownership(
+        for driveAccountID: Int,
+        relationshipsByAccountID: [Int: Set<String>]
+    ) -> KDriveDriveOwnership {
+        guard let relationshipTypes = relationshipsByAccountID[driveAccountID] else {
+            return .notOwned
+        }
+
+        if relationshipTypes == Set([KDriveOrganisationAccountRelationship.owner.rawValue]) {
+            return .owned
+        }
+
+        let knownNonOwnerTypes = Set(KDriveOrganisationAccountRelationship.allCases
+            .filter { $0 != .owner }
+            .map(\.rawValue))
+        if relationshipTypes.isSubset(of: knownNonOwnerTypes) {
+            return .notOwned
+        }
+
+        return .indeterminate
+    }
+
     private func performNetworkOperation<Value>(
         _ operation: String,
         _ work: () async throws -> Value
@@ -860,6 +897,18 @@ private struct KDriveInitDrive: Decodable, Sendable {
     let role: String
     let status: String?
     let inMaintenance: Bool?
+}
+
+private struct KDriveOrganisationAccount: Decodable, Sendable {
+    let id: Int
+    let type: String
+}
+
+private enum KDriveOrganisationAccountRelationship: String, CaseIterable {
+    case owner
+    case admin
+    case normal
+    case client
 }
 
 extension KDriveFileItem {

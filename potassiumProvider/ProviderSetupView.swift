@@ -243,7 +243,7 @@ private struct ProviderAccountRow: View {
                 Text(account.authenticationKind.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("\(loadedDriveCount) discovered · \(configuredDriveCount) in Files")
+                Text("\(loadedDriveCount) owned · \(configuredDriveCount) in Files")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -432,6 +432,17 @@ private struct ProviderAccountManagementView: View {
                         Text("Loading kDrives…")
                     }
                     .accessibilityElement(children: .combine)
+                } else if driveDescriptors.isEmpty, model.hasCompletedDriveDiscovery(for: accountIdentifier) {
+                    ContentUnavailableView {
+                        Label("No Owned kDrives Available", systemImage: "externaldrive.badge.questionmark")
+                    } description: {
+                        Text("This account does not own any kDrives available for setup. Shared kDrives are not shown.")
+                    } actions: {
+                        Button("Refresh Drives") {
+                            Task { await model.loadDrives(accountIdentifier: accountIdentifier) }
+                        }
+                        .disabled(model.canLoadDrives(for: accountIdentifier) == false)
+                    }
                 } else if driveDescriptors.isEmpty {
                     ContentUnavailableView {
                         Label("No kDrives Available", systemImage: "externaldrive.badge.questionmark")

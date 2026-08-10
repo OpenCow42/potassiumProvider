@@ -11,7 +11,7 @@ the existing File Provider mutation protocol remains unchanged.
 
 | Provider operation | Local method | potassiumChannel call | Visible endpoint |
 | --- | --- | --- | --- |
-| Load drives | `listDrives()` | raw `APIRequest` through `driveClient` | `GET /2/drive/init?with=drives` |
+| Load owned drives | `listDrives()` | raw `APIRequest` through `apiClient` and `driveClient` | `GET /1/account?with=logo&order_by=name`, then `GET /2/drive/init?with=drives` |
 | Item metadata | `item(driveID:fileID:)` | `getFile` | `GET /3/drive/{driveId}/files/{fileId}` |
 | Legacy folder listing | `listDirectory(...)` | `listDirectoryFiles` | `GET /3/drive/{driveId}/files/{fileId}/files` |
 | Advanced folder listing | `listAdvancedDirectory(..., cursor: nil, ...)` | `listAdvancedDirectoryListing` | `GET /3/drive/{driveId}/files/{fileId}/listing` |
@@ -46,6 +46,20 @@ Some mutation endpoint paths are abstracted behind potassiumChannel service
 methods in this app. The table names the local operation and service call so the
 implementation can be followed even when the request body is built by the
 library.
+
+## Drive Ownership Discovery
+
+`listDrives()` maps every accessible drive to an explicit ownership result. A
+drive is `owned` only when its `accountId` has exactly one known relationship
+type, `owner`, in the authenticated `GET /1/account` response. Known non-owner
+relationships (`admin`, `normal`, and `client`) and absent account
+relationships are `notOwned`; unknown or conflicting relationship types are
+`indeterminate`.
+
+The setup model exposes only `owned` drives. An indeterminate result rejects the
+refresh before replacing the current list, records a sanitized discovery failure,
+and leaves stored File Provider domains visible for recovery. The raw kDrive role
+is display metadata and is never used as ownership proof.
 
 Binary operations are exposed to File Provider as `KDriveTransferOperation`.
 It preserves potassiumChannel's live Foundation progress, shared async result,

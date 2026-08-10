@@ -198,6 +198,10 @@ final class PotassiumProviderAppModel: ObservableObject {
         drivesByAccountIdentifier[accountIdentifier] ?? []
     }
 
+    func hasCompletedDriveDiscovery(for accountIdentifier: String) -> Bool {
+        drivesByAccountIdentifier[accountIdentifier] != nil
+    }
+
     func domains(for accountIdentifier: String) -> [ProviderDomainConfiguration] {
         domains.filter { $0.accountIdentifier == accountIdentifier }
     }
@@ -441,23 +445,35 @@ final class PotassiumProviderAppModel: ObservableObject {
             let token = try await usableToken(accountIdentifier: accountIdentifier)
             errorMessage = nil
 
-            let drives = try await fileProviderFactory(token.accessToken).listDrives()
-            drivesByAccountIdentifier[accountIdentifier] = drives
+            let discoveredDrives = try await fileProviderFactory(token.accessToken).listDrives()
+            guard discoveredDrives.contains(where: { $0.ownership == .indeterminate }) == false else {
+                throw KDriveDriveOwnershipError.indeterminate
+            }
+
+            let ownedDrives = discoveredDrives.filter { $0.ownership == .owned }
+            drivesByAccountIdentifier[accountIdentifier] = ownedDrives
             await refreshVaultAccessState()
             if selectedDriveIDs[accountIdentifier] == nil ||
-                drives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
-                selectedDriveIDs[accountIdentifier] = drives.first?.id
+                ownedDrives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
+                selectedDriveIDs[accountIdentifier] = ownedDrives.first?.id
             }
             refreshDraftFromSelectedDrive(accountIdentifier: accountIdentifier)
-            statusMessage = drives.isEmpty ? "No kDrives returned for \(account.displayName)." : "Loaded \(drives.count) kDrive\(drives.count == 1 ? "" : "s") for \(account.displayName)."
+            statusMessage = ownedDrives.isEmpty
+                ? "No owned kDrives found for \(account.displayName)."
+                : "Loaded \(ownedDrives.count) owned kDrive\(ownedDrives.count == 1 ? "" : "s") for \(account.displayName)."
         } catch {
+            let ownershipIsIndeterminate = error is KDriveDriveOwnershipError
             await recordAppFailure(
                 kind: .driveDiscovery,
-                summary: "Could not load kDrives.",
+                summary: ownershipIsIndeterminate
+                    ? "Could not verify owned kDrives."
+                    : "Could not load owned kDrives.",
                 error: error,
-                category: .api
+                category: ownershipIsIndeterminate ? .validation : .api
             )
-            errorMessage = "Could not load kDrives: \(error.localizedDescription)"
+            errorMessage = ownershipIsIndeterminate
+                ? "Could not verify which kDrives are owned by this account. Refresh and try again."
+                : "Could not load owned kDrives. Refresh and try again."
             statusMessage = nil
         }
     }
@@ -520,6 +536,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     func addDomain(accountIdentifier: String, drive: KDriveDriveSummary) async {
+        guard canCreateDomain(for: drive) else { return }
         selectedDriveIDs[accountIdentifier] = drive.id
         manualDriveIDs[accountIdentifier] = String(drive.id)
         manualDriveNames[accountIdentifier] = drive.name
@@ -533,6 +550,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         accountIdentifier: String,
         drive: KDriveDriveSummary
     ) async {
+        guard canCreateDomain(for: drive) else { return }
         beginEncryptedVaultActivation(.create(
             accountIdentifier: accountIdentifier,
             drive: drive
@@ -544,6 +562,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         drive: KDriveDriveSummary,
         recoveryKitText: String
     ) {
+        guard canCreateDomain(for: drive) else { return }
         beginEncryptedVaultActivation(.recoveryKit(
             accountIdentifier: accountIdentifier,
             drive: drive,
@@ -556,6 +575,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         drive: KDriveDriveSummary,
         vaultID: VaultIdentifier
     ) {
+        guard canCreateDomain(for: drive) else { return }
         guard encryptedVaultICloudKeychainEnabled else {
             errorMessage = "iCloud Keychain vault access is disabled until its security review is complete."
             return
@@ -1999,10 +2019,21 @@ final class PotassiumProviderAppModel: ObservableObject {
         guard let selectedDriveID = selectedDriveIDs[accountIdentifier],
               let selectedDrive = drivesByAccountIdentifier[accountIdentifier]?.first(where: { $0.id == selectedDriveID })
         else {
+            manualDriveIDs[accountIdentifier] = ""
+            manualDriveNames[accountIdentifier] = ""
             return
         }
         manualDriveIDs[accountIdentifier] = String(selectedDrive.id)
         manualDriveNames[accountIdentifier] = selectedDrive.name
+    }
+
+    private func canCreateDomain(for drive: KDriveDriveSummary) -> Bool {
+        guard drive.ownership == .owned else {
+            errorMessage = "Only kDrives owned by this account can be added to Files."
+            statusMessage = nil
+            return false
+        }
+        return true
     }
 
     private func resolvedDriveDraft(accountIdentifier: String) -> (id: Int, name: String)? {

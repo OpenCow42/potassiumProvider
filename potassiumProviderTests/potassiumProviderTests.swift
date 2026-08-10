@@ -1025,6 +1025,7 @@ struct PotassiumProviderCoreTests {
             id: 10,
             name: "Work Drive",
             accountID: 100,
+            ownership: .owned,
             role: "admin",
             status: "active",
             isInMaintenance: false
@@ -1429,6 +1430,52 @@ struct PotassiumProviderCoreTests {
         #expect(KDriveRemoteErrorClassifier.apiRejection(from: NSError(domain: NSURLErrorDomain, code: -1009)) == nil)
     }
 
+    @Test func kdriveServiceClassifiesDriveOwnershipFromAccountRelationships() async throws {
+        await KDriveOwnershipDiscoveryURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveOwnershipDiscoveryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            driveBaseURL: URL(string: "https://drive.example.test")!,
+            session: session
+        )
+
+        let drives = try await service.listDrives()
+
+        #expect(drives.map(\.id) == [10, 20, 30, 40, 50, 60])
+        #expect(drives.map(\.ownership) == [
+            .owned,
+            .notOwned,
+            .notOwned,
+            .notOwned,
+            .indeterminate,
+            .indeterminate,
+        ])
+
+        let requests = await KDriveOwnershipDiscoveryURLProtocol.requests()
+        #expect(requests.count == 2)
+        let accountRequest = try #require(requests.first)
+        let accountURL = try #require(accountRequest.url)
+        let accountComponents = try #require(URLComponents(url: accountURL, resolvingAgainstBaseURL: false))
+        #expect(accountURL.host == "api.example.test")
+        #expect(accountComponents.path == "/1/account")
+        #expect(accountComponents.queryItems?.contains(URLQueryItem(name: "with", value: "logo")) == true)
+        #expect(accountComponents.queryItems?.contains(URLQueryItem(name: "order_by", value: "name")) == true)
+        #expect(accountRequest.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
+
+        let driveRequest = try #require(requests.last)
+        let driveURL = try #require(driveRequest.url)
+        let driveComponents = try #require(URLComponents(url: driveURL, resolvingAgainstBaseURL: false))
+        #expect(driveURL.host == "drive.example.test")
+        #expect(driveComponents.path == "/2/drive/init")
+        #expect(driveComponents.queryItems?.contains(URLQueryItem(name: "with", value: "drives")) == true)
+        #expect(driveRequest.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
+    }
+
     @Test func kdriveServiceConditionallyReplacesFileByID() async throws {
         await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.fileUploadResponseData)
         let configuration = URLSessionConfiguration.ephemeral
@@ -1650,6 +1697,7 @@ struct PotassiumProviderCoreTests {
             id: 42,
             name: "Work Drive",
             accountID: 100,
+            ownership: .owned,
             role: "admin",
             status: "ok",
             isInMaintenance: false
@@ -1683,6 +1731,150 @@ struct PotassiumProviderCoreTests {
     }
 
     @MainActor
+    @Test func appModelPublishesOnlyOwnedDrivesAndPreservesConfiguredExcludedDrive() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Connected Account",
+            authenticationKind: .manualAccessToken
+        )
+        let configuredExcludedDrive = ProviderDomainConfiguration(
+            accountIdentifier: account.accountIdentifier,
+            displayName: "Saved Shared Drive",
+            driveID: 20,
+            driveName: "Saved Shared Drive"
+        )
+        let tokenStore = InMemoryOAuthTokenStore()
+        await tokenStore.saveToken(token(accessToken: "owned-token"), accountIdentifier: account.accountIdentifier)
+        let ownedDrive = makeDiscoveredDrive(id: 10, name: "Owned A", ownership: .owned, role: "user")
+        let secondOwnedDrive = makeDiscoveredDrive(id: 30, name: "Owned B", ownership: .owned, role: "admin")
+        let delegatedAdminDrive = makeDiscoveredDrive(id: 20, name: "Delegated", ownership: .notOwned, role: "admin")
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            initialAccounts: [account],
+            initialDomains: [configuredExcludedDrive],
+            fileProviderFactory: { _ in
+                FakeKDriveFileProvider(drives: [ownedDrive, delegatedAdminDrive, secondOwnedDrive])
+            }
+        )
+
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.drives(for: account.accountIdentifier) == [ownedDrive, secondOwnedDrive])
+        #expect(model.selectedDriveID(for: account.accountIdentifier) == ownedDrive.id)
+        #expect(model.statusMessage == "Loaded 2 owned kDrives for Connected Account.")
+        let descriptors = ProviderDriveDescriptor.merge(
+            accountIdentifier: account.accountIdentifier,
+            drives: model.drives(for: account.accountIdentifier),
+            configurations: model.domains(for: account.accountIdentifier)
+        )
+        let savedDescriptor = try #require(descriptors.first { $0.driveID == delegatedAdminDrive.id })
+        #expect(savedDescriptor.remote == nil)
+        #expect(savedDescriptor.configuration == configuredExcludedDrive)
+
+        await model.addDomain(accountIdentifier: account.accountIdentifier, drive: delegatedAdminDrive)
+
+        #expect(model.domains == [configuredExcludedDrive])
+        #expect(model.errorMessage == "Only kDrives owned by this account can be added to Files.")
+    }
+
+    @MainActor
+    @Test func appModelShowsOwnedEmptyStateAfterExcludingAccessibleDrives() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Connected Account",
+            authenticationKind: .manualAccessToken
+        )
+        let tokenStore = InMemoryOAuthTokenStore()
+        await tokenStore.saveToken(token(accessToken: "owned-token"), accountIdentifier: account.accountIdentifier)
+        let sharedDrive = makeDiscoveredDrive(id: 20, name: "Shared", ownership: .notOwned, role: "admin")
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            initialAccounts: [account],
+            fileProviderFactory: { _ in
+                FakeKDriveFileProvider(drives: [sharedDrive])
+            }
+        )
+        model.setManualDriveID("20", for: account.accountIdentifier)
+        model.setManualDriveName("Shared", for: account.accountIdentifier)
+
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.hasCompletedDriveDiscovery(for: account.accountIdentifier))
+        #expect(model.drives(for: account.accountIdentifier).isEmpty)
+        #expect(model.selectedDriveID(for: account.accountIdentifier) == nil)
+        #expect(model.manualDriveID(for: account.accountIdentifier).isEmpty)
+        #expect(model.manualDriveName(for: account.accountIdentifier).isEmpty)
+        #expect(model.statusMessage == "No owned kDrives found for Connected Account.")
+    }
+
+    @MainActor
+    @Test func appModelFailsClosedForIndeterminateDriveOwnership() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Connected Account",
+            authenticationKind: .manualAccessToken
+        )
+        let previouslyOwnedDrive = makeDiscoveredDrive(id: 10, name: "Previously Owned", ownership: .owned)
+        let indeterminateDrive = makeDiscoveredDrive(id: 20, name: "Unknown", ownership: .indeterminate)
+        let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
+        let tokenStore = InMemoryOAuthTokenStore()
+        await tokenStore.saveToken(token(accessToken: "owned-token"), accountIdentifier: account.accountIdentifier)
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            eventStore: eventStore,
+            automaticallyReloadStoredState: false,
+            initialAccounts: [account],
+            initialDrivesByAccountIdentifier: [account.accountIdentifier: [previouslyOwnedDrive]],
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: [indeterminateDrive]) }
+        )
+
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.drives(for: account.accountIdentifier) == [previouslyOwnedDrive])
+        #expect(model.errorMessage == "Could not verify which kDrives are owned by this account. Refresh and try again.")
+        let failure = try #require(await eventStore.activities().first)
+        #expect(failure.kind == .driveDiscovery)
+        #expect(failure.errorCategory == .validation)
+        #expect(failure.summary == "Could not verify owned kDrives.")
+        #expect(failure.diagnosticSummary?.contains("Unknown") == false)
+    }
+
+    @MainActor
     @Test func appModelAutomaticallyLoadsSavedAccountDrivesWhenPossible() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1708,6 +1900,7 @@ struct PotassiumProviderCoreTests {
             id: 42,
             name: "Work Drive",
             accountID: 100,
+            ownership: .owned,
             role: "admin",
             status: "ok",
             isInMaintenance: false
@@ -1748,6 +1941,7 @@ struct PotassiumProviderCoreTests {
             id: 42,
             name: "Work Drive",
             accountID: 100,
+            ownership: .owned,
             role: "admin",
             status: "ok",
             isInMaintenance: false
@@ -1789,6 +1983,7 @@ struct PotassiumProviderCoreTests {
             id: 42,
             name: "Work Drive",
             accountID: 100,
+            ownership: .owned,
             role: "admin",
             status: "ok",
             isInMaintenance: false
@@ -1797,6 +1992,7 @@ struct PotassiumProviderCoreTests {
             id: 84,
             name: "Work Drive",
             accountID: 200,
+            ownership: .owned,
             role: "admin",
             status: "ok",
             isInMaintenance: false
@@ -2089,9 +2285,26 @@ struct PotassiumProviderCoreTests {
         #expect(failure.severity == .error)
         #expect(failure.kind == .driveDiscovery)
         #expect(failure.errorCategory == .api)
-        #expect(failure.summary == "Could not load kDrives.")
+        #expect(failure.summary == "Could not load owned kDrives.")
         #expect(failure.summary.contains("secret-token") == false)
         #expect(failure.diagnosticSummary?.contains("secret-token") == false)
+    }
+
+    private func makeDiscoveredDrive(
+        id: Int,
+        name: String,
+        ownership: KDriveDriveOwnership,
+        role: String = "admin"
+    ) -> KDriveDriveSummary {
+        KDriveDriveSummary(
+            id: id,
+            name: name,
+            accountID: id,
+            ownership: ownership,
+            role: role,
+            status: "active",
+            isInMaintenance: false
+        )
     }
 
     private func makeItem(
@@ -2581,6 +2794,109 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
             data.append(buffer, count: bytesRead)
         }
         return data
+    }
+}
+
+private final class KDriveOwnershipDiscoveryURLProtocol: URLProtocol {
+    private static let capture = KDriveOwnershipDiscoveryCapture()
+
+    static func reset() async {
+        await capture.reset()
+    }
+
+    static func requests() async -> [URLRequest] {
+        await capture.requests()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let request = request
+        Task {
+            await Self.capture.record(request)
+            let data = Self.responseData(for: request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func responseData(for request: URLRequest) -> Data {
+        switch request.url?.path {
+        case "/1/account":
+            return """
+            {
+              "result": "success",
+              "data": [
+                { "id": 10, "type": "owner" },
+                { "id": 20, "type": "admin" },
+                { "id": 30, "type": "normal" },
+                { "id": 50, "type": "delegated" },
+                { "id": 60, "type": "owner" },
+                { "id": 60, "type": "admin" }
+              ]
+            }
+            """.data(using: .utf8)!
+        case "/2/drive/init":
+            return """
+            {
+              "result": "success",
+              "data": {
+                "drives": [
+                  { "id": 10, "name": "Owned", "account_id": 10, "role": "admin" },
+                  { "id": 20, "name": "Delegated Admin", "account_id": 20, "role": "admin" },
+                  { "id": 30, "name": "Member", "account_id": 30, "role": "user" },
+                  { "id": 40, "name": "Shared", "account_id": 40, "role": "admin" },
+                  { "id": 50, "name": "Unknown", "account_id": 50, "role": "admin" },
+                  { "id": 60, "name": "Conflicting", "account_id": 60, "role": "admin" }
+                ]
+              }
+            }
+            """.data(using: .utf8)!
+        default:
+            return Data()
+        }
+    }
+}
+
+private actor KDriveOwnershipDiscoveryCapture {
+    private var recordedRequests: [URLRequest] = []
+    private var waiters: [CheckedContinuation<[URLRequest], Never>] = []
+
+    func reset() {
+        recordedRequests = []
+        waiters.removeAll()
+    }
+
+    func record(_ request: URLRequest) {
+        recordedRequests.append(request)
+        guard recordedRequests.count >= 2 else { return }
+
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        waiters.forEach { $0.resume(returning: recordedRequests) }
+    }
+
+    func requests() async -> [URLRequest] {
+        guard recordedRequests.count < 2 else { return recordedRequests }
+
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }
 

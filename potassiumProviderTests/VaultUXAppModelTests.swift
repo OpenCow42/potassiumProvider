@@ -115,6 +115,7 @@ struct VaultUXAppModelTests {
             id: 42,
             name: "Drive",
             accountID: 1,
+            ownership: .owned,
             role: "admin",
             status: "active",
             isInMaintenance: false
@@ -229,6 +230,7 @@ struct VaultUXAppModelTests {
             id: context.configuration.driveID,
             name: context.configuration.driveName,
             accountID: 1,
+            ownership: .owned,
             role: "admin",
             status: "active",
             isInMaintenance: false
@@ -266,6 +268,7 @@ struct VaultUXAppModelTests {
             id: context.configuration.driveID,
             name: context.configuration.driveName,
             accountID: 1,
+            ownership: .owned,
             role: "admin",
             status: "active",
             isInMaintenance: false
