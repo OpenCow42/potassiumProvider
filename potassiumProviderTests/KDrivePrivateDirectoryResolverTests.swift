@@ -216,15 +216,19 @@ private actor PrivateDirectoryRemote: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw PrivateDirectoryRemoteError.unimplemented
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -240,6 +244,10 @@ private actor PrivateDirectoryRemote: KDriveFileProviding {
     }
 
     func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
+        throw PrivateDirectoryRemoteError.unimplemented
+    }
+
+    func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
         throw PrivateDirectoryRemoteError.unimplemented
     }
 

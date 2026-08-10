@@ -192,6 +192,14 @@ private struct ConflictActivityDetails: View {
 
             if let stagedUploadRelativePath = event.stagedUploadRelativePath {
                 LabeledContent("Staged upload", value: stagedUploadRelativePath)
+                if Date().timeIntervalSince(event.detectedAt) >= 24 * 60 * 60,
+                   event.resolutionState != .automaticallyResolved {
+                    Label("Needs Attention", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                if let stagedUploadURL {
+                    StagedUploadRecoveryAction(url: stagedUploadURL)
+                }
             }
 
             ProviderItemAction(
@@ -235,6 +243,39 @@ private struct ConflictActivityDetails: View {
             lines.append("Item identifier: \(identifier)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private var stagedUploadURL: URL? {
+        guard let relativePath = event.stagedUploadRelativePath,
+              relativePath.hasPrefix("ConflictStaging/"),
+              relativePath.contains("..") == false,
+              let containerURL = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: ProviderConstants.appGroupIdentifier
+              ) else {
+            return nil
+        }
+        let url = containerURL.appendingPathComponent(relativePath)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+}
+
+private struct StagedUploadRecoveryAction: View {
+    let url: URL
+
+    var body: some View {
+        #if os(macOS)
+        Button {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } label: {
+            Label("Reveal Recovery Copy", systemImage: "folder")
+        }
+        .accessibilityIdentifier("activity.revealStagedUpload")
+        #else
+        ShareLink(item: url) {
+            Label("Export Recovery Copy", systemImage: "square.and.arrow.up")
+        }
+        .accessibilityIdentifier("activity.exportStagedUpload")
+        #endif
     }
 }
 

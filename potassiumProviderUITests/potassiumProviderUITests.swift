@@ -199,6 +199,31 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
+    func testActivitiesKeepsFilterAtTopWhileTimelineIsEmpty() throws {
+        let app = launchSetupFixture(named: "activities-action-errors")
+        openActivities(in: app)
+
+        let filter = app.descendants(matching: .any)["activity.filter"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 5))
+
+        let errorsEmptyState = app.staticTexts["No Errors or Conflicts"]
+        XCTAssertTrue(errorsEmptyState.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(errorsEmptyState.frame.midY - filter.frame.midY, 80)
+
+        #if os(macOS)
+        let allActivity = app.radioButtons["All Activity"]
+        #else
+        let allActivity = app.buttons["All Activity"]
+        #endif
+        XCTAssertTrue(allActivity.waitForExistence(timeout: 5))
+        allActivity.tap()
+
+        let activityEmptyState = app.staticTexts["No Activities Yet"]
+        XCTAssertTrue(activityEmptyState.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(activityEmptyState.frame.midY - filter.frame.midY, 80)
+    }
+
+    @MainActor
     func testActivitiesDisablesRefreshWhenDatabaseIsUnavailable() throws {
         let app = launchSetupFixture(named: "activities-unavailable")
         openActivities(in: app)

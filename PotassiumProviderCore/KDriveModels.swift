@@ -32,7 +32,9 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
     public let isFavorite: Bool?
     public let createdAt: Date?
     public let modifiedAt: Date
+    public let revisedAt: Date?
     public let updatedAt: Date
+    public let etag: String?
 
     public init(
         id: Int,
@@ -47,7 +49,9 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
         isFavorite: Bool? = nil,
         createdAt: Date?,
         modifiedAt: Date,
-        updatedAt: Date
+        revisedAt: Date? = nil,
+        updatedAt: Date,
+        etag: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -61,7 +65,9 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
         self.isFavorite = isFavorite
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
+        self.revisedAt = revisedAt
         self.updatedAt = updatedAt
+        self.etag = etag
     }
 
     public var isDirectory: Bool {
@@ -76,7 +82,12 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var contentVersion: Data {
-        Data(String(modifiedAt.timeIntervalSince1970).utf8)
+        KDriveItemContentVersion(
+            itemID: id,
+            etag: etag,
+            revisedAt: revisedAt ?? modifiedAt,
+            size: size
+        ).data
     }
 
     public var metadataVersion: Data {
@@ -89,7 +100,91 @@ public struct KDriveRemoteItem: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public struct KDriveItemContentVersion: Equatable, Sendable {
+    private static let currentVersion = 2
+
+    public let itemID: Int?
+    public let etag: String?
+    public let revisedAt: Date
+    public let size: Int?
+    public let isLegacy: Bool
+
+    public init(itemID: Int, etag: String?, revisedAt: Date, size: Int?) {
+        self.itemID = itemID
+        self.etag = etag?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.revisedAt = revisedAt
+        self.size = size
+        self.isLegacy = false
+    }
+
+    public init?(data: Data) {
+        if let payload = try? JSONDecoder().decode(Payload.self, from: data),
+           payload.version == Self.currentVersion,
+           payload.itemID > 0 {
+            self.itemID = payload.itemID
+            self.etag = payload.etag?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            self.revisedAt = Date(timeIntervalSince1970: payload.revisedAt)
+            self.size = payload.size
+            self.isLegacy = false
+            return
+        }
+
+        guard let rawValue = String(data: data, encoding: .utf8),
+              let timestamp = TimeInterval(rawValue) else {
+            return nil
+        }
+        self.itemID = nil
+        self.etag = nil
+        self.revisedAt = Date(timeIntervalSince1970: timestamp)
+        self.size = nil
+        self.isLegacy = true
+    }
+
+    public var isAuthoritative: Bool {
+        isLegacy == false && itemID != nil && etag != nil
+    }
+
+    public var data: Data {
+        let payload = Payload(
+            version: Self.currentVersion,
+            itemID: itemID ?? 0,
+            etag: etag,
+            revisedAt: revisedAt.timeIntervalSince1970,
+            size: size
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(payload)) ?? Data()
+    }
+
+    public func authoritativelyMatches(_ item: KDriveRemoteItem) -> Bool {
+        guard isAuthoritative,
+              itemID == item.id,
+              let etag,
+              let remoteETag = item.etag?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+            return false
+        }
+        return etag == remoteETag
+    }
+
+    private struct Payload: Codable {
+        let version: Int
+        let itemID: Int
+        let etag: String?
+        let revisedAt: TimeInterval
+        let size: Int?
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
 public struct KDriveItemMetadataVersion: Equatable, Sendable {
+    private static let currentVersion = 2
+
     public let itemID: Int
     public let updatedAt: Date
     public let name: String
@@ -103,9 +198,20 @@ public struct KDriveItemMetadataVersion: Equatable, Sendable {
     }
 
     public init?(data: Data) {
-        guard let rawValue = String(data: data, encoding: .utf8) else {
-            return nil
+        if let payload = try? JSONDecoder().decode(Payload.self, from: data),
+           payload.version == Self.currentVersion,
+           payload.itemID > 0,
+           payload.parentID > 0,
+           payload.name.isEmpty == false {
+            self.init(
+                itemID: payload.itemID,
+                updatedAt: Date(timeIntervalSince1970: payload.updatedAt),
+                name: payload.name,
+                parentID: payload.parentID
+            )
+            return
         }
+        guard let rawValue = String(data: data, encoding: .utf8) else { return nil }
         self.init(rawValue: rawValue)
     }
 
@@ -143,7 +249,16 @@ public struct KDriveItemMetadataVersion: Equatable, Sendable {
     }
 
     public var data: Data {
-        Data(rawValue.utf8)
+        let payload = Payload(
+            version: Self.currentVersion,
+            itemID: itemID,
+            updatedAt: updatedAt.timeIntervalSince1970,
+            name: name,
+            parentID: parentID
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(payload)) ?? Data()
     }
 
     public var rawValue: String {
@@ -156,6 +271,14 @@ public struct KDriveItemMetadataVersion: Equatable, Sendable {
 
     public func matches(itemID expectedItemID: Int, name expectedName: String, parentID expectedParentID: Int) -> Bool {
         itemID == expectedItemID && name == expectedName && parentID == expectedParentID
+    }
+
+    private struct Payload: Codable {
+        let version: Int
+        let itemID: Int
+        let updatedAt: TimeInterval
+        let name: String
+        let parentID: Int
     }
 }
 
@@ -420,7 +543,7 @@ public enum KDriveVersionConflictResolver {
     }
 
     public static func contentMatches(baseVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {
-        baseVersion == remoteItem.contentVersion
+        KDriveItemContentVersion(data: baseVersion)?.authoritativelyMatches(remoteItem) == true
     }
 
     public static func metadataMatches(baseVersion: Data, remoteItem: KDriveRemoteItem) -> Bool {

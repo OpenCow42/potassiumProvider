@@ -234,6 +234,30 @@ struct ProviderErrorMapping {
     let diagnostic: KDriveProviderActivityErrorDiagnostic
 }
 
+func signalRecoverableProviderErrorsResolved(for domain: NSFileProviderDomain) async {
+    guard let manager = NSFileProviderManager(for: domain) else { return }
+    let errorCodes: [NSFileProviderError.Code] = [
+        .notAuthenticated,
+        .insufficientQuota,
+        .serverUnreachable,
+        .cannotSynchronize,
+    ]
+
+    for code in errorCodes {
+        let error = NSFileProviderError(code) as NSError
+        await withCheckedContinuation { continuation in
+            manager.signalErrorResolved(error) { signalError in
+                if let signalError {
+                    FileProviderLog.runtime.debug(
+                        "could not signal resolved provider error code(\(error.code, privacy: .public)): \(signalError.localizedDescription, privacy: .public)"
+                    )
+                }
+                continuation.resume()
+            }
+        }
+    }
+}
+
 func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
     if let fileProviderError = error as? NSFileProviderError {
         let nsError = fileProviderError as NSError
@@ -268,6 +292,17 @@ func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
         case .staleVersion:
             FileProviderLog.runtime.error("map stale mutation version to cannotSynchronize: \(error.localizedDescription, privacy: .public)")
             let mappedError = staleMutationVersionError()
+            return ProviderErrorMapping(
+                mappedError: mappedError,
+                diagnostic: providerDiagnostic(
+                    category: .mutationConflict,
+                    originalError: error,
+                    mappedError: mappedError
+                )
+            )
+        case .localContentConflict:
+            let mappedError = NSFileProviderError(.localVersionConflictingWithServer)
+            FileProviderLog.runtime.error("map fail-on-conflict upload to localVersionConflictingWithServer")
             return ProviderErrorMapping(
                 mappedError: mappedError,
                 diagnostic: providerDiagnostic(

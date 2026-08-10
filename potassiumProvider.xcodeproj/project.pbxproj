@@ -1255,8 +1255,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/OpenCow42/potassiumChannel.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.0;
+				kind = revision;
+				revision = 81014d32428b2f367c74c7f1616793c7a5b2ba01;
 			};
 		};
 		C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */ = {

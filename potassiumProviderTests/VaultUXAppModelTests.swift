@@ -550,15 +550,19 @@ private actor VaultUXFileProvider: KDriveFileProviding {
         fileName: String,
         contents: Data,
         lastModifiedAt: Date?,
-        conflictStrategy: KDriveUploadConflictStrategy
+        conflictStrategy: KDriveUploadConflictStrategy,
+        clientToken: String?,
+        contentHash: String?
     ) async throws -> KDriveRemoteItem {
         throw VaultUXTestError.unsupported
     }
 
     func replaceFile(
         driveID: Int,
-        parentID: Int,
-        fileName: String,
+        fileID: Int,
+        expectedETag: String,
+        clientToken: String,
+        contentHash: String,
         contents: Data,
         lastModifiedAt: Date?
     ) async throws -> KDriveRemoteItem {
@@ -586,6 +590,14 @@ private actor VaultUXFileProvider: KDriveFileProviding {
         fileID: Int,
         destinationParentID: Int,
         name: String?
+    ) async throws {
+        throw VaultUXTestError.unsupported
+    }
+
+    func updateModificationDate(
+        driveID: Int,
+        fileID: Int,
+        date: Date
     ) async throws {
         throw VaultUXTestError.unsupported
     }

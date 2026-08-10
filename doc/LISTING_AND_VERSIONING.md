@@ -209,23 +209,28 @@ stale writer does not overwrite newer cache state.
 - `serverCursor`: kDrive advanced listing cursor for normal folders
 - `isFullyEnumerated`: whether all pages have been fetched
 - `usesAdvancedListing`: whether this snapshot came from advanced listing
-- `items`: cached `KDriveRemoteItem` metadata
+- `items`: cached `KDriveRemoteItem` metadata, including nullable ETag and
+  `revisedAt`; older rows without ETags fail closed until refreshed
 
 ## Item Version Mapping
 
 `FileProviderItem` maps `KDriveRemoteItem` into `NSFileProviderItemVersion`:
 
-- `contentVersion`: `modifiedAt.timeIntervalSince1970`
-- `metadataVersion`: `id`, `updatedAt`, `name`, and `parentID`
+- `contentVersion`: versioned JSON containing stable item ID, ETag,
+  `revisedAt`, and size; item ID plus ETag are authoritative
+- `metadataVersion`: versioned JSON containing ID, `updatedAt`, name, and
+  parent ID
 
-This is a lightweight versioning scheme. The extension compares the File
-Provider `baseVersion` with freshly fetched kDrive metadata before content,
-metadata, trash, and delete mutations.
+Legacy timestamp content versions and missing ETags fail closed. The extension
+compares the File Provider `baseVersion` with freshly fetched kDrive metadata
+before mutations; matching content replacement also sends the ETag through
+`If-Match` so a remote edit after preflight cannot be overwritten silently.
 
 Stale content replacement preserves both by uploading the local bytes as a
-renamed conflict copy. Stale rename, move, trash, and permanent delete requests
-are blocked before the server is mutated. See [Conflicts](CONFLICTS.md) for the
-remaining limitations.
+renamed conflict copy. Rename and move apply local same-field intent while
+preserving independent metadata fields, trash applies last and is reversible,
+and stale permanent delete is rejected before mutation. See
+[Conflicts](CONFLICTS.md) for the remaining limitations.
 
 Encrypted domains rebuild enumeration and working-set deltas from decrypted
 local vault generations and poll only opaque journal containers. Their

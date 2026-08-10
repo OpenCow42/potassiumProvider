@@ -28,6 +28,8 @@ potassiumProvider/
 |-- potassiumProviderActions/    # File Provider UI contextual panels
 |-- potassiumProviderTests/      # Swift Testing unit tests
 |-- potassiumProviderUITests/    # XCTest UI automation tests
+|-- doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md
+|                                # Mission-critical conflict safety register
 |-- potassiumProvider.xcodeproj/ # Source of truth for targets, scheme, settings,
 |                                # and SwiftPM package pins
 `-- SynchronizingFilesUsingFileProviderExtensions/
@@ -157,6 +159,15 @@ app.
 
 - Treat `NSFileProvider` enumeration, sync anchors, item identifiers, progress,
   cancellation, and completion handlers as correctness-critical.
+- Treat `doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md` as the mission-critical,
+  normative conflict safety register. Read it before changing File Provider
+  mutations, versions, kDrive conflict policy, error mapping, retry/staging,
+  reconciliation, cleanup, or recovery UI.
+- Update `doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md` in the same change whenever a
+  truth-table decision, risk, recovery path, or supporting test changes. Update
+  its audit evidence and finding states, and add regression coverage for every
+  affected decision cell. An inaccurate or stale table is a release-blocking
+  data-safety defect.
 - Treat Apple's Replicated File Provider extension documentation as the source
   of truth for replicated File Provider implementation. Check it when planning
   changes in this area:
@@ -184,6 +195,9 @@ app.
 - Keep `README.md` and `doc/` documentation up to date when changing behavior,
   architecture, public interfaces, persistence, File Provider lifecycle,
   kDrive API mapping, conflict handling, or validation commands.
+- Conflict-related changes are not documentation-complete until
+  `doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md` has been reviewed and updated. Do not
+  defer this mission-critical maintenance to a follow-up.
 - Prefer updating the subject-specific document in `doc/` as part of the same
   change instead of leaving documentation follow-up work implicit.
 
