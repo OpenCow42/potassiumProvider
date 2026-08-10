@@ -157,9 +157,15 @@ final class potassiumProviderUITests: XCTestCase {
         let olderEntry = app.buttons[
             "activity.entry.activity-00000000-0000-0000-0000-000000000051"
         ]
+        #if os(macOS)
+        for _ in 0..<4 where olderEntry.exists == false {
+            timeline.scroll(byDeltaX: 0, deltaY: -2_000)
+        }
+        #else
         for _ in 0..<14 where olderEntry.exists == false {
             timeline.swipeUp()
         }
+        #endif
 
         XCTAssertTrue(olderEntry.waitForExistence(timeout: 5))
         let backToLatest = app.buttons["activity.backToLatest"]
