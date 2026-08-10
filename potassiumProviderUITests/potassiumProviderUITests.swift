@@ -151,8 +151,11 @@ final class potassiumProviderUITests: XCTestCase {
         let timeline = app.scrollViews["activity.timeline"]
         XCTAssertTrue(timeline.waitForExistence(timeout: 5))
 
+        // The fixture page size is 50, so row 51 proves that scrolling
+        // prefetched a second page without requiring platform-specific travel
+        // deep into that page.
         let olderEntry = app.buttons[
-            "activity.entry.activity-00000000-0000-0000-0000-000000000076"
+            "activity.entry.activity-00000000-0000-0000-0000-000000000051"
         ]
         for _ in 0..<14 where olderEntry.exists == false {
             timeline.swipeUp()
