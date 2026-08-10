@@ -158,8 +158,13 @@ final class potassiumProviderUITests: XCTestCase {
             "activity.entry.activity-00000000-0000-0000-0000-000000000051"
         ]
         #if os(macOS)
-        for _ in 0..<4 where olderEntry.exists == false {
+        for _ in 0..<8 where olderEntry.exists == false {
             timeline.scroll(byDeltaX: 0, deltaY: -2_000)
+            // Give an asynchronously fetched page time to append before the
+            // next scroll moves beyond the old boundary.
+            if olderEntry.waitForExistence(timeout: 1) {
+                break
+            }
         }
         #else
         for _ in 0..<14 where olderEntry.exists == false {
