@@ -80,3 +80,12 @@ through Apple's extension context.
 It is useful for comparing concepts such as enumeration, domain state, and
 conflict handling, but it is not integrated into `potassiumProvider.xcodeproj`
 and should not be treated as part of this product's build graph.
+
+## Encrypted vault boundary
+
+For `opaqueVaultV2`, runtime loading adds the root key and trusted frontier from
+Keychain, an encrypted UUID-keyed SQLite generation, and
+`KDriveObjectStoreProviding` plus `EncryptedVaultProviding`. Provider-facing
+code receives only `VaultItem`; `KDriveRemoteItem` remains physical-object
+metadata and cannot construct Finder metadata. See
+[Encrypted Vault Format v2](ENCRYPTED_VAULT.md).

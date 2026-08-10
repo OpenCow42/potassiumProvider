@@ -90,3 +90,8 @@ favorite, duplicate, trash restore, share-link CRUD, version pagination, and
 version restore. `PotassiumKDriveService` implements it exclusively with typed
 PotassiumKDrive 0.2.0 service calls. Existing `KDriveFileProviding` mutation
 semantics remain unchanged.
+
+For encrypted items, favorite, duplicate, trash restore, and logical version
+restore call `EncryptedVaultProviding`. Thumbnails and versions are local
+authenticated vault operations. Share-link panels stop before any kDrive
+sharing call and explain that recipient-key sharing is not supported in v2.

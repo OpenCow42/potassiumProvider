@@ -14,7 +14,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
     let domain: NSFileProviderDomain
     let manager: NSFileProviderManager
-    private let temporaryDirectoryURL: URL
+    let temporaryDirectoryURL: URL
     private var remotePollingTask: Task<Void, Never>?
 
     var fileProviderDomain: NSFileProviderDomain {
@@ -43,6 +43,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         Task {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: domain)
+                if let vault = runtime.encryptedVault {
+                    _ = try await vault.synchronize()
+                    await signalWorkingSet(runtime: runtime)
+                    return
+                }
                 let systemItems = try await MaterializedSetReader.read(using: manager)
                 let materializedItems = systemItems.compactMap { item -> KDriveMaterializedItem? in
                     let fileID: Int
@@ -102,6 +107,19 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     }
                     return
                 }
+                if let vault = loadedRuntime.encryptedVault {
+                    _ = try await vault.synchronize()
+                    guard let vaultIdentifier = VaultItemIdentifier(
+                        fileProviderIdentifier: identifier.rawValue
+                    ) else {
+                        throw NSFileProviderError(.noSuchItem)
+                    }
+                    let vaultItem = try await vault.item(vaultIdentifier)
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(FileProviderItem(vaultItem: vaultItem), nil)
+                    }
+                    return
+                }
 
                 let itemIdentifier = try KDriveItemIdentifier(rawValue: identifier.rawValue)
                 guard let fileID = itemIdentifier.fileID(rootFileID: loadedRuntime.configuration.rootFileID) else {
@@ -155,6 +173,47 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    guard let identifier = VaultItemIdentifier(
+                        fileProviderIdentifier: itemIdentifier.rawValue
+                    ) else {
+                        throw NSFileProviderError(.noSuchItem)
+                    }
+                    let requestedRevision: VaultRevision?
+                    if let requestedVersion {
+                        guard let revision = VaultRevision(
+                            data: requestedVersion.contentVersion
+                        ) else {
+                            throw contentVersionUnavailableError()
+                        }
+                        requestedRevision = revision
+                    } else {
+                        requestedRevision = nil
+                    }
+                    let current = try await vault.item(identifier)
+                    progress.prepareForByteCount(Int(current.plaintextSize))
+                    let temporaryURL = temporaryDirectoryURL
+                        .appendingPathComponent("download-\(UUID().uuidString)")
+                        .appendingPathExtension((current.filename as NSString).pathExtension)
+                    let fetched = try await Self.contentTransferLimiter.withPermit {
+                        try await vault.fetchContent(
+                            itemID: identifier,
+                            expectedRevision: requestedRevision,
+                            to: temporaryURL
+                        )
+                    }
+                    let delivered = await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(
+                            temporaryURL,
+                            FileProviderItem(vaultItem: fetched),
+                            nil
+                        )
+                    }
+                    if delivered == false {
+                        try? FileManager.default.removeItem(at: temporaryURL)
+                    }
+                    return
+                }
                 let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
                 guard let fileID = identifier.fileID(rootFileID: loadedRuntime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
@@ -267,6 +326,73 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    let parentID = try self.vaultParentIdentifier(
+                        itemTemplate.parentItemIdentifier
+                    )
+                    let created: VaultItem
+                    if isDirectory {
+                        created = try await vault.createDirectory(
+                            parentID: parentID,
+                            filename: itemTemplate.filename,
+                            createdAt: itemTemplate.creationDate.flatMap { $0 } ?? Date()
+                        )
+                    } else {
+                        let generatedEmptyURL: URL?
+                        let plaintextURL: URL
+                        if let url {
+                            plaintextURL = url
+                            generatedEmptyURL = nil
+                        } else {
+                            let emptyURL = self.temporaryDirectoryURL
+                                .appendingPathComponent("empty-\(UUID().uuidString)")
+                            guard FileManager.default.createFile(
+                                atPath: emptyURL.path,
+                                contents: Data()
+                            ) else {
+                                throw CocoaError(.fileWriteUnknown)
+                            }
+                            plaintextURL = emptyURL
+                            generatedEmptyURL = emptyURL
+                        }
+                        defer {
+                            if let generatedEmptyURL {
+                                try? FileManager.default.removeItem(at: generatedEmptyURL)
+                            }
+                        }
+                        created = try await Self.contentTransferLimiter.withPermit {
+                            try await vault.createFile(
+                                parentID: parentID,
+                                filename: itemTemplate.filename,
+                                contentTypeIdentifier: itemTemplate.contentType?.identifier,
+                                plaintextURL: plaintextURL,
+                                modifiedAt: itemTemplate.contentModificationDate.flatMap { $0 } ?? Date()
+                            )
+                        }
+                    }
+                    await self.signalEncryptedMutation(
+                        runtime: loadedRuntime,
+                        parentIDs: [parentID],
+                        includesTrash: false
+                    )
+                    await ProviderEventRecorder.recordActivity(
+                        kind: .create,
+                        runtime: loadedRuntime,
+                        itemIdentifier: created.id.fileProviderIdentifier,
+                        itemName: nil,
+                        itemPath: nil,
+                        summary: "Created an encrypted \(kind)."
+                    )
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(
+                            FileProviderItem(vaultItem: created),
+                            [],
+                            false,
+                            nil
+                        )
+                    }
+                    return
+                }
                 let coordinator = self.makeMutationCoordinator(runtime: loadedRuntime)
                 let parentID = try self.fileID(forParentIdentifier: itemTemplate.parentItemIdentifier, runtime: loadedRuntime)
                 let createdItem: KDriveRemoteItem
@@ -361,6 +487,73 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    guard let vaultItemID = VaultItemIdentifier(
+                        fileProviderIdentifier: item.itemIdentifier.rawValue
+                    ),
+                    let baseContentRevision = VaultRevision(data: version.contentVersion),
+                    let baseMetadataRevision = VaultRevision(data: version.metadataVersion) else {
+                        throw NSFileProviderError(.cannotSynchronize)
+                    }
+                    let current = try await vault.item(vaultItemID)
+                    if changedFields.contains(.parentItemIdentifier),
+                       item.parentItemIdentifier == .trashContainer {
+                        try await vault.trash(
+                            itemID: vaultItemID,
+                            baseContentRevision: baseContentRevision,
+                            baseMetadataRevision: baseMetadataRevision
+                        )
+                        await self.signalEncryptedMutation(
+                            runtime: loadedRuntime,
+                            parentIDs: [current.parentID],
+                            includesTrash: true
+                        )
+                        await lifecycle.finish(markProgressComplete: true) {
+                            completionHandler(nil, [], false, nil)
+                        }
+                        return
+                    }
+
+                    let parentID = changedFields.contains(.parentItemIdentifier)
+                        ? try self.vaultParentIdentifier(item.parentItemIdentifier)
+                        : current.parentID
+                    let updated = try await Self.contentTransferLimiter.withPermit {
+                        try await vault.modify(
+                            itemID: vaultItemID,
+                            baseContentRevision: baseContentRevision,
+                            baseMetadataRevision: baseMetadataRevision,
+                            parentID: parentID,
+                            filename: changedFields.contains(.filename)
+                                ? item.filename
+                                : current.filename,
+                            favorite: current.isFavorite,
+                            plaintextURL: changesContents ? newContents : nil,
+                            modifiedAt: item.contentModificationDate.flatMap { $0 } ?? Date()
+                        )
+                    }
+                    await self.signalEncryptedMutation(
+                        runtime: loadedRuntime,
+                        parentIDs: [current.parentID, updated.parentID],
+                        includesTrash: false
+                    )
+                    await ProviderEventRecorder.recordActivity(
+                        kind: .modify,
+                        runtime: loadedRuntime,
+                        itemIdentifier: updated.id.fileProviderIdentifier,
+                        itemName: nil,
+                        itemPath: nil,
+                        summary: "Modified an encrypted item."
+                    )
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(
+                            FileProviderItem(vaultItem: updated),
+                            [],
+                            false,
+                            nil
+                        )
+                    }
+                    return
+                }
                 let identifier = try KDriveItemIdentifier(rawValue: item.itemIdentifier.rawValue)
                 guard let fileID = identifier.fileID(rootFileID: loadedRuntime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
@@ -586,6 +779,37 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
                 runtime = loadedRuntime
+                if let vault = loadedRuntime.encryptedVault {
+                    guard let vaultItemID = VaultItemIdentifier(
+                        fileProviderIdentifier: itemIdentifier.rawValue
+                    ),
+                    let baseContentRevision = VaultRevision(data: version.contentVersion),
+                    let baseMetadataRevision = VaultRevision(data: version.metadataVersion) else {
+                        throw NSFileProviderError(.cannotSynchronize)
+                    }
+                    try await vault.purge(
+                        itemID: vaultItemID,
+                        baseContentRevision: baseContentRevision,
+                        baseMetadataRevision: baseMetadataRevision
+                    )
+                    await self.signalEncryptedMutation(
+                        runtime: loadedRuntime,
+                        parentIDs: [],
+                        includesTrash: true
+                    )
+                    await ProviderEventRecorder.recordActivity(
+                        kind: .delete,
+                        runtime: loadedRuntime,
+                        itemIdentifier: vaultItemID.fileProviderIdentifier,
+                        itemName: nil,
+                        itemPath: nil,
+                        summary: "Purged an encrypted item."
+                    )
+                    await lifecycle.finish(markProgressComplete: true) {
+                        completionHandler(nil)
+                    }
+                    return
+                }
                 let identifier = try KDriveItemIdentifier(rawValue: itemIdentifier.rawValue)
                 guard let fileID = identifier.fileID(rootFileID: loadedRuntime.configuration.rootFileID) else {
                     throw NSFileProviderError(.noSuchItem)
@@ -682,6 +906,42 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         }
         return try KDriveItemIdentifier(rawValue: parentIdentifier.rawValue).fileID(rootFileID: runtime.configuration.rootFileID)
             ?? runtime.configuration.rootFileID
+    }
+
+    func vaultParentIdentifier(
+        _ parentIdentifier: NSFileProviderItemIdentifier
+    ) throws -> VaultItemIdentifier? {
+        if parentIdentifier == .rootContainer {
+            return nil
+        }
+        guard parentIdentifier != .trashContainer,
+              parentIdentifier != .workingSet,
+              let identifier = VaultItemIdentifier(
+                fileProviderIdentifier: parentIdentifier.rawValue
+              ) else {
+            throw NSFileProviderError(.cannotSynchronize)
+        }
+        return identifier
+    }
+
+    func signalEncryptedMutation(
+        runtime: FileProviderRuntime,
+        parentIDs: [VaultItemIdentifier?],
+        includesTrash: Bool
+    ) async {
+        var containers = parentIDs.map { parentID in
+            parentID.map {
+                NSFileProviderItemIdentifier($0.fileProviderIdentifier)
+            } ?? .rootContainer
+        }
+        if includesTrash {
+            containers.append(.trashContainer)
+        }
+        for container in uniqueContainerIdentifiers(containers)
+        where container != .workingSet {
+            await signalEnumerator(for: container, runtime: runtime)
+        }
+        await signalWorkingSet(runtime: runtime)
     }
 
     func recordProviderFailure(
@@ -797,6 +1057,15 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     try await Task.sleep(for: .seconds(KDriveWorkingSetPollCoordinator.pollingInterval))
                     guard let self, Task.isCancelled == false else { return }
                     let runtime = try await FileProviderRuntime.load(domain: self.domain)
+                    if let vault = runtime.encryptedVault {
+                        let before = try await vault.workingSet(limit: 1_000)
+                        _ = try await vault.synchronize()
+                        let after = try await vault.workingSet(limit: 1_000)
+                        if before != after {
+                            await self.signalWorkingSet(runtime: runtime)
+                        }
+                        continue
+                    }
                     let outcome = try await self.pollWorkingSet(runtime: runtime)
                     if outcome.didPoll, outcome.changes.isEmpty == false {
                         await self.signalWorkingSet(runtime: runtime)

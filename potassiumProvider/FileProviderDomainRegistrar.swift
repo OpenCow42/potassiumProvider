@@ -9,9 +9,14 @@ protocol ProviderDomainRegistering {
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState]
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws
+    func claimKnownFolders(
+        for configuration: ProviderDomainConfiguration,
+        parentItemIdentifier: String
+    ) async throws
     func releaseKnownFolders(for configuration: ProviderDomainConfiguration) async throws
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws
+    func knownFolderOwner() async throws -> ProviderKnownFolderOwner?
 }
 
 enum ProviderKnownFolderSyncState: Equatable, Sendable {
@@ -21,12 +26,67 @@ enum ProviderKnownFolderSyncState: Equatable, Sendable {
     case active
 }
 
+struct ProviderKnownFolderOwner: Equatable, Sendable {
+    let domainIdentifier: String
+    let displayName: String
+    let includesDesktop: Bool
+    let includesDocuments: Bool
+
+    var isPartial: Bool {
+        includesDesktop != includesDocuments
+    }
+}
+
+enum KnownFolderTransferPhase: Equatable, Sendable {
+    case idle
+    case preparing
+    case awaitingConsent
+    case connectedUploading
+    case upToDate
+    case quotaBlocked
+    case attentionRequired
+}
+
+struct KnownFolderPreflight: Equatable, Sendable {
+    enum Ownership: Equatable, Sendable {
+        case none
+        case thisVault
+        case legacyPotassium(domainIdentifier: String)
+        case externalProvider(displayName: String)
+        case partial(displayName: String)
+    }
+
+    let ownership: Ownership
+    let vaultIsUnlocked: Bool
+    let remoteIsReachable: Bool
+    let availableQuotaBytes: Int64?
+
+    var canRequestClaim: Bool {
+        guard vaultIsUnlocked, remoteIsReachable, ownership != .thisVault else {
+            return false
+        }
+        switch ownership {
+        case .partial, .legacyPotassium:
+            return false
+        case .none, .thisVault, .externalProvider:
+            return true
+        }
+    }
+}
+
 extension ProviderDomainRegistering {
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {
         [:]
     }
 
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws {
+        throw ProviderKnownFolderRegistrationError.unsupportedPlatform
+    }
+
+    func claimKnownFolders(
+        for configuration: ProviderDomainConfiguration,
+        parentItemIdentifier: String
+    ) async throws {
         throw ProviderKnownFolderRegistrationError.unsupportedPlatform
     }
 
@@ -40,6 +100,10 @@ extension ProviderDomainRegistering {
 
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {
         throw ProviderKnownFolderRegistrationError.managerUnavailable(configuration.domainIdentifier)
+    }
+
+    func knownFolderOwner() async throws -> ProviderKnownFolderOwner? {
+        nil
     }
 }
 
@@ -101,13 +165,49 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
         #endif
     }
 
+    func knownFolderOwner() async throws -> ProviderKnownFolderOwner? {
+        #if os(macOS)
+        let domains = try await registeredDomains()
+        return domains.compactMap { domain -> ProviderKnownFolderOwner? in
+            let folders = domain.replicatedKnownFolders
+            guard folders.contains(.desktop) || folders.contains(.documents) else {
+                return nil
+            }
+            return ProviderKnownFolderOwner(
+                domainIdentifier: domain.identifier.rawValue,
+                displayName: domain.displayName,
+                includesDesktop: folders.contains(.desktop),
+                includesDocuments: folders.contains(.documents)
+            )
+        }.first
+        #else
+        return nil
+        #endif
+    }
+
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws {
         #if os(macOS)
-        let manager = try await manager(for: configuration)
-        let locations = Self.makeKnownFolderLocations(parentFileID: parentFileID)
-        let reason = "Keep your Desktop & Documents in sync with \(configuration.displayName) in kDrive."
+        try await claimKnownFolders(
+            for: configuration,
+            parentItemIdentifier: KDriveItemIdentifier.item(parentFileID).rawValue
+        )
+        #else
+        throw ProviderKnownFolderRegistrationError.unsupportedPlatform
+        #endif
+    }
 
-        Self.logger.info("claim known folders for domain(\(configuration.domainIdentifier, privacy: .public)) parentFileID(\(parentFileID, privacy: .public))")
+    func claimKnownFolders(
+        for configuration: ProviderDomainConfiguration,
+        parentItemIdentifier: String
+    ) async throws {
+        #if os(macOS)
+        let manager = try await manager(for: configuration)
+        let locations = Self.makeKnownFolderLocations(
+            parentItemIdentifier: NSFileProviderItemIdentifier(parentItemIdentifier)
+        )
+        let reason = "Keep your Desktop & Documents in sync with \(configuration.displayName)."
+
+        Self.logger.info("claim known folders for domain(\(configuration.domainIdentifier, privacy: .public))")
         try await manager.claimKnownFolders(locations, localizedReason: reason)
         Self.logger.info("claimed known folders for domain(\(configuration.domainIdentifier, privacy: .public))")
         #else
@@ -158,15 +258,16 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
     }
 
     #if os(macOS)
-    static func makeKnownFolderLocations(parentFileID: Int) -> NSFileProviderKnownFolderLocations {
-        let parentIdentifier = NSFileProviderItemIdentifier(KDriveItemIdentifier.item(parentFileID).rawValue)
+    static func makeKnownFolderLocations(
+        parentItemIdentifier: NSFileProviderItemIdentifier
+    ) -> NSFileProviderKnownFolderLocations {
         let locations = NSFileProviderKnownFolderLocations()
         locations.desktopLocation = NSFileProviderKnownFolderLocations.Location(
-            parentItemIdentifier: parentIdentifier,
+            parentItemIdentifier: parentItemIdentifier,
             filename: "Desktop"
         )
         locations.documentsLocation = NSFileProviderKnownFolderLocations.Location(
-            parentItemIdentifier: parentIdentifier,
+            parentItemIdentifier: parentItemIdentifier,
             filename: "Documents"
         )
         return locations

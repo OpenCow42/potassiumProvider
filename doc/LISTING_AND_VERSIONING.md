@@ -231,3 +231,9 @@ renamed conflict copy. Rename and move apply local same-field intent while
 preserving independent metadata fields, trash applies last and is reversible,
 and stale permanent delete is rejected before mutation. See
 [Conflicts](CONFLICTS.md) for the remaining limitations.
+
+Encrypted domains rebuild enumeration and working-set deltas from decrypted
+local vault generations and poll only opaque journal containers. Their
+`NSFileProviderItemVersion` values are 32-byte logical content and metadata
+revision digests. Logical version history is retained inside encrypted item
+records and does not use kDrive version endpoints.

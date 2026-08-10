@@ -5,17 +5,20 @@ public struct ProviderActionRuntime: Sendable {
     public let remote: any KDriveFileProviding
     public let actions: any KDriveContextActionProviding
     public let eventStore: (any KDriveProviderEventStoring)?
+    public let encryptedVault: (any EncryptedVaultProviding)?
 
     public init(
         configuration: ProviderDomainConfiguration,
         remote: any KDriveFileProviding,
         actions: any KDriveContextActionProviding,
-        eventStore: (any KDriveProviderEventStoring)?
+        eventStore: (any KDriveProviderEventStoring)?,
+        encryptedVault: (any EncryptedVaultProviding)? = nil
     ) {
         self.configuration = configuration
         self.remote = remote
         self.actions = actions
         self.eventStore = eventStore
+        self.encryptedVault = encryptedVault
     }
 
     public static func load(domainIdentifier: String) async throws -> ProviderActionRuntime {
@@ -29,6 +32,9 @@ public struct ProviderActionRuntime: Sendable {
         }
 
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
+        guard configuration.encryptionMode != .opaqueVaultV1 else {
+            throw ProviderActionRuntimeError.configurationUnavailable
+        }
         guard var token = try await tokenStore.loadToken(
             accountIdentifier: configuration.accountIdentifier
         ) else {
@@ -47,11 +53,48 @@ public struct ProviderActionRuntime: Sendable {
         let eventStore = try? KDriveProviderEventSQLiteStore(
             appGroupIdentifier: ProviderConstants.appGroupIdentifier
         )
+        let encryptedVault: (any EncryptedVaultProviding)?
+        if configuration.encryptionMode == .opaqueVaultV2 {
+            guard let vaultConfiguration = configuration.vault else {
+                throw ProviderActionRuntimeError.configurationUnavailable
+            }
+            let keyStore = KeychainVaultKeyStore(
+                accessGroup: ProviderConstants.keychainAccessGroup
+            )
+            guard let rootKey = try await keyStore.loadRootKey(
+                vaultID: vaultConfiguration.vaultIdentifier
+            ) else {
+                throw ProviderActionRuntimeError.notAuthenticated
+            }
+            let localStore = try VaultSQLiteStore(
+                appGroupIdentifier: ProviderConstants.appGroupIdentifier,
+                domainIdentifier: configuration.domainIdentifier,
+                vaultID: vaultConfiguration.vaultIdentifier,
+                rootKey: rootKey,
+                keyEpoch: vaultConfiguration.keyEpoch
+            )
+            encryptedVault = try EncryptedVaultService(
+                configuration: configuration,
+                rootKey: rootKey,
+                deviceID: try await keyStore.loadOrCreateDeviceID(
+                    vaultID: vaultConfiguration.vaultIdentifier
+                ),
+                objectStore: PotassiumKDriveObjectStore(
+                    driveID: configuration.driveID,
+                    bearerToken: token.accessToken
+                ),
+                localStore: localStore,
+                keyStore: keyStore
+            )
+        } else {
+            encryptedVault = nil
+        }
         return ProviderActionRuntime(
             configuration: configuration,
             remote: service,
             actions: service,
-            eventStore: eventStore
+            eventStore: eventStore,
+            encryptedVault: encryptedVault
         )
     }
 }

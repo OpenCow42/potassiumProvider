@@ -34,10 +34,22 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
         self.parentItemIdentifier = .rootContainer
         self.filename = configuration.displayName
         self.contentType = .folder
-        self.itemVersion = NSFileProviderItemVersion(
-            contentVersion: Data("root-\(configuration.rootFileID)".utf8),
-            metadataVersion: Data(configuration.updatedAt.timeIntervalSince1970.description.utf8)
-        )
+        if let vault = configuration.vault,
+           configuration.encryptionMode == .opaqueVaultV2 {
+            self.itemVersion = NSFileProviderItemVersion(
+                contentVersion: VaultRevision(
+                    hashing: Data("root-content:\(vault.vaultIdentifier.rawValue.uuidString)".utf8)
+                ).data,
+                metadataVersion: VaultRevision(
+                    hashing: Data("root-metadata:\(configuration.displayName):\(vault.keyEpoch)".utf8)
+                ).data
+            )
+        } else {
+            self.itemVersion = NSFileProviderItemVersion(
+                contentVersion: Data("root-\(configuration.rootFileID)".utf8),
+                metadataVersion: Data(configuration.updatedAt.timeIntervalSince1970.description.utf8)
+            )
+        }
         self.documentSize = nil
         self.creationDate = configuration.createdAt
         self.contentModificationDate = configuration.updatedAt
@@ -55,6 +67,73 @@ final class FileProviderItem: NSObject, NSFileProviderItemProtocol {
             FileProviderItemUserInfoKey.isTrashed: false,
             FileProviderItemUserInfoKey.isRoot: true,
         ]
+        super.init()
+    }
+
+    init(vaultItem: VaultItem) {
+        self.itemIdentifier = NSFileProviderItemIdentifier(
+            vaultItem.id.fileProviderIdentifier
+        )
+        self.parentItemIdentifier = vaultItem.isTrashed
+            ? .trashContainer
+            : vaultItem.parentID.map {
+                NSFileProviderItemIdentifier($0.fileProviderIdentifier)
+            } ?? .rootContainer
+        self.filename = vaultItem.filename
+        self.contentType = vaultItem.contentType
+        self.itemVersion = NSFileProviderItemVersion(
+            contentVersion: vaultItem.contentRevision.data,
+            metadataVersion: vaultItem.metadataRevision.data
+        )
+        self.documentSize = vaultItem.isDirectory
+            ? nil
+            : NSNumber(value: vaultItem.plaintextSize)
+        self.creationDate = vaultItem.createdAt
+        self.contentModificationDate = vaultItem.modifiedAt
+        #if !os(macOS)
+        self.isTrashed = vaultItem.isTrashed
+        #endif
+        self.isUploaded = true
+        #if os(macOS)
+        self.contentPolicy = .downloadLazily
+        #endif
+        self.userInfo = [
+            FileProviderItemUserInfoKey.isDirectory: vaultItem.isDirectory,
+            FileProviderItemUserInfoKey.isFavorite: vaultItem.isFavorite,
+            FileProviderItemUserInfoKey.isTrashed: vaultItem.isTrashed,
+            FileProviderItemUserInfoKey.isRoot: false,
+        ]
+
+        if vaultItem.isTrashed {
+            self.capabilities = [.allowsReading, .allowsDeleting]
+        } else if vaultItem.isDirectory {
+            var capabilities: NSFileProviderItemCapabilities = [
+                .allowsContentEnumerating,
+                .allowsAddingSubItems,
+                .allowsReading,
+                .allowsRenaming,
+                .allowsReparenting,
+                .allowsTrashing,
+                .allowsDeleting,
+            ]
+            #if !os(macOS)
+            capabilities.insert(.allowsEvicting)
+            #endif
+            self.capabilities = capabilities
+        } else {
+            var capabilities: NSFileProviderItemCapabilities = [
+                .allowsReading,
+                .allowsWriting,
+                .allowsRenaming,
+                .allowsReparenting,
+                .allowsTrashing,
+                .allowsDeleting,
+            ]
+            #if !os(macOS)
+            capabilities.insert(.allowsEvicting)
+            #endif
+            self.capabilities = capabilities
+        }
         super.init()
     }
 

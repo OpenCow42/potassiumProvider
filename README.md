@@ -25,6 +25,12 @@ data.
   state, validation, and remaining manual release gates.
 - [Architecture](doc/ARCHITECTURE.md): targets, modules, persistence, runtime
   boundaries, and high-level data flow.
+- [Encrypted Vault Format v2](doc/ENCRYPTED_VAULT.md): threat model, leakage,
+  device-local and optional iCloud Keychain custody, guided recovery, binary
+  formats, opaque synchronization, rollback behavior, and security-review
+  feature gates.
+- [Conflict Resolution Truth Table](doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md):
+  normative encrypted-vault data-safety decisions, evidence, and open gates.
 - [App And Domains](doc/APP_AND_DOMAINS.md): SwiftUI setup app, kDrive loading,
   File Provider domain registration, and macOS Desktop & Documents controls.
 - [Authentication](doc/AUTHENTICATION.md): OAuth PKCE, manual token entry,
@@ -142,6 +148,15 @@ local Xcode requires a more specific variant.
 
 - Do not commit bearer tokens, refresh tokens, account identifiers, private
   links, or user data.
+- Encrypted vaults are experimental and disabled by default pending independent
+  cryptographic review. The feature flag is not a production-readiness claim.
+- Every encrypted-vault activation route starts with a mandatory
+  unsupported-feature and complete-data-loss warning whose continuation remains
+  disabled for five seconds.
+- Encrypted-vault onboarding always requires a verified offline recovery kit.
+  Optional iCloud Keychain access is a separately gated convenience: it can
+  open a vault on another trusted Apple device, but it does not replace offline
+  recovery or revoke keys already imported by another device.
 - Conflict handling is mission-critical. Read the
   [Conflict Resolution Truth Table And Safety Register](doc/CONFLICT_RESOLUTION_TRUTH_TABLE.md)
   before relying on the provider for important files. Any change to conflict
@@ -158,11 +173,11 @@ local Xcode requires a more specific variant.
   is returned as still pending.
 - SQLite snapshots cache metadata only. File contents and thumbnails are not
   stored there.
-- On macOS 15 or later, Desktop & Documents sync is an explicit, experimental
-  opt-in that always handles both folders together under
-  `Private/<current Mac name>` on the selected kDrive. Existing active domains
-  created before this layout remain directly under `Private` until sync is
-  stopped and enabled again.
+- On macOS 15 or later, Desktop & Documents protection is an explicit action.
+  Encrypted domains preflight ownership and local key availability before
+  presenting Apple's consent UI, then upload only opaque vault ciphertext.
+  A legacy plaintext Potassium owner blocks the encrypted known-folder claim.
+  Safe migration and destructive source purge are not implemented.
 
 ## License
 

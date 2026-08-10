@@ -1,0 +1,180 @@
+import Foundation
+
+public struct VaultMaintenanceReport: Equatable, Sendable {
+    public let checkpointFileID: Int
+    public let examinedObjectCount: Int
+    public let unreferencedObjectCount: Int
+
+    public init(
+        checkpointFileID: Int,
+        examinedObjectCount: Int,
+        unreferencedObjectCount: Int
+    ) {
+        self.checkpointFileID = checkpointFileID
+        self.examinedObjectCount = examinedObjectCount
+        self.unreferencedObjectCount = unreferencedObjectCount
+    }
+}
+
+/// Conservative maintenance uploads and authenticates a padded checkpoint and
+/// reports unreferenced ciphertext. It never deletes remote content or journal
+/// objects: retention time alone cannot prove that an offline device will not
+/// later publish a valid transaction that references an apparently orphaned
+/// object.
+public actor VaultMaintenanceService {
+    private let vaultConfiguration: ProviderVaultConfiguration
+    private let rootKey: VaultKeyMaterial
+    private let objectStore: any KDriveObjectStoreProviding
+    private let localStore: any VaultLocalStateStoring
+    private let vault: any EncryptedVaultProviding
+    private let temporaryDirectoryURL: URL
+
+    public init(
+        vaultConfiguration: ProviderVaultConfiguration,
+        rootKey: VaultKeyMaterial,
+        objectStore: any KDriveObjectStoreProviding,
+        localStore: any VaultLocalStateStoring,
+        vault: any EncryptedVaultProviding,
+        temporaryDirectoryURL: URL = FileManager.default.temporaryDirectory
+    ) throws {
+        guard vaultConfiguration.remoteLayout != nil else {
+            throw EncryptedVaultError.missingConfiguration
+        }
+        self.vaultConfiguration = vaultConfiguration
+        self.rootKey = rootKey
+        self.objectStore = objectStore
+        self.localStore = localStore
+        self.vault = vault
+        self.temporaryDirectoryURL = temporaryDirectoryURL
+    }
+
+    public func checkpointAndReportUnreferencedContent(
+        now: Date = Date()
+    ) async throws -> VaultMaintenanceReport {
+        guard let layout = vaultConfiguration.remoteLayout else {
+            throw EncryptedVaultError.missingConfiguration
+        }
+        let synchronizedFrontier = try await vault.synchronize()
+        let state = try await localStore.state()
+        guard state.frontier == synchronizedFrontier else {
+            throw VaultJournalError.rollbackDetected
+        }
+        let storedTransactions = try await localStore.journalObjects()
+        let transactions = try storedTransactions.map {
+            try VaultFixedTransactionCodec.open(
+                $0.envelope,
+                objectToken: $0.objectToken,
+                rootKey: rootKey,
+                vaultID: vaultConfiguration.vaultIdentifier,
+                keyEpoch: vaultConfiguration.keyEpoch
+            )
+        }
+        let checkpoint = VaultCheckpoint(
+            frontier: state.frontier,
+            items: Array(state.items.values),
+            transactionMerkleRoot: try VaultMerkleTree.root(for: transactions),
+            createdAt: now
+        )
+        let checkpointToken = try VaultCryptography.makeObjectToken(
+            rootKey: rootKey,
+            vaultID: vaultConfiguration.vaultIdentifier
+        )
+        let envelope = try VaultPaddedCheckpointCodec.seal(
+            checkpoint,
+            objectToken: checkpointToken,
+            rootKey: rootKey,
+            vaultID: vaultConfiguration.vaultIdentifier,
+            keyEpoch: vaultConfiguration.keyEpoch
+        )
+        let uploadURL = temporaryURL(prefix: "maintenance-checkpoint")
+        let verificationURL = temporaryURL(prefix: "maintenance-verification")
+        defer {
+            try? FileManager.default.removeItem(at: uploadURL)
+            try? FileManager.default.removeItem(at: verificationURL)
+        }
+        try envelope.write(to: uploadURL, options: [.atomic])
+        let remoteCheckpoint = try await objectStore.uploadObject(
+            containerID: layout.checkpointContainerID,
+            token: checkpointToken,
+            fileURL: uploadURL
+        )
+        try await objectStore.downloadObject(
+            fileID: remoteCheckpoint.id,
+            to: verificationURL
+        )
+        let verified = try VaultPaddedCheckpointCodec.open(
+            Data(contentsOf: verificationURL, options: .mappedIfSafe),
+            objectToken: checkpointToken,
+            rootKey: rootKey,
+            vaultID: vaultConfiguration.vaultIdentifier,
+            keyEpoch: vaultConfiguration.keyEpoch
+        )
+        guard verified == checkpoint else {
+            throw VaultCryptoError.authenticationFailed
+        }
+
+        let referencedTokens = Self.referencedContentTokens(in: verified.items)
+        var candidatesByToken = Dictionary(uniqueKeysWithValues:
+            try await localStore.garbageCollectionCandidates().map {
+                ($0.objectToken, $0)
+            }
+        )
+        var observedTokens: Set<String> = []
+        var cursor: String?
+        var examined = 0
+        repeat {
+            let page = try await objectStore.listObjects(
+                containerID: layout.contentContainerID,
+                cursor: cursor
+            )
+            for object in page.objects where object.isContainer == false {
+                examined += 1
+                observedTokens.insert(object.token)
+                guard referencedTokens.contains(object.token) == false else {
+                    candidatesByToken[object.token] = nil
+                    continue
+                }
+                if candidatesByToken[object.token]?.remoteFileID != object.id {
+                    candidatesByToken[object.token] = VaultGarbageCollectionCandidate(
+                        objectToken: object.token,
+                        remoteFileID: object.id,
+                        firstObservedAt: now,
+                        observedFrontier: state.frontier
+                    )
+                }
+            }
+            cursor = page.nextCursor
+        } while cursor != nil
+        candidatesByToken = candidatesByToken.filter {
+            observedTokens.contains($0.key) &&
+                referencedTokens.contains($0.key) == false
+        }
+        try await localStore.replaceGarbageCollectionCandidates(
+            Array(candidatesByToken.values)
+        )
+
+        return VaultMaintenanceReport(
+            checkpointFileID: remoteCheckpoint.id,
+            examinedObjectCount: examined,
+            unreferencedObjectCount: candidatesByToken.count
+        )
+    }
+
+    private static func referencedContentTokens(in items: [VaultItem]) -> Set<String> {
+        var tokens: Set<String> = []
+        for item in items {
+            if let token = item.contentReference?.objectToken {
+                tokens.insert(token)
+            }
+            tokens.formUnion(item.versions.map(\.contentReference.objectToken))
+        }
+        return tokens
+    }
+
+    private func temporaryURL(prefix: String) -> URL {
+        temporaryDirectoryURL.appendingPathComponent(
+            "\(prefix)-\(UUID().uuidString)",
+            isDirectory: false
+        )
+    }
+}

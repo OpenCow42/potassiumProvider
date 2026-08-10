@@ -1,5 +1,7 @@
 import PotassiumProviderCore
 import SwiftUI
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 enum ProviderSetupRoute: Hashable {
     case addAccount
@@ -15,10 +17,24 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
     let accountIdentifier: String
     let driveID: Int
     let remote: KDriveDriveSummary?
-    let configuration: ProviderDomainConfiguration?
+    let configurations: [ProviderDomainConfiguration]
+
+    var configuration: ProviderDomainConfiguration? {
+        configurations.first(where: { $0.encryptionMode == .opaqueVaultV2 })
+            ?? configurations.first(where: { $0.encryptionMode == .opaqueVaultV1 })
+            ?? configurations.first
+    }
+
+    var encryptedConfiguration: ProviderDomainConfiguration? {
+        configurations.first { $0.encryptionMode == .opaqueVaultV2 }
+    }
+
+    var legacyConfigurations: [ProviderDomainConfiguration] {
+        configurations.filter { $0.encryptionMode == .legacyPlaintext }
+    }
 
     var name: String {
-        remote?.name ?? configuration?.driveName ?? "kDrive \(driveID)"
+        remote?.name ?? configurations.first?.driveName ?? "kDrive \(driveID)"
     }
 
     var role: String? {
@@ -36,7 +52,7 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
     }
 
     var isConfigured: Bool {
-        configuration != nil
+        configurations.isEmpty == false
     }
 
     var remoteDetailsAreAvailable: Bool {
@@ -48,10 +64,7 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
         drives: [KDriveDriveSummary],
         configurations: [ProviderDomainConfiguration]
     ) -> [ProviderDriveDescriptor] {
-        var configurationsByDriveID: [Int: ProviderDomainConfiguration] = [:]
-        for configuration in configurations where configurationsByDriveID[configuration.driveID] == nil {
-            configurationsByDriveID[configuration.driveID] = configuration
-        }
+        let configurationsByDriveID = Dictionary(grouping: configurations, by: \.driveID)
 
         var seenDriveIDs: Set<Int> = []
         var descriptors = drives.compactMap { drive -> ProviderDriveDescriptor? in
@@ -60,18 +73,18 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
                 accountIdentifier: accountIdentifier,
                 driveID: drive.id,
                 remote: drive,
-                configuration: configurationsByDriveID[drive.id]
+                configurations: configurationsByDriveID[drive.id] ?? []
             )
         }
 
-        descriptors.append(contentsOf: configurations
-            .filter { seenDriveIDs.insert($0.driveID).inserted }
-            .map {
+        descriptors.append(contentsOf: configurationsByDriveID
+            .filter { seenDriveIDs.insert($0.key).inserted }
+            .map { driveID, configurations in
                 ProviderDriveDescriptor(
                     accountIdentifier: accountIdentifier,
-                    driveID: $0.driveID,
+                    driveID: driveID,
                     remote: nil,
-                    configuration: $0
+                    configurations: configurations
                 )
             })
         return descriptors
@@ -520,6 +533,11 @@ private struct ProviderDriveManagementView: View {
 
     @State private var isRemovalConfirmationPresented = false
     @State private var isStopSyncConfirmationPresented = false
+    @State private var isOpenVaultPresented = false
+    @State private var isForgetKeyPresented = false
+    @State private var isRecoveryVerificationPresented = false
+    @State private var isCloudRemovalConfirmationPresented = false
+    @State private var isKnownFolderPreflightPresented = false
 
     var body: some View {
         Group {
@@ -564,7 +582,57 @@ private struct ProviderDriveManagementView: View {
         } message: {
             Text("This removes the File Provider domain, cached snapshots, activities, conflicts, and other provider-local state. Remote kDrive files are not deleted.")
         }
+        .sheet(isPresented: vaultSetupBinding) {
+            EncryptedVaultSetupFlow(model: model)
+        }
+        .sheet(isPresented: $isOpenVaultPresented) {
+            if let drive = descriptor?.remote {
+                VaultOpenView(
+                    model: model,
+                    accountIdentifier: key.accountIdentifier,
+                    drive: drive
+                )
+            }
+        }
+        .sheet(isPresented: $isForgetKeyPresented) {
+            if let configuration = descriptor?.encryptedConfiguration {
+                VaultForgetKeyView(model: model, configuration: configuration)
+            }
+        }
+        .sheet(isPresented: $isRecoveryVerificationPresented) {
+            if let configuration = descriptor?.encryptedConfiguration {
+                VaultRecoveryVerificationView(
+                    model: model,
+                    configuration: configuration
+                )
+            }
+        }
+        .confirmationDialog(
+            "Remove this vault from iCloud Keychain?",
+            isPresented: $isCloudRemovalConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Remove from iCloud Keychain", role: .destructive) {
+                guard let configuration = descriptor?.encryptedConfiguration else {
+                    return
+                }
+                Task {
+                    await model.removeICloudKeychainAccess(for: configuration)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The synchronized record is removed globally. Keys already imported by another device remain usable; revoking a lost device requires a full vault rekey.")
+        }
         #if os(macOS)
+        .sheet(isPresented: $isKnownFolderPreflightPresented) {
+            if let configuration = descriptor?.configuration {
+                KnownFolderPreflightView(
+                    model: model,
+                    configuration: configuration
+                )
+            }
+        }
         .confirmationDialog(
             "Stop syncing Desktop and Documents?",
             isPresented: $isStopSyncConfirmationPresented,
@@ -595,6 +663,21 @@ private struct ProviderDriveManagementView: View {
 
     private var isBusy: Bool {
         activeAction != nil || model.isLoadingDrives(for: key.accountIdentifier)
+    }
+
+    private var vaultSetupBinding: Binding<Bool> {
+        Binding(
+            get: { model.vaultSetupStep != nil },
+            set: { isPresented in
+                if isPresented == false, model.vaultSetupStep != nil {
+                    if model.pendingVaultProvisioning != nil {
+                        Task { await model.cancelEncryptedVaultProvisioning() }
+                    } else {
+                        model.finishVaultSetup()
+                    }
+                }
+            }
+        )
     }
 
     private var knownFolderRemotePath: String {
@@ -637,27 +720,86 @@ private struct ProviderDriveManagementView: View {
                         .foregroundStyle(descriptor.isConfigured ? .green : .secondary)
                 }
 
-                if descriptor.configuration == nil, let remote = descriptor.remote {
+                if descriptor.encryptedConfiguration == nil, let remote = descriptor.remote {
+                    if model.encryptedVaultICloudKeychainEnabled {
+                        ForEach(model.cloudAccessCandidates(driveID: remote.id)) { candidate in
+                            Button {
+                                model.prepareOpenEncryptedVaultFromICloud(
+                                    accountIdentifier: key.accountIdentifier,
+                                    drive: remote,
+                                    vaultID: candidate.vaultID
+                                )
+                            } label: {
+                                Label {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Encrypted Vault Found in iCloud Keychain")
+                                        Text(
+                                            "\(candidate.vaultID.rawValue.uuidString.prefix(8)) · saved \(candidate.createdAt.formatted(date: .abbreviated, time: .shortened))"
+                                        )
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    }
+                                } icon: {
+                                    Image(systemName: "icloud.and.arrow.down")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isBusy || model.encryptedVaultsEnabled == false)
+                            .accessibilityIdentifier("drive.openICloudVault")
+                        }
+
+                        Button("Check iCloud Keychain Again", systemImage: "arrow.clockwise.icloud") {
+                            Task { await model.refreshVaultAccessState() }
+                        }
+                        .disabled(isBusy)
+                    }
+
                     Button {
                         Task {
-                            await model.addDomain(
+                            await model.prepareEncryptedVault(
                                 accountIdentifier: key.accountIdentifier,
                                 drive: remote
                             )
                         }
                     } label: {
                         actionLabel(
-                            title: "Add to Files",
-                            systemImage: "folder.badge.plus",
+                            title: "Create Encrypted Vault",
+                            systemImage: "lock.square.stack",
                             action: .addingToFiles
                         )
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isBusy)
-                    .accessibilityIdentifier("drive.addToFiles")
+                    .disabled(isBusy || model.encryptedVaultsEnabled == false)
+                    .accessibilityIdentifier("drive.createEncryptedVault")
+
+                    Button("Open Existing Vault", systemImage: "key.viewfinder") {
+                        isOpenVaultPresented = true
+                    }
+                    .disabled(isBusy || model.encryptedVaultsEnabled == false)
+                    .accessibilityIdentifier("drive.openEncryptedVault")
+
+                    if model.encryptedVaultsEnabled == false {
+                        Label(
+                            "Encrypted vault creation is behind the security-review feature gate.",
+                            systemImage: "checkmark.shield"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    }
                 }
 
                 if let configuration = descriptor.configuration {
+                    LabeledContent(
+                        "Storage",
+                        value: storageDescription(for: configuration)
+                    )
+                    if configuration.encryptionMode == .opaqueVaultV1 {
+                        Label(
+                            "Experimental vault v1 is unsupported and is blocked from activation and mutation.",
+                            systemImage: "lock.trianglebadge.exclamationmark"
+                        )
+                        .foregroundStyle(.red)
+                    }
                     Button {
                         Task {
                             if let url = await model.userVisibleRootURL(for: configuration) {
@@ -679,7 +821,9 @@ private struct ProviderDriveManagementView: View {
                         )
                         #endif
                     }
-                    .disabled(isBusy)
+                    .disabled(
+                        isBusy || configuration.encryptionMode == .opaqueVaultV1
+                    )
                     .accessibilityIdentifier("drive.showInFiles")
 
                     Button {
@@ -691,13 +835,37 @@ private struct ProviderDriveManagementView: View {
                             action: .syncingNow
                         )
                     }
-                    .disabled(isBusy)
+                    .disabled(
+                        isBusy || configuration.encryptionMode == .opaqueVaultV1
+                    )
                     .accessibilityIdentifier("drive.syncNow")
+
+                }
+            }
+
+            if let configuration = descriptor.encryptedConfiguration {
+                securityRecoverySection(configuration)
+            }
+
+            if descriptor.legacyConfigurations.isEmpty == false {
+                Section {
+                    ForEach(descriptor.legacyConfigurations) { configuration in
+                        Label(
+                            "\(configuration.displayName) stores readable names, metadata, and contents on kDrive.",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text("Legacy Plaintext Domains")
+                } footer: {
+                    Text("Safe cross-vault migration and destructive source purge are not implemented. Legacy domains remain separate.")
                 }
             }
 
             #if os(macOS)
-            if let configuration = descriptor.configuration {
+            if let configuration = descriptor.configuration,
+               configuration.encryptionMode != .opaqueVaultV1 {
                 knownFolderSection(configuration)
             }
             #endif
@@ -739,12 +907,145 @@ private struct ProviderDriveManagementView: View {
         }
     }
 
+    private func securityRecoverySection(
+        _ configuration: ProviderDomainConfiguration
+    ) -> some View {
+        let localStatus = model.localKeyStatus(for: configuration)
+        let cloudStatus = model.cloudAccessStatus(for: configuration)
+        return Section {
+            if model.vaultSetupNeedsAttention(for: configuration) {
+                Button(
+                    "Finish Vault Setup",
+                    systemImage: "checklist"
+                ) {
+                    model.resumeVaultSetup(for: configuration)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("vault.resumeSetup")
+            }
+
+            LabeledContent("This Device", value: localKeyStatusTitle(localStatus))
+            LabeledContent(
+                "iCloud Keychain",
+                value: cloudAccessStatusTitle(cloudStatus)
+            )
+
+            if model.encryptedVaultICloudKeychainEnabled {
+                switch cloudStatus {
+                case .disabled:
+                    Button("Use iCloud Keychain", systemImage: "icloud") {
+                        Task {
+                            await model.enableICloudKeychainAccess(
+                                for: configuration
+                            )
+                        }
+                    }
+                    .disabled(isBusy || localStatus != .available)
+                case .available:
+                    if localStatus != .available {
+                        Button(
+                            "Restore Key to This Device",
+                            systemImage: "icloud.and.arrow.down"
+                        ) {
+                            Task {
+                                await model.restoreVaultKeyFromICloud(
+                                    for: configuration
+                                )
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button(
+                        "Remove from iCloud Keychain",
+                        systemImage: "icloud.slash",
+                        role: .destructive
+                    ) {
+                        isCloudRemovalConfirmationPresented = true
+                    }
+                case .unavailable, .staleEpoch, .conflict:
+                    Button("Check iCloud Keychain Again", systemImage: "arrow.clockwise.icloud") {
+                        Task { await model.refreshVaultAccessState() }
+                    }
+                }
+            } else {
+                Label(
+                    "iCloud Keychain convenience is behind a separate security-review gate.",
+                    systemImage: "checkmark.shield"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+
+            Button("Verify Recovery Kit", systemImage: "checkmark.shield") {
+                isRecoveryVerificationPresented = true
+            }
+            Button("Forget Key on This Device", systemImage: "key.slash") {
+                isForgetKeyPresented = true
+            }
+            .disabled(isBusy || localStatus != .available)
+        } header: {
+            Text("Security & Recovery")
+        } footer: {
+            Text("The recovery kit remains the independent fallback. iCloud Keychain does not revoke keys already imported by other devices.")
+        }
+    }
+
+    private func localKeyStatusTitle(_ status: VaultLocalKeyStatus) -> String {
+        switch status {
+        case .available:
+            "Available"
+        case .locked:
+            "Unlock Device"
+        case .missing:
+            "Missing"
+        case .invalid:
+            "Invalid"
+        }
+    }
+
+    private func cloudAccessStatusTitle(
+        _ status: VaultCloudAccessStatus
+    ) -> String {
+        switch status {
+        case .disabled:
+            "Off"
+        case .available:
+            "Available"
+        case .unavailable:
+            "Unavailable"
+        case .staleEpoch:
+            "Update Required"
+        case .conflict:
+            "Conflict"
+        }
+    }
+
+    private func storageDescription(
+        for configuration: ProviderDomainConfiguration
+    ) -> String {
+        switch configuration.encryptionMode {
+        case .legacyPlaintext:
+            "Legacy plaintext domain"
+        case .opaqueVaultV1:
+            "Unsupported experimental encrypted vault v1"
+        case .opaqueVaultV2:
+            "End-to-end encrypted vault v2"
+        }
+    }
+
     #if os(macOS)
     private func knownFolderSection(_ configuration: ProviderDomainConfiguration) -> some View {
         let state = model.knownFolderSyncState(for: configuration)
         let remotePath = model.knownFolderRemotePath(for: configuration)
+        let transferPhase = model.knownFolderTransferPhase(for: configuration)
         return Section {
             LabeledContent("Status", value: knownFolderStatusTitle(state))
+            if transferPhase != .idle {
+                LabeledContent(
+                    "Transfer",
+                    value: knownFolderTransferTitle(transferPhase)
+                )
+            }
             Text(knownFolderDetail(state, remotePath: remotePath))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -758,7 +1059,10 @@ private struct ProviderDriveManagementView: View {
                 .accessibilityIdentifier("drive.stopKnownFolders")
             case .inactive:
                 Button {
-                    Task { await model.enableKnownFolderSync(for: configuration) }
+                    Task {
+                        await model.prepareKnownFolderSync(for: configuration)
+                        isKnownFolderPreflightPresented = true
+                    }
                 } label: {
                     actionLabel(
                         title: "Sync Desktop & Documents",
@@ -776,7 +1080,30 @@ private struct ProviderDriveManagementView: View {
         } header: {
             Text("Desktop & Documents")
         } footer: {
-            Text("macOS manages Desktop and Documents together under kDrive \(remotePath).")
+            Text(configuration.encryptionMode == .opaqueVaultV2
+                ? "macOS manages both folders together. Their contents are encrypted before kDrive upload; Finder shows per-item transfer progress."
+                : "macOS manages Desktop and Documents together under kDrive \(remotePath).")
+        }
+    }
+
+    private func knownFolderTransferTitle(
+        _ phase: KnownFolderTransferPhase
+    ) -> String {
+        switch phase {
+        case .idle:
+            "Not Started"
+        case .preparing:
+            "Preparing"
+        case .awaitingConsent:
+            "Awaiting macOS Consent"
+        case .connectedUploading:
+            "Connected · Uploading"
+        case .upToDate:
+            "Up to Date"
+        case .quotaBlocked:
+            "Quota Blocked"
+        case .attentionRequired:
+            "Attention Required"
         }
     }
 
@@ -868,6 +1195,673 @@ private struct ProviderSetupErrorBanner: View {
         .padding()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("setup.errorBanner")
+    }
+}
+
+private struct EncryptedVaultSetupFlow: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmation = ""
+    @State private var useICloudKeychain = false
+    @State private var didRunKnownFolderPreflight = false
+    @State private var riskWarningSecondsRemaining = Int(
+        PotassiumProviderAppModel.encryptedVaultRiskWarningDelaySeconds
+    )
+    @State private var isPreparingVault = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                setupContent
+            }
+            .navigationTitle(navigationTitle)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        Task {
+                            if model.pendingVaultProvisioning != nil {
+                                await model.cancelEncryptedVaultProvisioning()
+                            } else {
+                                model.finishVaultSetup()
+                            }
+                            dismiss()
+                        }
+                    }
+                    .disabled(isPreparingVault)
+                }
+                confirmationToolbar
+            }
+        }
+        .interactiveDismissDisabled(model.vaultSetupStep != .complete)
+        .frame(minWidth: 520, minHeight: 620)
+        .task(id: model.vaultSetupStep) {
+            guard model.vaultSetupStep == .unsupportedRiskWarning else {
+                return
+            }
+            riskWarningSecondsRemaining = Int(
+                PotassiumProviderAppModel.encryptedVaultRiskWarningDelaySeconds
+            )
+            while riskWarningSecondsRemaining > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+                riskWarningSecondsRemaining -= 1
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var setupContent: some View {
+        switch model.vaultSetupStep {
+        case .unsupportedRiskWarning:
+            Section("Unsupported Experimental Feature") {
+                Label(
+                    "Complete Data Loss Is Possible",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.headline)
+                .foregroundStyle(.red)
+
+                Text(
+                    "Using this experimental encrypted-vault feature may result in complete and unrecoverable data loss."
+                )
+                Text(
+                    "This feature is not supported by OpenCow, Infomaniak, Apple, OpenAI, or anyone else. No person or organization can promise recovery or provide support if it fails."
+                )
+                Text("If you decide to continue, you are entirely on your own.")
+                    .fontWeight(.semibold)
+                Text(
+                    "On a new device, the app cannot independently prove that kDrive presented the newest vault history because no external history witness exists."
+                )
+                .foregroundStyle(.secondary)
+            }
+            .accessibilityIdentifier("vault.unsupportedRiskWarning")
+
+            Section {
+                if isPreparingVault {
+                    HStack {
+                        ProgressView()
+                        Text("Preparing the encrypted vault…")
+                    }
+                } else if riskWarningSecondsRemaining > 0 {
+                    Text(
+                        "Continue is available in \(riskWarningSecondsRemaining) second\(riskWarningSecondsRemaining == 1 ? "" : "s")."
+                    )
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("vault.unsupportedRiskCountdown")
+                } else {
+                    Text("You may continue only if you accept this risk without support.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+        case .overview:
+            Section("End-to-End Encryption") {
+                Label(
+                    "kDrive receives randomized authenticated ciphertext objects.",
+                    systemImage: "lock.shield"
+                )
+                Label(
+                    "Finder and Files show normal names, metadata, thumbnails, and contents after local decryption.",
+                    systemImage: "folder"
+                )
+                Label(
+                    "Plaintext remains on this trusted device and may be indexed by Spotlight.",
+                    systemImage: "desktopcomputer"
+                )
+            }
+            Section("What kDrive Can Still See") {
+                Text("Vault presence, padded ciphertext sizes, object counts, server timestamps, request timing, access patterns, quota use, and deletion remain visible.")
+                    .foregroundStyle(.secondary)
+            }
+
+        case .keyAccess:
+            Section("Key Access") {
+                Toggle(
+                    "Also use iCloud Keychain",
+                    isOn: $useICloudKeychain
+                )
+                .disabled(model.encryptedVaultICloudKeychainEnabled == false)
+                Text(useICloudKeychain
+                    ? "A separate end-to-end encrypted access record lets trusted Apple devices open this vault. Apple Account recovery and trusted-device security become part of the custody boundary."
+                    : "The unwrapped vault key remains only in this device’s non-synchronizing Data Protection Keychain.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if model.encryptedVaultICloudKeychainEnabled == false {
+                    Label(
+                        "iCloud Keychain convenience is behind a separate security-review gate.",
+                        systemImage: "checkmark.shield"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                Text("The offline recovery kit is required in both modes and is never placed in iCloud Keychain.")
+            }
+
+        case .recoveryKit:
+            Section {
+                if let kit = model.pendingVaultProvisioning?.recoveryKit.encoded {
+                    VaultRecoveryQRCode(value: kit)
+                        .frame(maxWidth: .infinity)
+                    Text(kit)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("vault.recoveryKit")
+                }
+            } header: {
+                Text("One-time Recovery Kit")
+            } footer: {
+                Text("Save this offline. It is never uploaded, logged, or automatically exported. Losing every device key and this kit makes the vault unrecoverable.")
+            }
+            Section("Confirm") {
+                TextEditor(text: $confirmation)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(minHeight: 110)
+                    .accessibilityIdentifier("vault.recoveryConfirmation")
+                Text("Paste or scan the complete recovery kit to prove you saved it.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+        case .registering:
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("Registering and authenticating the encrypted vault…")
+                }
+            }
+
+        case .desktopDocuments:
+            #if os(macOS)
+            desktopDocumentsSetupContent
+            #else
+            Section {
+                Text("Desktop and Documents uploaded by a Mac remain available in Files on this device.")
+            }
+            #endif
+
+        case .complete:
+            completionContent
+
+        case nil:
+            EmptyView()
+        }
+    }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var desktopDocumentsSetupContent: some View {
+        Section("Protect Desktop & Documents") {
+            Label(
+                "macOS will hand both folders to this File Provider domain.",
+                systemImage: "desktopcomputer"
+            )
+            Text("Each file is encrypted before kDrive upload. Existing copies held by iCloud Drive or another provider are not removed.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if let configuration = model.vaultSetupOutcome.configuration,
+               let preflight = model.knownFolderPreflight(for: configuration) {
+                KnownFolderPreflightSummary(preflight: preflight)
+            } else {
+                HStack {
+                    ProgressView()
+                    Text("Checking ownership, vault unlock, and reachability…")
+                }
+            }
+
+            Button("Protect Desktop & Documents", systemImage: "lock.desktopcomputer") {
+                Task {
+                    await model.configureDesktopDocumentsDuringSetup(enable: true)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled({
+                guard let configuration = model.vaultSetupOutcome.configuration,
+                      let preflight = model.knownFolderPreflight(for: configuration)
+                else {
+                    return true
+                }
+                return preflight.canRequestClaim == false
+            }())
+
+            Button("Not Now") {
+                Task {
+                    await model.configureDesktopDocumentsDuringSetup(enable: false)
+                }
+            }
+        }
+        .task {
+            guard didRunKnownFolderPreflight == false,
+                  let configuration = model.vaultSetupOutcome.configuration else {
+                return
+            }
+            didRunKnownFolderPreflight = true
+            await model.prepareKnownFolderSync(for: configuration)
+        }
+    }
+    #endif
+
+    @ViewBuilder
+    private var completionContent: some View {
+        Section("Vault Ready") {
+            Label("Added to Finder and Files", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Label("Recovery kit verified", systemImage: "checkmark.shield")
+            LabeledContent(
+                "iCloud Keychain",
+                value: cloudStatusTitle(
+                    model.vaultSetupOutcome.cloudAccessStatus
+                )
+            )
+            #if os(macOS)
+            LabeledContent(
+                "Desktop & Documents",
+                value: model.vaultSetupOutcome.desktopDocumentsEnabled
+                    ? "Connected"
+                    : "Not Now"
+            )
+            #else
+            Text("Desktop and Documents uploaded by a Mac are browsable in Files.")
+                .foregroundStyle(.secondary)
+            #endif
+        }
+        if model.vaultSetupOutcome.cloudAccessStatus == .unavailable {
+            Section {
+                Label(
+                    "The vault remains valid. Retry iCloud Keychain later from Security & Recovery.",
+                    systemImage: "icloud.slash"
+                )
+                .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var confirmationToolbar: some ToolbarContent {
+        ToolbarItem(placement: .confirmationAction) {
+            switch model.vaultSetupStep {
+            case .unsupportedRiskWarning:
+                Button("I Understand — Continue") {
+                    isPreparingVault = true
+                    Task {
+                        await model.acceptEncryptedVaultRiskAndPrepare()
+                        isPreparingVault = false
+                    }
+                }
+                .disabled(riskWarningSecondsRemaining > 0 || isPreparingVault)
+                .accessibilityIdentifier("vault.unsupportedRiskContinue")
+            case .overview:
+                Button("Continue") { model.setVaultSetupStep(.keyAccess) }
+            case .keyAccess:
+                Button("Continue") { model.setVaultSetupStep(.recoveryKit) }
+            case .recoveryKit:
+                Button("Create Vault") {
+                    Task {
+                        await model.confirmEncryptedVault(
+                            recoveryKitConfirmation: confirmation,
+                            useICloudKeychain: useICloudKeychain
+                        )
+                    }
+                }
+                .disabled(
+                    confirmation.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    ).isEmpty
+                )
+            case .complete:
+                Button("Done") {
+                    model.finishVaultSetup()
+                    dismiss()
+                }
+            case .registering, .desktopDocuments, nil:
+                EmptyView()
+            }
+        }
+    }
+
+    private var navigationTitle: String {
+        switch model.vaultSetupStep {
+        case .unsupportedRiskWarning:
+            "Unsupported — Data Loss Risk"
+        case .overview:
+            "Encrypted Vault"
+        case .keyAccess:
+            "Choose Key Access"
+        case .recoveryKit:
+            "Save Recovery Kit"
+        case .registering:
+            "Creating Vault"
+        case .desktopDocuments:
+            "Desktop & Documents"
+        case .complete:
+            "Setup Complete"
+        case nil:
+            "Encrypted Vault"
+        }
+    }
+
+    private func cloudStatusTitle(_ status: VaultCloudAccessStatus) -> String {
+        switch status {
+        case .disabled:
+            "Device Only"
+        case .available:
+            "Enabled"
+        case .unavailable:
+            "Needs Retry"
+        case .staleEpoch:
+            "Update Required"
+        case .conflict:
+            "Conflict"
+        }
+    }
+}
+
+private struct VaultOpenView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    let accountIdentifier: String
+    let drive: KDriveDriveSummary
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var recoveryKit = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $recoveryKit)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 150)
+                        .accessibilityIdentifier("vault.openRecoveryKit")
+                } header: {
+                    Text("Recovery Kit")
+                } footer: {
+                    Text("The kit is used locally to authenticate the bootstrap and checkpoint. It is not uploaded or saved.")
+                }
+            }
+            .navigationTitle("Open Encrypted Vault")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Open") {
+                        model.prepareOpenEncryptedVault(
+                            accountIdentifier: accountIdentifier,
+                            drive: drive,
+                            recoveryKitText: recoveryKit
+                        )
+                        if model.errorMessage == nil {
+                            dismiss()
+                        }
+                    }
+                    .disabled(recoveryKit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .frame(minWidth: 500, minHeight: 360)
+    }
+}
+
+private struct VaultRecoveryVerificationView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    let configuration: ProviderDomainConfiguration
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var recoveryKit = ""
+    @State private var isVerifying = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $recoveryKit)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 150)
+                } header: {
+                    Text("Recovery Kit")
+                } footer: {
+                    Text("The kit authenticates the encrypted vault header locally. Recovery material is not sent, saved, or added to iCloud Keychain.")
+                }
+            }
+            .navigationTitle("Verify Recovery Kit")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Verify") {
+                        isVerifying = true
+                        Task {
+                            await model.verifyRecoveryKit(
+                                for: configuration,
+                                recoveryKitText: recoveryKit
+                            )
+                            isVerifying = false
+                            if model.errorMessage == nil {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(
+                        isVerifying || recoveryKit.trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        ).isEmpty
+                    )
+                }
+            }
+        }
+        .frame(minWidth: 500, minHeight: 360)
+    }
+}
+
+#if os(macOS)
+private struct KnownFolderPreflightView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    let configuration: ProviderDomainConfiguration
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Desktop & Documents Preflight") {
+                    if let preflight = model.knownFolderPreflight(
+                        for: configuration
+                    ) {
+                        KnownFolderPreflightSummary(preflight: preflight)
+                    } else {
+                        HStack {
+                            ProgressView()
+                            Text("Checking ownership, unlock, and reachability…")
+                        }
+                    }
+                }
+
+                Section {
+                    Text("macOS requests consent before moving both known folders. Potassium encrypts every new file revision before its kDrive upload.")
+                    Text("Existing copies held by iCloud Drive or another provider are not removed.")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+            .navigationTitle("Protect Desktop & Documents")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Not Now") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if let preflight = model.knownFolderPreflight(
+                        for: configuration
+                    ), preflight.canRequestClaim {
+                        Button("Continue") {
+                            Task {
+                                await model.enableKnownFolderSync(
+                                    for: configuration
+                                )
+                                if model.knownFolderSyncState(
+                                    for: configuration
+                                ) == .active {
+                                    dismiss()
+                                }
+                            }
+                        }
+                    } else {
+                        Button("Check Again") {
+                            Task {
+                                await model.prepareKnownFolderSync(
+                                    for: configuration
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 520, minHeight: 430)
+    }
+}
+
+private struct KnownFolderPreflightSummary: View {
+    let preflight: KnownFolderPreflight
+
+    var body: some View {
+        LabeledContent(
+            "Vault Key",
+            value: preflight.vaultIsUnlocked ? "Available" : "Unlock Required"
+        )
+        LabeledContent(
+            "kDrive",
+            value: preflight.remoteIsReachable ? "Reachable" : "Unavailable"
+        )
+        LabeledContent("Available Quota", value: quotaTitle)
+        LabeledContent("Current Owner", value: ownershipTitle)
+
+        switch preflight.ownership {
+        case .externalProvider(let displayName):
+            Label(
+                "\(displayName) may retain earlier server copies after macOS switches ownership.",
+                systemImage: "exclamationmark.triangle"
+            )
+            .foregroundStyle(.orange)
+        case .legacyPotassium:
+            Label(
+                "Safe encrypted migration is not implemented. Keep the plaintext Potassium domain as owner.",
+                systemImage: "lock.trianglebadge.exclamationmark"
+            )
+            .foregroundStyle(.orange)
+        case .partial:
+            Label(
+                "Stop the partial known-folder configuration before enabling both folders again.",
+                systemImage: "wrench.and.screwdriver"
+            )
+            .foregroundStyle(.orange)
+        case .none, .thisVault:
+            EmptyView()
+        }
+    }
+
+    private var quotaTitle: String {
+        if let bytes = preflight.availableQuotaBytes {
+            return ByteCountFormatter.string(
+                fromByteCount: bytes,
+                countStyle: .file
+            )
+        }
+        return "Checked During Upload"
+    }
+
+    private var ownershipTitle: String {
+        switch preflight.ownership {
+        case .none:
+            "Not Managed"
+        case .thisVault:
+            "This Encrypted Vault"
+        case .legacyPotassium:
+            "Legacy Potassium"
+        case .externalProvider(let displayName), .partial(let displayName):
+            displayName
+        }
+    }
+}
+#endif
+
+private struct VaultForgetKeyView: View {
+    @ObservedObject var model: PotassiumProviderAppModel
+    let configuration: ProviderDomainConfiguration
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var recoveryKit = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $recoveryKit)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 150)
+                } header: {
+                    Text("Recovery Confirmation")
+                } footer: {
+                    Text("This deletes only the unwrapped vault key on this device. Domain removal, logout, and uninstall do not delete it.")
+                }
+            }
+            .navigationTitle("Forget Vault Key")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Forget Key", role: .destructive) {
+                        Task {
+                            await model.forgetVaultKey(
+                                for: configuration,
+                                recoveryKitConfirmation: recoveryKit
+                            )
+                            if model.errorMessage == nil {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(recoveryKit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .frame(minWidth: 500, minHeight: 360)
+    }
+}
+
+private struct VaultRecoveryQRCode: View {
+    let value: String
+
+    var body: some View {
+        if let image = Self.image(value) {
+            Image(decorative: image, scale: 1)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 220, height: 220)
+                .accessibilityLabel("Recovery kit QR code")
+        }
+    }
+
+    private static func image(_ value: String) -> CGImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(
+            by: CGAffineTransform(scaleX: 8, y: 8)
+        ) else {
+            return nil
+        }
+        return CIContext(options: [.useSoftwareRenderer: false]).createCGImage(
+            output,
+            from: output.extent
+        )
     }
 }
 

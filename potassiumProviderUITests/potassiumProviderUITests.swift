@@ -46,8 +46,47 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(availableDrive.waitForExistence(timeout: 5))
         availableDrive.tap()
 
-        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.buttons["drive.createEncryptedVault"].waitForExistence(timeout: 5)
+        )
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
+    }
+
+    @MainActor
+    func testEncryptedVaultWarningRequiresFiveSecondWait() throws {
+        let app = launchSetupFixture()
+        openSetup(in: app)
+        app.buttons["setup.account.ui-account"].tap()
+        app.buttons["account.drive.20"].tap()
+
+        let createVault = app.buttons["drive.createEncryptedVault"]
+        XCTAssertTrue(createVault.waitForExistence(timeout: 5))
+        XCTAssertTrue(createVault.isEnabled)
+        createVault.tap()
+
+        XCTAssertTrue(
+            text(containing: "complete and unrecoverable data loss", in: app)
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(
+            text(containing: "you are entirely on your own", in: app).exists
+        )
+
+        let continueButton = app.buttons["vault.unsupportedRiskContinue"]
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(continueButton.isEnabled)
+        XCTAssertTrue(
+            app.staticTexts["vault.unsupportedRiskCountdown"].exists
+        )
+
+        let enabledAfterDelay = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"),
+            object: continueButton
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [enabledAfterDelay], timeout: 7),
+            .completed
+        )
     }
 
     @MainActor
@@ -112,12 +151,26 @@ final class potassiumProviderUITests: XCTestCase {
         let timeline = app.scrollViews["activity.timeline"]
         XCTAssertTrue(timeline.waitForExistence(timeout: 5))
 
+        // The fixture page size is 50, so row 51 proves that scrolling
+        // prefetched a second page without requiring platform-specific travel
+        // deep into that page.
         let olderEntry = app.buttons[
-            "activity.entry.activity-00000000-0000-0000-0000-000000000076"
+            "activity.entry.activity-00000000-0000-0000-0000-000000000051"
         ]
+        #if os(macOS)
+        for _ in 0..<8 where olderEntry.exists == false {
+            timeline.scroll(byDeltaX: 0, deltaY: -2_000)
+            // Give an asynchronously fetched page time to append before the
+            // next scroll moves beyond the old boundary.
+            if olderEntry.waitForExistence(timeout: 1) {
+                break
+            }
+        }
+        #else
         for _ in 0..<14 where olderEntry.exists == false {
             timeline.swipeUp()
         }
+        #endif
 
         XCTAssertTrue(olderEntry.waitForExistence(timeout: 5))
         let backToLatest = app.buttons["activity.backToLatest"]

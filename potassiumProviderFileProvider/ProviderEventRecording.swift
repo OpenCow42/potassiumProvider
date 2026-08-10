@@ -6,6 +6,14 @@ import PotassiumProviderCore
 enum ProviderEventRecorder {
     static func saveConflict(_ event: KDriveConflictEvent, runtime: FileProviderRuntime) async {
         guard let eventStore = runtime.eventStore else { return }
+        var event = event
+        if runtime.configuration.encryptionMode == .opaqueVaultV2 {
+            event.originalItemName = nil
+            event.originalItemPath = nil
+            event.conflictItemName = nil
+            event.conflictItemPath = nil
+            event.stagedUploadRelativePath = nil
+        }
         do {
             try await eventStore.saveConflict(event)
             try await eventStore.recordActivity(KDriveProviderActivityEvent(
@@ -41,6 +49,8 @@ enum ProviderEventRecorder {
         httpStatusCode: Int? = nil,
         remoteRequestID: String? = nil
     ) async {
+        let storesOpaqueSummaryOnly =
+            runtime.configuration.encryptionMode == .opaqueVaultV2
         await recordActivity(
             kind: kind,
             eventStore: runtime.eventStore,
@@ -48,8 +58,8 @@ enum ProviderEventRecorder {
             driveID: runtime.configuration.driveID,
             scope: .domain,
             itemIdentifier: itemIdentifier,
-            itemName: itemName,
-            itemPath: itemPath,
+            itemName: storesOpaqueSummaryOnly ? nil : itemName,
+            itemPath: storesOpaqueSummaryOnly ? nil : itemPath,
             summary: summary,
             relatedConflictID: relatedConflictID,
             outcome: outcome,

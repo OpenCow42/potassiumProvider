@@ -342,3 +342,24 @@ legacy/test-friendly implementation of `KDriveSnapshotStoring`. It is no longer
 the default store for the app or extension. No migration from old JSON snapshots
 is currently performed. The file store also honors conditional saves, which keeps
 tests and fallback callers aligned with SQLite behavior.
+
+## Encrypted vault state
+
+Encrypted domains use `EncryptedVaults.sqlite3` generations keyed by logical
+UUID strings and authenticated journal frontiers. Item and generation payloads
+are AEAD-encrypted with the vault local-state key. Activity and conflict rows
+retain only opaque `ev2:` identifiers and fixed summaries. Domain JSON stores
+non-secret vault locators, format version, and key epoch, never root or recovery
+keys. Cross-vault migration state is not persisted because migration and
+destructive source purge are not implemented.
+
+Optional iCloud Keychain access is a separate synchronizable Keychain item, not
+app-group JSON or SQLite. It contains the root key and opaque remote
+configuration, but not the recovery secret, trusted rollback frontier, device
+ID, or logical metadata. Device-local root, frontier, and identity items remain
+non-synchronizing `AfterFirstUnlockThisDeviceOnly` values.
+
+Non-secret onboarding preferences are stored in app-group defaults under the
+random vault UUID: onboarding schema version and whether Desktop & Documents
+was deferred. Missing or older state produces a resumable Finish Vault Setup
+task. Actual key and known-folder status is queried live.

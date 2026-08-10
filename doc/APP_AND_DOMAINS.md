@@ -177,6 +177,17 @@ legacy claim remains there without moving or deleting remote data. Stopping and
 re-enabling it, or a new system-initiated claim while inactive, upgrades it to
 the current machine namespace.
 
+Encrypted onboarding includes an explicit Desktop & Documents step after vault
+registration. The same preflight is available later from drive management. It
+reports key availability, kDrive reachability, current ownership, and quota
+when exposed by the API. The UI distinguishes preparing, awaiting consent,
+connected/uploading, up to date, quota blocked, and attention required.
+
+A legacy plaintext Potassium owner blocks direct claiming because safe
+encrypted migration is not implemented. Another provider can be handed off
+through macOS consent, with a warning that its previous remote copies are not
+purged.
+
 ## Removing A Domain
 
 Removal is initiated from the drive-management screen and requires explicit
@@ -237,3 +248,37 @@ Manual access tokens are accepted for development and testing. Each manual token
 creates an independent local account and is saved in the same account-scoped
 token store as OAuth tokens. A manually entered token may not have a refresh
 token or expiration, so reconnecting may be required when it stops working.
+
+## Encrypted vault domains
+
+When the security-review feature flag is enabled, drive management offers
+Create Encrypted Vault and Open Existing Vault. Before creation, recovery-kit
+open, or iCloud Keychain open performs any activation side effect, it displays
+a mandatory warning that the unsupported experimental feature may cause
+complete, unrecoverable data loss and that the user proceeds entirely on their
+own. The acknowledgement button remains disabled for five seconds measured with
+system uptime. Creation then shows a one-time text and QR recovery kit and
+requires exact confirmation before saving the device key or registering the
+domain. Existing plaintext domains remain separately registered; no cross-vault
+migration or source-purge workflow is implemented. Normal removal/logout
+retains vault keys; the separate Forget Key workflow requires the matching
+recovery kit.
+
+Creation is a guided flow: threat-boundary overview, device-only versus optional
+iCloud Keychain custody, recovery confirmation, durable registration,
+Desktop/Documents consent on macOS, and a final summary. Cloud publication and
+known-folder failures happen after the durable boundary and remain retryable
+without deleting or unregistering the vault.
+If setup closes or the app restarts after registration, Security & Recovery
+shows **Finish Vault Setup** until the platform-appropriate final step is
+completed. Only the onboarding schema version and Desktop/Documents deferral
+choice are persisted; key and known-folder status are re-read live.
+
+Security & Recovery verifies a pasted kit by using it locally to authenticate
+the remote encrypted bootstrap and checkpoint. The recovery material is never
+sent to kDrive, saved by the app, or copied into iCloud Keychain.
+
+After kDrive sign-in, matching synchronizable records appear as encrypted
+vaults found in iCloud Keychain. The app authenticates a selected record against
+remote ciphertext before registration. Recovery-kit opening and “Check Again”
+remain available.
