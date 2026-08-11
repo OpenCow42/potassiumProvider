@@ -46,11 +46,16 @@ Setup uses a three-level navigation hierarchy:
    on macOS, known-folder actions.
 
 Account creation has its own destination. Infomaniak OAuth is the primary path;
-manual access-token entry remains available in an Advanced section for
-development. While stored state is being restored, Setup shows an explicit
-loading row instead of briefly presenting the empty-account state. Setup errors
-appear in a nonmodal, dismissible banner so background refreshes do not interrupt
-navigation with a transient alert.
+manual access-token entry remains available in a collapsed Advanced section for
+development. On macOS, Setup, account login, and account drive selection use a
+centered, scrollable column with a readable maximum width so enlarging the window
+does not stretch or break the layout. While stored state is being restored, Setup
+shows an explicit loading row instead of briefly presenting the empty-account
+state. Drive discovery runs automatically after login and when Setup appears for
+eligible saved accounts; the account pages show loading, results, or an error
+state without an in-page load button. Toolbar refresh actions remain available
+for an intentional retry. Setup errors appear in a nonmodal, dismissible banner
+so background refreshes do not interrupt navigation with a transient alert.
 
 The Status dashboard only uses local/provider-safe state: local account records,
 configured domain records, currently loaded kDrive summaries, SQLite listing
