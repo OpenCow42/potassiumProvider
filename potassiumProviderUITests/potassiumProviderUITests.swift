@@ -116,9 +116,38 @@ final class potassiumProviderUITests: XCTestCase {
         addAccount.tap()
 
         XCTAssertTrue(app.buttons["addAccount.oauth"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].exists)
+        #if os(macOS)
+        XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
+        let advanced = app.descendants(matching: .any)["addAccount.advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 5))
+        advanced.tap()
+        #endif
+        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Advanced"].exists)
+
+        #if os(macOS)
+        XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
+        #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    func testEmptyDriveStateHasNoInlineLoadButtonAndKeepsToolbarRefresh() throws {
+        let app = launchSetupFixture(named: "setup-empty-drives")
+        openSetup(in: app)
+
+        let account = app.buttons["setup.account.ui-account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        account.tap()
+
+        XCTAssertTrue(
+            app.staticTexts["No Owned kDrives Available"].waitForExistence(timeout: 5)
+        )
+        XCTAssertFalse(app.buttons["Load Drives"].exists)
+        XCTAssertFalse(app.buttons["Refresh Drives"].exists)
+        XCTAssertTrue(app.buttons["account.refreshDrives"].waitForExistence(timeout: 5))
+    }
+    #endif
 
     @MainActor
     func testSetupPresentsErrorsAsDismissibleBannerInsteadOfAlert() throws {

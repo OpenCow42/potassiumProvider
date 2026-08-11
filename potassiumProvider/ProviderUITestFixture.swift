@@ -10,6 +10,7 @@ enum ProviderUITestFixture {
         guard let fixtureName = ProcessInfo.processInfo.environment[environmentKey],
               [
                   "setup-navigation",
+                  "setup-empty-drives",
                   "setup-error-banner",
                   "activities-pagination",
                   "activities-action-errors",
@@ -99,9 +100,11 @@ enum ProviderUITestFixture {
             automaticallyReloadStoredState: false,
             initialAccounts: [account],
             initialDrivesByAccountIdentifier: [
-                account.accountIdentifier: [configuredDrive, availableDrive],
+                account.accountIdentifier: fixtureName == "setup-empty-drives"
+                    ? []
+                    : [configuredDrive, availableDrive],
             ],
-            initialDomains: [configuration],
+            initialDomains: fixtureName == "setup-empty-drives" ? [] : [configuration],
             encryptedVaultsEnabled: true
         )
         if fixtureName == "setup-error-banner" {
