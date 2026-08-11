@@ -34,21 +34,31 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
-    func testSetupNavigatesFromAccountToAvailableDriveManagement() throws {
+    func testSetupNavigatesFromAccountCellToAvailableDriveManagement() throws {
         let app = launchSetupFixture()
         openSetup(in: app)
 
         let account = app.buttons["setup.account.ui-account"]
         XCTAssertTrue(account.waitForExistence(timeout: 5))
-        account.tap()
+        let accountTrailingSpace = account.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
+        )
+        #if os(macOS)
+        accountTrailingSpace.click()
+        #else
+        accountTrailingSpace.tap()
+        #endif
 
         let availableDrive = app.buttons["account.drive.20"]
         XCTAssertTrue(availableDrive.waitForExistence(timeout: 5))
+        #if os(macOS)
+        availableDrive.click()
+        #else
         availableDrive.tap()
+        #endif
 
-        XCTAssertTrue(
-            app.buttons["drive.createEncryptedVault"].waitForExistence(timeout: 5)
-        )
+        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["drive.createEncryptedVault"].exists)
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
 
@@ -131,6 +141,55 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     #if os(macOS)
+    @MainActor
+    func testFakeOAuthLoginPresentsTheMacSignInScreen() throws {
+        let app = launchSetupFixture(named: "setup-fake-oauth-login")
+        openSetup(in: app)
+
+        let addAccount = app.buttons["setup.addAccount"]
+        XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        addAccount.click()
+
+        XCTAssertTrue(app.staticTexts["Sign in to Infomaniak"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["addAccount.oauth"].exists)
+        XCTAssertTrue(app.staticTexts["Advanced"].exists)
+        XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
+    }
+
+    @MainActor
+    func testFakeOAuthLoginDiscoversAndAddsDriveToFileProvider() throws {
+        let app = launchSetupFixture(named: "setup-fake-oauth-login")
+        openSetup(in: app)
+
+        let addAccount = app.buttons["setup.addAccount"]
+        XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        addAccount.click()
+
+        let continueWithInfomaniak = app.buttons["addAccount.oauth"]
+        XCTAssertTrue(continueWithInfomaniak.waitForExistence(timeout: 5))
+        continueWithInfomaniak.click()
+
+        let account = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "Deterministic Driver")
+        ).firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        account.click()
+
+        let drive = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "UI Test Drive")
+        ).firstMatch
+        XCTAssertTrue(drive.waitForExistence(timeout: 5))
+        drive.click()
+
+        let addToFiles = app.buttons["drive.addToFiles"]
+        XCTAssertTrue(addToFiles.waitForExistence(timeout: 5))
+        XCTAssertTrue(addToFiles.isEnabled)
+        addToFiles.click()
+
+        XCTAssertTrue(app.buttons["drive.removeFromFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text(containing: "Added UI Test Drive to Files.", in: app).exists)
+    }
+
     @MainActor
     func testEmptyDriveStateHasNoInlineLoadButtonAndKeepsToolbarRefresh() throws {
         let app = launchSetupFixture(named: "setup-empty-drives")

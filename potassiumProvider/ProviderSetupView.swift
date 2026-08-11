@@ -212,8 +212,8 @@ struct ProviderSetupView: View {
                             .font(.headline)
 
                         ForEach(model.accounts) { account in
-                            MacSetupCard {
-                                NavigationLink(value: ProviderSetupRoute.account(account.accountIdentifier)) {
+                            NavigationLink(value: ProviderSetupRoute.account(account.accountIdentifier)) {
+                                MacSetupCard {
                                     ProviderAccountRow(
                                         account: account,
                                         loadedDriveCount: model.drives(for: account.accountIdentifier).count,
@@ -221,9 +221,10 @@ struct ProviderSetupView: View {
                                         isLoading: model.isLoadingDrives(for: account.accountIdentifier)
                                     )
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("setup.account.\(account.accountIdentifier)")
                             }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            .accessibilityIdentifier("setup.account.\(account.accountIdentifier)")
                         }
                     }
                 }
@@ -298,6 +299,7 @@ struct ProviderSetupView: View {
                                 isLoading: model.isLoadingDrives(for: account.accountIdentifier)
                             )
                         }
+                        .contentShape(Rectangle())
                         .accessibilityIdentifier("setup.account.\(account.accountIdentifier)")
                     }
                 }
@@ -1052,6 +1054,26 @@ private struct ProviderDriveManagementView: View {
                 LabeledContent("Availability") {
                     Text(descriptor.isConfigured ? "In Files" : "Not in Files")
                         .foregroundStyle(descriptor.isConfigured ? .green : .secondary)
+                }
+
+                if descriptor.configuration == nil, let remote = descriptor.remote {
+                    Button {
+                        Task {
+                            await model.addDomain(
+                                accountIdentifier: key.accountIdentifier,
+                                drive: remote
+                            )
+                        }
+                    } label: {
+                        actionLabel(
+                            title: "Add to Files",
+                            systemImage: "externaldrive.badge.plus",
+                            action: .addingToFiles
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy)
+                    .accessibilityIdentifier("drive.addToFiles")
                 }
 
                 if descriptor.encryptedConfiguration == nil, let remote = descriptor.remote {
