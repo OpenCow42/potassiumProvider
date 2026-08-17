@@ -65,6 +65,28 @@ When no complete cache exists, the enumerator calls:
 Fetched `files` are merged into the existing snapshot. When `hasMore == false`,
 the snapshot is marked fully enumerated.
 
+### Advanced-listing ETag compatibility
+
+The kDrive API documents `etag` as an included resource for direct file lookup
+and ordinary directory listing. A guarded live test on 2026-08-11 confirmed
+that both routes return ETags, and that a matching `If-Match` upload replaces a
+file while a stale ETag is rejected.
+
+The advanced `/listing` and `/listing/continue` routes are different: the live
+API rejects both `etag` and `files.etag` in their `with` parameter with HTTP
+422. potassiumChannel's compatible default excludes those resources, and the
+provider explicitly uses the desktop-compatible `files.capabilities` subset.
+An advanced-listing 422 is surfaced as a retryable synchronization failure;
+ordinary directory listings do not return the action feed and their pagination
+cursors must never replace an advanced-listing sync cursor. Advanced-listing
+snapshot items consequently have nullable ETags and must keep using the
+existing fail-closed content-mutation path until an item is refreshed through
+the direct ETag-capable route.
+
+Regression coverage verifies the explicit resource set on both initial and
+continuation routes and verifies that an HTTP 422 is propagated without
+switching listing protocols.
+
 ## Special Container `enumerateItems`
 
 Root calls `listDirectory(...)` on the configured root file ID. Trash calls
@@ -210,7 +232,9 @@ stale writer does not overwrite newer cache state.
 - `isFullyEnumerated`: whether all pages have been fetched
 - `usesAdvancedListing`: whether this snapshot came from advanced listing
 - `items`: cached `KDriveRemoteItem` metadata, including nullable ETag and
-  `revisedAt`; older rows without ETags fail closed until refreshed
+  `revisedAt`; advanced-listing rows currently have no ETag because that route
+  rejects the ETag include resource, and missing ETags fail closed until a
+  direct refresh
 
 ## Item Version Mapping
 

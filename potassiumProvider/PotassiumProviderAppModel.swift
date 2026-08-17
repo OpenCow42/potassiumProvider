@@ -521,7 +521,12 @@ final class PotassiumProviderAppModel: ObservableObject {
                 error: error,
                 category: .fileProvider
             )
-            errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
+            if FileProviderDomainRegistrationDiagnostics
+                .applicationExtensionNotFoundError(in: error) != nil {
+                errorMessage = FileProviderDomainRegistrationDiagnostics.userFacingMessage
+            } else {
+                errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
+            }
             statusMessage = nil
         }
     }
@@ -2249,13 +2254,21 @@ final class PotassiumProviderAppModel: ObservableObject {
         category preferredCategory: KDriveProviderActivityErrorCategory
     ) -> KDriveProviderActivityErrorDiagnostic {
         let nsError = error as NSError
+        let diagnosticError = FileProviderDomainRegistrationDiagnostics
+            .applicationExtensionNotFoundError(in: error) ?? nsError
         let category = appErrorCategory(for: error, nsError: nsError, preferredCategory: preferredCategory)
+        let recoverySuggestion = FileProviderDomainRegistrationDiagnostics
+            .recoverySuggestion(for: error)
+            ?? (error as? LocalizedError)?.recoverySuggestion
+        let diagnosticSummary = FileProviderDomainRegistrationDiagnostics
+            .diagnosticSummary(for: error)
+            ?? appDiagnosticSummary(for: category)
         return KDriveProviderActivityErrorDiagnostic(
             errorCategory: category,
-            underlyingErrorDomain: nsError.domain,
-            underlyingErrorCode: nsError.code,
-            recoverySuggestion: (error as? LocalizedError)?.recoverySuggestion,
-            diagnosticSummary: appDiagnosticSummary(for: category)
+            underlyingErrorDomain: diagnosticError.domain,
+            underlyingErrorCode: diagnosticError.code,
+            recoverySuggestion: recoverySuggestion,
+            diagnosticSummary: diagnosticSummary
         )
     }
 
@@ -2305,6 +2318,41 @@ final class PotassiumProviderAppModel: ObservableObject {
         case .unknown:
             return "The app encountered an unexpected error."
         }
+    }
+}
+
+private enum FileProviderDomainRegistrationDiagnostics {
+    static let userFacingMessage =
+        "macOS cannot find this app's File Provider extension. Run potassiumProvider on My Mac from Xcode (not a test build), then try again."
+
+    private static let errorDomain = "NSFileProviderErrorDomain"
+    private static let applicationExtensionNotFoundCode = -2014
+
+    static func applicationExtensionNotFoundError(in error: Error) -> NSError? {
+        var candidate: NSError? = error as NSError
+
+        // File Provider commonly wraps -2014 in a generic -2001 error. Keep
+        // following NSUnderlyingErrorKey so the activity shows the actionable
+        // cause rather than only the outer wrapper.
+        for _ in 0..<16 {
+            guard let current = candidate else { return nil }
+            if current.domain == errorDomain,
+               current.code == applicationExtensionNotFoundCode {
+                return current
+            }
+            candidate = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return nil
+    }
+
+    static func recoverySuggestion(for error: Error) -> String? {
+        guard applicationExtensionNotFoundError(in: error) != nil else { return nil }
+        return "Run the containing potassiumProvider app with the My Mac destination, not an XCTest/test-derived app. If it still fails, clean stale File Provider registrations and relaunch the app."
+    }
+
+    static func diagnosticSummary(for error: Error) -> String? {
+        guard applicationExtensionNotFoundError(in: error) != nil else { return nil }
+        return "macOS rejected domain registration because the app bundle did not expose a usable File Provider extension (NSFileProviderErrorDomain -2014)."
     }
 }
 

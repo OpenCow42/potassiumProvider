@@ -151,6 +151,12 @@ The add flow is:
 8. If registration fails, the app rolls back the saved configuration and removes
    any snapshots for that domain.
 
+If macOS reports `NSFileProviderErrorDomain` `-2014` (`applicationExtensionNotFound`)
+inside the registration failure, the app explains that the containing
+`potassiumProvider` app must be run on **My Mac** with its embedded File Provider
+extension. This commonly indicates a test-derived app or stale File Provider
+registration rather than a kDrive API failure.
+
 The configuration is saved before registration so the extension can find it when
 the system starts calling into the new domain.
 

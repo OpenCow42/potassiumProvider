@@ -116,10 +116,10 @@ audited truth table takes precedence and the inconsistency must be corrected.
 
 ## Legacy Plaintext Audit Status
 
-- Last source audit: 2026-08-02
+- Last source audit: 2026-08-13
 - Audited baseline: `codex/conflict-resolution-hardening` working tree
 - Validation:
-  - `potassiumChannel`: `swift test` — 558 tests passed
+  - `potassiumChannel`: `swift test` — 559 tests passed
   - macOS: `KDriveMutationCoordinatorTests` — 25 tests passed (the selected
     test plan executes this suite twice)
   - macOS app build passed with code signing disabled
@@ -133,8 +133,20 @@ audited truth table takes precedence and the inconsistency must be corrected.
     this audit commit.
   - The local full-scheme UI runner could not finish because the host disk was
     full; focused tests avoid that environment-specific runner failure.
-- Live kDrive collision validation: not performed; server-dependent behavior is
-  identified explicitly below
+  - Guarded live ETag validation on 2026-08-11 passed against the configured
+    disposable test folder: direct file lookup and ordinary directory listing
+    return `etag`; a matching `If-Match` replacement succeeds and changes the
+    ETag; a stale ETag is rejected with 409 or 412. The advanced listing routes
+    reject both `etag` and `files.etag` include resources with HTTP 422. The
+    provider uses the desktop-compatible `files.capabilities` resource. A
+    remaining 422 is surfaced as `.cannotSynchronize`, rather than mixing an
+    advanced change cursor with ordinary-listing pagination. Advanced-listing
+    snapshot ETags remain nullable and content mutations fail closed until
+    direct metadata refresh supplies an authoritative ETag.
+  - 2026-08-13 regression validation passed on macOS, iOS Simulator, and
+    visionOS Simulator using the `potassiumProviderTests` target. It covers
+    initial and continued advanced listings, ETag exclusion, and propagation
+    of an unexpected 422 without changing listing protocols.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change
@@ -210,6 +222,7 @@ ETags fail closed into preserve-both or `.failOnConflict` behavior.
 | New file collides with an existing name or type | Server applies rename policy | Create a visible uniquely named item; never request server-side overwrite/versioning. | Creates a second item | Low byte-loss risk; a safe duplicate is possible for `.mayAlreadyExist`. | Compare/delete the duplicate if it represents the same file. |
 | New directory collides by name or type | Recognized HTTP 409, or named 422 collision | Retry once with a conflict filename. | Creates a second directory | Low byte-loss risk, but response-shape coverage is not live-validated. | Rename/merge folders if the response was not recognized. |
 | Local content edit; remote unchanged | `C`, conditional upload succeeds | Stage first, then replace by `file_id` with `If-Match`, SHA-256, and deterministic token; remove stage only after success. | Conditional content replace | Low. A remote race cannot silently pass the checked ETag. | None. |
+| Advanced folder enumeration | API rejects `etag` or `files.etag` in advanced-listing `with` | Request `files.capabilities`; if the advanced route still returns HTTP 422, surface `.cannotSynchronize` and retain the prior snapshot/anchor. Do not substitute ordinary-directory pagination because it omits advanced actions and has incompatible cursor semantics. Snapshot items have no authoritative content ETag, so later content mutations preserve both or fail on conflict until direct ETag metadata is refreshed. | No mutation | Low byte-loss risk; synchronization pauses rather than committing an actionless response against an advanced anchor. | Retry after the service or provider is corrected; conflict copies retain local bytes when direct ETag metadata is still unavailable. |
 | Remote changes after preflight | `C`, conditional upload rejects with 409/412 | Refetch and upload a renamed conflict copy from the same staged bytes. | Creates a second item | Low. Both versions are preserved. | Compare or merge the visible files. |
 | Local content edit vs already-changed remote content | `!C && U` | Upload a renamed conflict copy and leave the original unchanged. | Creates a second item | Low. Both versions are preserved. | Compare or merge the visible files. |
 | `.failOnConflict` content conflict | `!C`, or conditional 409/412 | Do not mutate kDrive; return `.localVersionConflictingWithServer`; keep staged bytes and record recovery path. | No | Low immediate loss risk. This is intentional user-intervention behavior. | Reveal/export recovery copy, compare versions, then retry the desired change. |
@@ -224,6 +237,13 @@ ETags fail closed into preserve-both or `.failOnConflict` behavior.
 | Permanent delete; remote matches base | `C && B` | Delete trashed item by stable ID. | Destructive delete | Residual high-impact race: Infomaniak documents no conditional delete token. | None after accepted deletion. |
 | Permanent delete vs remote change | `!(C && B)` | Do not delete; return `.deletionRejected` containing latest trashed item. | No | Low. File Provider can recreate the item locally. | Review the recreated item and retry deletion if still desired. |
 | Permanent delete already completed | Latest lookup returns 404 | Return idempotent success. | No | Safe; prevents ghost/stuck deletion. | None. |
+
+### Advanced-Listing Compatibility Regression Evidence
+
+`PotassiumProviderCoreTests` verifies that the initial `/listing` and continued
+`/listing/continue` requests explicitly exclude ETags. It also verifies that
+an HTTP 422 is propagated after one advanced request, without replacing an
+advanced action/cursor stream with ordinary directory pagination.
 
 ## Legacy Plaintext Combined `changedFields` Truth Table
 

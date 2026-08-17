@@ -72,13 +72,18 @@ Legacy directory listing uses:
 - cursor from Apple page data
 - limit `200`
 - order by `name` ascending
+- retries without an included resource if the ETag-enabled request returns HTTP
+  422
 
 Advanced directory listing uses:
 
 - limit `200`
 - order by `type`, then `name`
 - per-field ascending order for `type` and `name`
-- potassiumChannel's minimal advanced-listing included resources
+- `with=files.capabilities`, matching the open-source desktop kDrive client
+- HTTP 422 is surfaced to File Provider as `.cannotSynchronize`; it does not
+  fall back to ordinary directory listing because that route has neither
+  advanced change actions nor compatible cursor semantics
 
 Trash listing uses:
 

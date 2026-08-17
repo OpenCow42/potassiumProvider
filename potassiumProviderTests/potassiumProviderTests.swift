@@ -1632,6 +1632,8 @@ struct PotassiumProviderCoreTests {
 
         #expect(request.httpMethod == "GET")
         #expect(components.path == "/3/drive/100/files/42/listing")
+        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities")))
+        #expect(queryItems.contains { $0.name == "with" && $0.value?.contains("etag") == true } == false)
         #expect(queryItems.contains(URLQueryItem(name: "limit", value: "50")))
         #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "type")))
         #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "name")))
@@ -1666,7 +1668,111 @@ struct PotassiumProviderCoreTests {
 
         #expect(request.httpMethod == "GET")
         #expect(components.path == "/3/drive/100/files/42/listing/continue")
+        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities")))
+        #expect(queryItems.contains { $0.name == "with" && $0.value?.contains("etag") == true } == false)
         #expect(queryItems.contains(URLQueryItem(name: "cursor", value: "old-cursor")))
+    }
+
+    @Test func kdriveServicePropagatesInitialAdvancedListing422WithoutChangingListingModes() async throws {
+        await KDriveListing422URLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveListing422URLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        do {
+            _ = try await service.listAdvancedDirectory(
+                driveID: 100,
+                folderID: 42,
+                cursor: nil,
+                limit: 50
+            )
+            Issue.record("Expected advanced listing to propagate HTTP 422.")
+        } catch let APIClientError.unacceptableStatusCode(statusCode, _, _) {
+            #expect(statusCode == 422)
+        } catch {
+            Issue.record("Expected an advanced-listing HTTP 422 rejection.")
+        }
+
+        let requests = await KDriveListing422URLProtocol.requests()
+        #expect(requests.count == 1)
+
+        let advancedRequest = try #require(requests.first)
+        let advancedURL = try #require(advancedRequest.url)
+        let advancedComponents = try #require(URLComponents(url: advancedURL, resolvingAgainstBaseURL: false))
+        #expect(advancedComponents.path == "/3/drive/100/files/42/listing")
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities")) == true)
+    }
+
+    @Test func kdriveServicePropagatesContinuedAdvancedListing422WithoutChangingListingModes() async throws {
+        await KDriveListing422URLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveListing422URLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        do {
+            _ = try await service.listAdvancedDirectory(
+                driveID: 100,
+                folderID: 42,
+                cursor: "advanced-cursor",
+                limit: 50
+            )
+            Issue.record("Expected advanced listing continuation to propagate HTTP 422.")
+        } catch let APIClientError.unacceptableStatusCode(statusCode, _, _) {
+            #expect(statusCode == 422)
+        } catch {
+            Issue.record("Expected an advanced-listing continuation HTTP 422 rejection.")
+        }
+
+        let requests = await KDriveListing422URLProtocol.requests()
+        #expect(requests.count == 1)
+
+        let advancedURL = try #require(requests.first?.url)
+        let advancedComponents = try #require(URLComponents(url: advancedURL, resolvingAgainstBaseURL: false))
+        #expect(advancedComponents.path == "/3/drive/100/files/42/listing/continue")
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "cursor", value: "advanced-cursor")) == true)
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities")) == true)
+    }
+
+    @Test func kdriveServiceFallsBackToDirectoryListingWithoutETagAfter422() async throws {
+        await KDriveListing422URLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveListing422URLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        let page = try await service.listDirectory(driveID: 100, folderID: 42, cursor: nil, limit: 50)
+        let requests = await KDriveListing422URLProtocol.requests()
+        #expect(requests.count == 2)
+        let firstURL = try #require(requests.first?.url)
+        let firstComponents = try #require(URLComponents(url: firstURL, resolvingAgainstBaseURL: false))
+        let firstQuery = firstComponents.queryItems ?? []
+        #expect(firstQuery.contains(URLQueryItem(name: "with", value: "etag")))
+        let secondURL = try #require(requests.last?.url)
+        let secondComponents = try #require(URLComponents(url: secondURL, resolvingAgainstBaseURL: false))
+        let secondQuery = secondComponents.queryItems ?? []
+        #expect(secondQuery.contains { $0.name == "with" } == false)
+        #expect(page.items.map(\.id) == [43])
+        #expect(page.hasMore == false)
     }
 
     @MainActor
@@ -2137,6 +2243,41 @@ struct PotassiumProviderCoreTests {
         #expect(failure.kind == .domainManagement)
         #expect(failure.outcome == .failure)
         #expect(failure.summary == "Could not add the provider domain.")
+    }
+
+    @MainActor
+    @Test func appModelExplainsMissingFileProviderExtension() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
+        let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
+        let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: MissingFileProviderExtensionRegistrar(),
+            eventStore: eventStore,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
+        )
+
+        model.manualAccessToken = "token"
+        await model.saveManualAccessToken()
+        let account = try #require(model.accounts.first)
+        model.setManualDriveID("42", for: account.accountIdentifier)
+        model.setManualDriveName("Work Drive", for: account.accountIdentifier)
+
+        await model.addDomain(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.errorMessage?.contains("macOS cannot find this app's File Provider extension") == true)
+        let failure = try #require(await eventStore.activities().first)
+        #expect(failure.underlyingErrorDomain == "NSFileProviderErrorDomain")
+        #expect(failure.underlyingErrorCode == -2014)
+        #expect(failure.recoverySuggestion?.contains("My Mac") == true)
+        #expect(failure.diagnosticSummary?.contains("usable File Provider extension") == true)
     }
 
     @MainActor
@@ -2731,6 +2872,77 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
     }
 }
 
+private final class KDriveListing422URLProtocol: URLProtocol {
+    private static let capture = KDriveDiscoveryCapture()
+
+    static func reset() async {
+        await capture.reset()
+    }
+
+    static func requests() async -> [URLRequest] {
+        await capture.requests()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let request = request
+        Task {
+            await Self.capture.record(request)
+            let isAdvancedListing = request.url?.path.contains("/listing") == true
+            let hasETag = request.url?.query?.contains("with=etag") == true
+            let statusCode = isAdvancedListing || hasETag ? 422 : 200
+            let data = isAdvancedListing || hasETag ? Data(#"{"result":"error","error":{"code":422}}"#.utf8) : Self.directoryResponseData
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static let directoryResponseData = Data(#"""
+    {
+      "result": "success",
+      "data": [
+        {
+          "id": 43,
+          "name": "Nested.pdf",
+          "path": "/Documents/Nested.pdf",
+          "type": "file",
+          "status": "active",
+          "visibility": "is_private_space",
+          "drive_id": 100,
+          "parent_id": 42,
+          "depth": 3,
+          "created_at": 1710000000,
+          "last_modified_at": 1710000100,
+          "updated_at": 1710000200,
+          "size": 1024,
+          "mime_type": "application/pdf",
+          "is_favorite": false,
+          "etag": "etag-43"
+        }
+      ],
+      "cursor": null,
+      "has_more": false,
+      "response_at": 1710000300
+    }
+    """#.utf8)
+}
+
 private final class KDriveDiscoveryURLProtocol: URLProtocol {
     private static let capture = KDriveDiscoveryCapture()
 
@@ -3191,4 +3403,25 @@ private enum FailingProviderDomainRegistrarError: LocalizedError {
     var errorDescription: String? {
         "The application cannot be used right now"
     }
+}
+
+@MainActor
+private struct MissingFileProviderExtensionRegistrar: ProviderDomainRegistering {
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        let underlyingError = NSError(
+            domain: "NSFileProviderErrorDomain",
+            code: -2014,
+            userInfo: [NSLocalizedDescriptionKey: "The File Provider extension could not be found."]
+        )
+        throw NSError(
+            domain: "NSFileProviderErrorDomain",
+            code: -2001,
+            userInfo: [
+                NSLocalizedDescriptionKey: "The application cannot be used right now.",
+                NSUnderlyingErrorKey: underlyingError
+            ]
+        )
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
 }

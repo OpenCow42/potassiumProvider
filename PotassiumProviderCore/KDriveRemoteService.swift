@@ -167,6 +167,11 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     private let driveClient: InfomaniakAPIClient
     private let service: KDriveService
 
+    /// kDrive advanced-listing routes reject `etag` and `files.etag` with HTTP
+    /// 422. Direct metadata and ordinary directory listings remain the source
+    /// of authoritative ETags for content mutations.
+    private static let advancedDirectoryListingIncludedResources = "files.capabilities"
+
     public init(
         bearerToken: String,
         apiBaseURL: URL = ProviderConstants.apiBaseURL,
@@ -216,12 +221,23 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
         try await performNetworkOperation("listDirectory") {
-            let response = try await service.listDirectoryFiles(
-                driveId: driveID,
-                fileId: folderID,
-                with: "etag",
-                options: ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
-            )
+            let options = ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
+            let response: CursorPaginatedInfomaniakResponse<[KDriveFileItem]>
+            do {
+                response = try await service.listDirectoryFiles(
+                    driveId: driveID,
+                    fileId: folderID,
+                    with: "etag",
+                    options: options
+                )
+            } catch APIClientError.unacceptableStatusCode(422, _, _) {
+                response = try await service.listDirectoryFiles(
+                    driveId: driveID,
+                    fileId: folderID,
+                    with: nil,
+                    options: options
+                )
+            }
             return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
         }
     }
@@ -237,6 +253,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                     driveId: driveID,
                     fileId: folderID,
                     cursor: cursor,
+                    with: Self.advancedDirectoryListingIncludedResources,
                     options: ContinueKDriveAdvancedDirectoryListingOptions(
                         limit: limit,
                         orderBy: orderBy,
@@ -247,6 +264,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                 response = try await service.listAdvancedDirectoryListing(
                     driveId: driveID,
                     fileId: folderID,
+                    with: Self.advancedDirectoryListingIncludedResources,
                     options: ListKDriveAdvancedDirectoryListingOptions(
                         limit: limit,
                         orderBy: orderBy,
