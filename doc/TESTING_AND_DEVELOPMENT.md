@@ -89,6 +89,36 @@ selection. Its subprocess check uses Xcode's bundled Python executable only to
 act as an independent POSIX-locking process; production code has no Python or
 script dependency.
 
+Run the callback/network and Lab safety slices without live credentials:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -destination 'platform=macOS,arch=arm64' \
+  -only-testing:potassiumProviderTests/ProviderDiagnosticSpanTests \
+  -only-testing:potassiumProviderTests/FileProviderOperationLifecycleTests \
+  -only-testing:potassiumProviderTests/StabilityLabSafetyTests
+```
+
+The exact network-outcome checks use Swift Testing identifiers including their
+parentheses:
+
+```sh
+xcodebuild test-without-building \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -destination 'platform=macOS' \
+  '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/kdriveServiceExposesLazyObservableDownloadOperation()' \
+  '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/missingShareLinkIsRecordedAsSuccessfulOptionalResult()' \
+  '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/concurrentLazyTransferStartAndCancelShareOneDiagnosticSpan()'
+```
+
+These tests use only in-memory recorders and pure root observations. They do
+not read Keychain credentials, register a File Provider domain, or mutate a
+remote account. The hosted macOS test bundle must be signed on machines where
+the unsigned XCTest worker cannot materialize.
+
 ## Commands
 
 List project information:

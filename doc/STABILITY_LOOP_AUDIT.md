@@ -20,8 +20,8 @@ explicitly supplies a development account and lab-owned non-root folder.
 
 | Milestone | Implementation state | Focused validation | Adversarial review | Commit |
 | --- | --- | --- | --- | --- |
-| Stability build profile and JSONL event store | implemented; reviewer fixes applied | 13 macOS `StabilityDiagnosticsTests` passed 2026-08-31 | all actionable findings fixed | pending |
-| Callback and network instrumentation | pending | pending | pending | pending |
+| Stability build profile and JSONL event store | implemented; reviewer fixes applied | 13 macOS `StabilityDiagnosticsTests` passed 2026-08-31 | all actionable findings fixed | `2fd9fbb` |
+| Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | pending |
 | Stability Lab and safe root lifecycle | pending | pending | pending | pending |
 | Finder Accessibility runner and checkpoints | pending | pending | pending | pending |
 | API evidence matrix and adapter corrections | evidence pinned; implementation pending | pending | pending | pending |
@@ -44,8 +44,9 @@ explicitly supplies a development account and lab-owned non-root folder.
   enumerator creation/invalidation, item/anchor/change enumeration, working-set
   refresh, known-folder work, thumbnails, and contextual actions.
 - Risks still open for later milestones: permission/checkpoint behavior, safe
-  remote-root ownership proof, callback exactly-once semantics, transfer
-  cancellation, and ensuring docs/truth-table evidence stays synchronized.
+  remote-root ownership proof, and ensuring docs/truth-table evidence stays synchronized.
+  Callback exactly-once semantics and transfer cancellation now share the
+  actor-isolated diagnostic lifecycle and have focused race coverage.
   Active-run, append/read/finish, and retention transitions now share a
   cross-process lifecycle lock and crash-durable file transitions.
 
@@ -59,6 +60,17 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Private-data boundary | `AGENTS.md`, plan invariants, existing support-export model | not applicable | Redact before encoding; closed-enum diagnostic schema; no names, paths, item/request/account/drive identifiers, raw URLs/bodies/headers/data/share links | raw-byte private-value test; enum-only encoding test | conflict event fields are redacted, decision state preserved |
 | JSONL durability | Plan requirement for app/extension/actions concurrent writers | not applicable | lifecycle plus event-file locks, complete-record append, `fsync`; ignore and truncate only an unterminated tail; corruption otherwise surfaces; reject before the 250 MiB active-event limit | real subprocess and two-store writers; concurrent coordinators; interrupted-tail, corruption, capacity, post-finish, and symlink tests | unresolved conflict records replay unchanged except private fields |
 | Clear/removal and retention | Existing event-store semantics and safe cleanup rules | not applicable | append tombstones; preserve unresolved conflicts; prune only whole completed bundles, never active/incomplete | replay and completed-only retention tests | conflict cleanup semantics unchanged |
+
+## Milestone 2 Decision Records
+
+| Decision | Evidence | Live result | Chosen behavior | Tests | Truth-table impact |
+| --- | --- | --- | --- | --- | --- |
+| Callback lifecycle | Apple replicated File Provider callback/cancellation contract; existing `FileProviderOperationLifecycle` | not run | start once; first completion/failure/cancellation wins; attempt the terminal append before invoking File Provider completion so run finalization cannot lose it | span terminal-race and lifecycle failure/cancellation tests | observes existing mutation outcomes; no decision changes |
+| Correlation | plan privacy boundary and structured-concurrency task inheritance | not applicable | propagate only a random callback UUID through `TaskLocal`; give each nested span a separate stable UUID so concurrent child operations can be paired | nested-correlation and span-identity tests | no mutation/conflict change |
+| Typed request evidence | potassiumChannel `0.3.0` service calls and the route map | not run | record only enum operation, route template, option shape, phase, duration, and class; never raw request data | drive-discovery request/diagnostic test; schema/redaction tests | no request behavior change |
+| Transfer cancellation | potassiumChannel progress/cancel operation and File Provider progress contract | not run | start lazily when consumed or cancelled; forward progress by deduplicated buckets; race cancel and value completion through one terminal gate | lazy transfer, progress, forwarding, and terminal-race tests | retries and conflict policies unchanged |
+| HTTP and callback diagnostic class | API rejection classifier plus `NSFileProviderError.Code`, without retaining body/header/user-info metadata | not run | map closed HTTP and File Provider recovery classes; cancellation records `cancelled`; expected share-link 404 is a successful optional result | closed classifier tests including 429/507 and File Provider recovery cases; optional-404 adapter test | diagnostic-only; File Provider error behavior remains unchanged pending API milestone |
+| Active-run binding | JSONL writers reject sealed runs and a Stability run may start after a long-lived app/extension object | not applicable | resolve the active recorder at callback or service-construction time; never cache a missing or sealed run writer for the object lifetime | factory/run lifecycle tests plus reviewer inspection | no mutation/conflict change |
 
 ## Review And Validation Log
 
@@ -82,6 +94,31 @@ explicitly supplies a development account and lab-owned non-root folder.
   test. Two bounded final-scan turns were interrupted after the reviewer agent
   did not return; the earlier review's complete actionable list is resolved and
   the focused suite/privacy scan were rerun afterward.
+- No live network or remote mutation was performed.
+
+### 2026-08-31 — Milestone 2 review and repair
+
+- Signed macOS `build-for-testing` passed for the Stability scheme, including
+  Core, app, both extensions, and the unit bundle.
+- The final credential-free `test-without-building` command exited normally
+  with 27/27 selected executions successful: all diagnostic-span and operation-
+  lifecycle tests across the Stability test-plan variants, plus exact lazy
+  transfer, optional share-link, and concurrent transfer-start/cancel adapter
+  tests. No live or default hosted suite was selected. Earlier focused runs
+  encountered a local `DTServiceHub` logarchive-finalization hang after their
+  result streams had completed; signing the refreshed hosted bundle allowed the
+  final run and result bundle to close normally.
+- Reviewer repairs rechecked lifecycle state after a suspended start append,
+  moved terminal append attempts ahead of system callbacks, added stable span
+  IDs, deduplicated progress buckets, instrumented transfer progress, classified
+  File Provider recovery errors, rebound long-lived objects per active run,
+  acknowledged materialization promptly after its callback span and kept the
+  background work in correlated child spans, covered every SDK changed-field
+  shape, separated enumerator lifecycle operations, and corrected cancellation,
+  lazy-transfer, and expected-404 outcomes. The final pass also found and fixed
+  the deferred-span reentrancy race, restored standard share-link unified spans,
+  and made app activity storage resolve the active run dynamically.
+- `git diff --check` and the added-line credential/private-URL scan passed.
 - No live network or remote mutation was performed.
 
 ## API Decision Ledger

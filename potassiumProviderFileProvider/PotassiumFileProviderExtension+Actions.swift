@@ -9,7 +9,11 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        let lifecycle = FileProviderOperationLifecycle(progress: progress) {
+        let lifecycle = FileProviderOperationLifecycle(
+            progress: progress,
+            diagnosticOperation: Self.diagnosticOperation(for: actionIdentifier),
+            diagnosticRecorder: diagnosticRecorder
+        ) {
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }
 
@@ -128,7 +132,10 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
                     itemPath: nil,
                     summary: "perform contextual action."
                 )
-                await lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(
+                    markProgressComplete: false,
+                    diagnosticError: mappedError
+                ) {
                     completionHandler(mappedError)
                 }
             }
@@ -143,6 +150,24 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
             return .modify
         }
         return activityKind(for: action)
+    }
+
+    private static func diagnosticOperation(
+        for actionIdentifier: NSFileProviderExtensionActionIdentifier
+    ) -> ProviderDiagnosticOperation {
+        guard let action = ProviderDirectContextAction(
+            rawValue: actionIdentifier.rawValue
+        ) else {
+            return .modifyItem
+        }
+        switch action {
+        case .addFavorite, .removeFavorite:
+            return .favoriteItem
+        case .duplicate:
+            return .duplicateItem
+        case .restoreFromTrash:
+            return .restoreTrashedItem
+        }
     }
 
     private static func activityKind(

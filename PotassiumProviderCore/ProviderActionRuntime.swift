@@ -49,8 +49,12 @@ public struct ProviderActionRuntime: Sendable {
             try await tokenStore.saveToken(token, accountIdentifier: configuration.accountIdentifier)
         }
 
-        let service = PotassiumKDriveService(bearerToken: token.accessToken)
         let eventStore = try? ProviderEventStoreFactory.makeDefault()
+        let service = PotassiumKDriveService(
+            bearerToken: token.accessToken,
+            diagnosticRecorder: eventStore as? any ProviderDiagnosticRecording,
+            diagnosticSource: .actionExtension
+        )
         let encryptedVault: (any EncryptedVaultProviding)?
         if configuration.encryptionMode == .opaqueVaultV2 {
             guard let vaultConfiguration = configuration.vault else {

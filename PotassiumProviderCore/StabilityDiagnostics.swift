@@ -24,6 +24,10 @@ public enum ProviderDiagnosticSource: String, Codable, Equatable, Sendable {
 
 public enum ProviderDiagnosticOperation: String, Codable, CaseIterable, Equatable, Sendable {
     case runtimeLoad
+    case runtimeInitialize
+    case runtimeInvalidate
+    case enumeratorInitialize
+    case enumeratorInvalidate
     case itemLookup
     case enumerateItems
     case enumerateChanges
@@ -38,6 +42,8 @@ public enum ProviderDiagnosticOperation: String, Codable, CaseIterable, Equatabl
     case listDirectory
     case listAdvancedDirectory
     case listTrash
+    case listWorkingSetRelevantItems
+    case listPartialActivities
     case downloadFile
     case uploadFile
     case replaceFile
@@ -49,11 +55,17 @@ public enum ProviderDiagnosticOperation: String, Codable, CaseIterable, Equatabl
     case deleteTrashedItem
     case favoriteItem
     case duplicateItem
+    case trashedItem
+    case existingFileIDs
     case restoreTrashedItem
     case shareLink
+    case createShareLink
+    case updateShareLink
+    case deleteShareLink
     case fileVersions
     case restoreFileVersion
     case workingSetRefresh
+    case knownFolderLocations
     case labPreflight
     case labProvision
     case labReset
@@ -77,6 +89,8 @@ public enum ProviderDiagnosticField: String, Codable, CaseIterable, Equatable, S
     case creationDate
     case extendedAttributes
     case favoriteRank
+    case fileSystemFlags
+    case lastUsedDate
     case tagData
     case trash
     case typeAndCreator
@@ -88,6 +102,7 @@ public enum ProviderDiagnosticRouteTemplate: String, Codable, CaseIterable, Equa
     case listDirectory = "GET /3/drive/{drive_id}/files/{file_id}/files"
     case listAdvancedDirectory = "GET /3/drive/{drive_id}/files/{file_id}/listing"
     case continueAdvancedDirectory = "GET /3/drive/{drive_id}/files/{file_id}/listing/continue"
+    case partialActivities = "POST /3/drive/{drive_id}/files/listing/partial"
     case trash = "GET /3/drive/{drive_id}/trash"
     case download = "GET /2/drive/{drive_id}/files/{file_id}/download"
     case thumbnail = "GET /2/drive/{drive_id}/files/{file_id}/thumbnail"
@@ -99,6 +114,8 @@ public enum ProviderDiagnosticRouteTemplate: String, Codable, CaseIterable, Equa
     case deleteTrashedItem = "DELETE /2/drive/{drive_id}/trash/{file_id}"
     case favorite = "POST /2/drive/{drive_id}/files/{file_id}/favorite"
     case duplicate = "POST /3/drive/{drive_id}/files/{file_id}/duplicate"
+    case trashedItem = "GET /2/drive/{drive_id}/trash/{file_id}"
+    case existingFileIDs = "POST /2/drive/{drive_id}/files/existence"
     case restoreTrash = "POST /2/drive/{drive_id}/trash/{file_id}/restore"
     case shareLink = "/2/drive/{drive_id}/files/{file_id}/link"
     case versions = "GET /3/drive/{drive_id}/files/{file_id}/versions"
@@ -123,6 +140,10 @@ public enum ProviderDiagnosticOption: String, Codable, CaseIterable, Equatable, 
     case optionalName
     case lastModifiedAt
     case cancellableTransfer
+    case thumbnailDimensions
+    case activityBatch
+    case shareConfiguration
+    case versionPagination
 }
 
 public enum ProviderDiagnosticStatusClass: String, Codable, Equatable, Sendable {
@@ -164,11 +185,12 @@ public enum ProviderDiagnosticErrorClass: String, Codable, Equatable, Sendable {
 /// caller cannot accidentally persist a token, URL, item name, path, body, or
 /// account identifier.
 public struct ProviderDiagnosticEvent: Codable, Equatable, Sendable {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     public let schemaVersion: Int
     public let id: UUID
     public let occurredAt: Date
+    public let spanID: UUID?
     public let correlationID: UUID
     public let source: ProviderDiagnosticSource
     public let operation: ProviderDiagnosticOperation
@@ -187,6 +209,7 @@ public struct ProviderDiagnosticEvent: Codable, Equatable, Sendable {
     public init(
         id: UUID = UUID(),
         occurredAt: Date = Date(),
+        spanID: UUID? = nil,
         correlationID: UUID,
         source: ProviderDiagnosticSource,
         operation: ProviderDiagnosticOperation,
@@ -205,6 +228,7 @@ public struct ProviderDiagnosticEvent: Codable, Equatable, Sendable {
         self.schemaVersion = Self.schemaVersion
         self.id = id
         self.occurredAt = occurredAt
+        self.spanID = spanID
         self.correlationID = correlationID
         self.source = source
         self.operation = operation

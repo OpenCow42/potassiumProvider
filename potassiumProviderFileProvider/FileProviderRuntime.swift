@@ -43,6 +43,29 @@ struct FileProviderRuntime: Sendable {
     }
 
     static func load(domain: NSFileProviderDomain) async throws -> FileProviderRuntime {
+        let eventStore = makeEventStore()
+        let span = await ProviderDiagnosticSpan.start(
+            source: .fileProviderExtension,
+            operation: .runtimeLoad,
+            recorder: eventStore as? any ProviderDiagnosticRecording
+        )
+        do {
+            let runtime = try await loadRuntime(
+                domain: domain,
+                eventStore: eventStore
+            )
+            await span.complete(statusClass: .success)
+            return runtime
+        } catch {
+            await span.fail(error: error)
+            throw error
+        }
+    }
+
+    private static func loadRuntime(
+        domain: NSFileProviderDomain,
+        eventStore: (any KDriveProviderEventStoring)?
+    ) async throws -> FileProviderRuntime {
         FileProviderLog.runtime.debug("load runtime for domain(\(domain.identifier.rawValue, privacy: .public))")
         let configuration = try await loadConfiguration(domain: domain)
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
@@ -63,7 +86,11 @@ struct FileProviderRuntime: Sendable {
         }
 
         let sqliteStore = try makeSQLiteStore()
-        let remote = PotassiumKDriveService(bearerToken: token.accessToken)
+        let remote = PotassiumKDriveService(
+            bearerToken: token.accessToken,
+            diagnosticRecorder: eventStore as? any ProviderDiagnosticRecording,
+            diagnosticSource: .fileProviderExtension
+        )
         let encryptedVault: (any EncryptedVaultProviding)?
         if configuration.encryptionMode == .opaqueVaultV2 {
             guard let vaultConfiguration = configuration.vault,
@@ -123,7 +150,7 @@ struct FileProviderRuntime: Sendable {
             workingSetRemote: remote,
             snapshotStore: sqliteStore,
             workingSetStateStore: sqliteStore,
-            eventStore: makeEventStore(),
+            eventStore: eventStore,
             encryptedVault: encryptedVault
         )
     }

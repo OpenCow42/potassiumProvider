@@ -6,15 +6,38 @@ import PotassiumProviderCore
 final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     private let containerItemIdentifier: NSFileProviderItemIdentifier
     private let domain: NSFileProviderDomain
+    private var diagnosticRecorder: (any ProviderDiagnosticRecording)? {
+        FileProviderRuntime.makeEventStore() as? any ProviderDiagnosticRecording
+    }
 
     init(containerItemIdentifier: NSFileProviderItemIdentifier, domain: NSFileProviderDomain) {
         self.containerItemIdentifier = containerItemIdentifier
         self.domain = domain
         super.init()
+        if let diagnosticRecorder {
+            Task {
+                let span = await ProviderDiagnosticSpan.start(
+                    source: .fileProviderExtension,
+                    operation: .enumeratorInitialize,
+                    recorder: diagnosticRecorder
+                )
+                await span.complete(statusClass: .success)
+            }
+        }
         FileProviderLog.enumeration.debug("init enumerator container(\(self.containerItemIdentifier.rawValue, privacy: .public)) kind(\(self.snapshotContainerIdentifier, privacy: .public)) domain(\(self.domain.identifier.rawValue, privacy: .public))")
     }
 
     func invalidate() {
+        if let diagnosticRecorder {
+            Task {
+                let span = await ProviderDiagnosticSpan.start(
+                    source: .fileProviderExtension,
+                    operation: .enumeratorInvalidate,
+                    recorder: diagnosticRecorder
+                )
+                await span.complete(statusClass: .success)
+            }
+        }
         FileProviderLog.enumeration.debug("invalidate enumerator container(\(self.containerItemIdentifier.rawValue, privacy: .public)) domain(\(self.domain.identifier.rawValue, privacy: .public))")
     }
 
@@ -22,6 +45,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let cursor = FileProviderPageCodec.cursor(from: page)
         FileProviderLog.enumeration.debug("enumerateItems start container(\(self.containerItemIdentifier.rawValue, privacy: .public)) kind(\(self.snapshotContainerIdentifier, privacy: .public)) cursorPresent(\(cursor != nil, privacy: .public))")
         Task {
+            let span = await ProviderDiagnosticSpan.start(
+                source: .fileProviderExtension,
+                operation: .enumerateItems,
+                optionShape: cursor == nil ? [.pageLimit] : [.paginationCursor, .pageLimit],
+                recorder: diagnosticRecorder
+            )
+            await span.withCorrelation {
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
@@ -33,6 +63,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                         startingAt: page
                     )
                     observer.didEnumerate(vaultPage.items.map(FileProviderItem.init(vaultItem:)))
+                    await span.complete(
+                        statusClass: .success,
+                        hasCursor: vaultPage.nextCursor != nil,
+                        hasMore: vaultPage.nextCursor != nil
+                    )
                     observer.finishEnumerating(
                         upTo: FileProviderPageCodec.page(from: vaultPage.nextCursor)
                     )
@@ -56,6 +91,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     itemPath: nil,
                     summary: "Enumerated \(itemPage.items.count) item(s) in \(self.snapshotContainerIdentifier)."
                 )
+                await span.complete(
+                    statusClass: .success,
+                    hasCursor: itemPage.nextCursor != nil,
+                    hasMore: itemPage.hasMore
+                )
                 observer.finishEnumerating(upTo: FileProviderPageCodec.page(from: itemPage.nextCursor))
             } catch {
                 let mappedError = await self.recordFailure(
@@ -65,13 +105,21 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     summary: "enumerate folder items."
                 )
                 FileProviderLog.enumeration.error("enumerateItems failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(mappedError.localizedDescription, privacy: .public)")
+                await span.fail(error: mappedError)
                 observer.finishEnumeratingWithError(mappedError)
+            }
             }
         }
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
         Task {
+            let span = await ProviderDiagnosticSpan.start(
+                source: .fileProviderExtension,
+                operation: .currentSyncAnchor,
+                recorder: diagnosticRecorder
+            )
+            await span.withCorrelation {
             var domainIdentifier = domain.identifier.rawValue
             var driveID = 0
             do {
@@ -84,6 +132,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                         throw NSFileProviderError(.notAuthenticated)
                     }
                     let frontier = try await vault.synchronize()
+                    await span.complete(statusClass: .success, hasAnchor: true)
                     completionHandler(FileProviderPageCodec.anchor(
                         from: frontier.anchorString
                     ))
@@ -94,6 +143,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     let stateStore = try FileProviderRuntime.makeWorkingSetStateStore()
                     let snapshot = try await stateStore.workingSetSnapshot(
                         domainIdentifier: configuration.domainIdentifier
+                    )
+                    await span.complete(
+                        statusClass: .success,
+                        hasAnchor: snapshot != nil
                     )
                     completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
                     return
@@ -109,11 +162,17 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                           snapshot.usesAdvancedListing,
                           snapshot.isFullyEnumerated,
                           let serverCursor = snapshot.serverCursor else {
+                        await span.complete(statusClass: .success, hasAnchor: false)
                         completionHandler(nil)
                         return
                     }
+                    await span.complete(statusClass: .success, hasAnchor: true)
                     completionHandler(FileProviderPageCodec.anchor(from: serverCursor))
                 } else {
+                    await span.complete(
+                        statusClass: .success,
+                        hasAnchor: snapshot != nil
+                    )
                     completionHandler(snapshot.map { FileProviderPageCodec.anchor(from: $0.anchor) })
                 }
             } catch {
@@ -132,7 +191,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     )
                 }
                 FileProviderLog.enumeration.error("currentSyncAnchor failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(mapping.mappedError.localizedDescription, privacy: .public)")
+                await span.fail(error: mapping.mappedError)
                 completionHandler(nil)
+            }
             }
         }
     }
@@ -141,6 +202,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let requestedAnchor = FileProviderPageCodec.anchorString(from: anchor)
         FileProviderLog.enumeration.debug("enumerateChanges start container(\(self.containerItemIdentifier.rawValue, privacy: .public)) requestedAnchorPresent(\(requestedAnchor != nil, privacy: .public))")
         Task {
+            let span = await ProviderDiagnosticSpan.start(
+                source: .fileProviderExtension,
+                operation: .enumerateChanges,
+                optionShape: requestedAnchor == nil ? [] : [.paginationCursor],
+                recorder: diagnosticRecorder
+            )
+            await span.withCorrelation {
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.domain)
@@ -163,6 +231,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                             NSFileProviderItemIdentifier($0.fileProviderIdentifier)
                         })
                     }
+                    await span.complete(
+                        statusClass: .success,
+                        hasMore: false,
+                        hasAnchor: true
+                    )
                     observer.finishEnumeratingChanges(
                         upTo: FileProviderPageCodec.anchor(
                             from: changes.frontier.anchorString
@@ -176,7 +249,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     try await self.enumerateWorkingSetChanges(
                         for: observer,
                         runtime: loadedRuntime,
-                        requestedAnchor: requestedAnchor
+                        requestedAnchor: requestedAnchor,
+                        diagnosticSpan: span
                     )
                     return
                 }
@@ -184,7 +258,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     try await self.enumerateAdvancedChanges(
                         for: observer,
                         runtime: loadedRuntime,
-                        requestedCursor: requestedAnchor
+                        requestedCursor: requestedAnchor,
+                        diagnosticSpan: span
                     )
                     return
                 }
@@ -196,7 +271,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     try await self.enumerateStoredChanges(
                         for: observer,
                         runtime: loadedRuntime,
-                        requestedAnchor: requestedAnchor
+                        requestedAnchor: requestedAnchor,
+                        diagnosticSpan: span
                     )
                     return
                 }
@@ -218,7 +294,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 try await self.enumerateStoredChanges(
                     for: observer,
                     runtime: loadedRuntime,
-                    requestedAnchor: requestedAnchor
+                    requestedAnchor: requestedAnchor,
+                    diagnosticSpan: span
                 )
             } catch {
                 let mappedError = await self.recordFailure(
@@ -228,7 +305,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     summary: "enumerate folder changes."
                 )
                 FileProviderLog.enumeration.error("enumerateChanges failed container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(mappedError.localizedDescription, privacy: .public)")
+                await span.fail(error: mappedError)
                 observer.finishEnumeratingWithError(mappedError)
+            }
             }
         }
     }
@@ -543,7 +622,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     private func enumerateAdvancedChanges(
         for observer: NSFileProviderChangeObserver,
         runtime: FileProviderRuntime,
-        requestedCursor: String?
+        requestedCursor: String?,
+        diagnosticSpan: ProviderDiagnosticSpan
     ) async throws {
         guard let requestedCursor else {
             throw NSFileProviderError(.syncAnchorExpired)
@@ -596,6 +676,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 itemPath: nil,
                 summary: "Synced \(result.changes.updatedItems.count) update(s) and \(result.changes.deletedItemIDs.count) delete(s)."
             )
+            await diagnosticSpan.complete(
+                statusClass: .success,
+                hasMore: response.hasMore,
+                hasAnchor: true
+            )
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: newCursor), moreComing: response.hasMore)
         } catch let error as KDriveListingValidationError {
             FileProviderLog.enumeration.error("enumerateAdvancedChanges invalid listing payload container(\(self.containerItemIdentifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .public)")
@@ -625,6 +710,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 itemPath: nil,
                 summary: "Rebuilt sync state with \(changes.updatedItems.count) update(s) and \(changes.deletedItemIDs.count) delete(s)."
             )
+            await diagnosticSpan.complete(
+                statusClass: .success,
+                hasMore: false,
+                hasAnchor: true
+            )
             observer.finishEnumeratingChanges(upTo: FileProviderPageCodec.anchor(from: rebuiltSnapshot.anchor), moreComing: false)
         }
     }
@@ -632,7 +722,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     private func enumerateWorkingSetChanges(
         for observer: NSFileProviderChangeObserver,
         runtime: FileProviderRuntime,
-        requestedAnchor: String?
+        requestedAnchor: String?,
+        diagnosticSpan: ProviderDiagnosticSpan
     ) async throws {
         guard let requestedAnchor else {
             throw NSFileProviderError(.syncAnchorExpired)
@@ -646,6 +737,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         }
         emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
         FileProviderLog.enumeration.info("enumerateWorkingSetChanges success updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
+        await diagnosticSpan.complete(
+            statusClass: .success,
+            hasMore: false,
+            hasAnchor: true
+        )
         observer.finishEnumeratingChanges(
             upTo: FileProviderPageCodec.anchor(from: result.anchor),
             moreComing: false
@@ -655,7 +751,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     private func enumerateStoredChanges(
         for observer: NSFileProviderChangeObserver,
         runtime: FileProviderRuntime,
-        requestedAnchor: String
+        requestedAnchor: String,
+        diagnosticSpan: ProviderDiagnosticSpan
     ) async throws {
         let pageToken = KDriveSnapshotPagingToken.isSnapshotToken(requestedAnchor) ? requestedAnchor : nil
         do {
@@ -678,6 +775,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 itemName: nil,
                 itemPath: nil,
                 summary: "Synced \(page.changes.updatedItems.count) update(s) and \(page.changes.deletedItemIDs.count) delete(s)."
+            )
+            await diagnosticSpan.complete(
+                statusClass: .success,
+                hasMore: page.nextToken != nil,
+                hasAnchor: true
             )
             observer.finishEnumeratingChanges(
                 upTo: FileProviderPageCodec.anchor(from: nextAnchor),

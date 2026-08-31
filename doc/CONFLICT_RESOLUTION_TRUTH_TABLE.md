@@ -117,7 +117,7 @@ audited truth table takes precedence and the inconsistency must be corrected.
 ## Legacy Plaintext Audit Status
 
 - Last source audit: 2026-08-31
-- Audited baseline: `codex/file-provider-stability-loop` milestone 1 working
+- Audited baseline: `codex/file-provider-stability-loop` milestone 2 working
   tree, retaining the 2026-08-13 mutation decisions
 - Validation:
   - `potassiumChannel`: `swift test` — 559 tests passed
@@ -159,6 +159,16 @@ audited truth table takes precedence and the inconsistency must be corrected.
     standard event-store contract requires. Uninstall cleanup removes only
     local event/snapshot state through the selected store; no remote mutation,
     conflict decision, staged-content cleanup, or hard purge was added.
+  - 2026-08-31 callback and typed-network instrumentation added actor-isolated
+    start/terminal spans and TaskLocal correlation. Diagnostic sink failures are
+    swallowed, File Provider completions remain exactly-once, and cancellation
+    races select only one terminal phase. `NSFileProviderError` recovery cases
+    are classified without retaining user info, expected share-link absence is
+    successful, and lazy transfers do not emit start-only evidence before
+    consumption. The instrumentation observes the
+    existing changed-field, conditional-mutation, preserve-both, and cleanup
+    decisions; it does not retry, replay, or alter any mutation. Focused span,
+    lifecycle, request-shape, and redaction tests are the regression evidence.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change

@@ -70,6 +70,26 @@ cursor/anchor state, and numeric status/error codes. They never include raw
 URLs, headers, request or response bodies, account identifiers, share links, or
 file data.
 
+The shared `ProviderDiagnosticSpan` emits one best-effort start and at most one
+terminal event even when completion, failure, and cancellation race. Every
+span has its own stable random span UUID; a separate Task-local random UUID
+correlates nested callback and request spans. Recorder
+failure never changes an API result. A terminal append is attempted before the
+system callback so finishing a run cannot silently turn a completed callback
+into start-only evidence.
+Task-local UUID propagation correlates a callback with its runtime-load and
+typed network spans without carrying domain, item, name, or path context.
+Instrumented surfaces include extension initialization/invalidation, runtime
+load, metadata, fetch, create/modify/delete, item/change/anchor enumeration,
+materialized and working-set refresh, thumbnails, known-folder resolution, and
+contextual actions. Long-lived app/extension/enumerator objects resolve the
+current Stability writer when each callback, app activity, view access, or
+service begins, so starting or rotating a run does not retain a missing or
+sealed writer. Transfer diagnostics
+start only when the lazy transfer is consumed or cancelled and use the same
+span for deduplicated progress, cancellation, and completion. An expected
+missing share link is recorded as a successful optional result.
+
 ## Categories And Correlation
 
 `ProviderLog` is the shared logging namespace. Its categories are `app`,
@@ -79,9 +99,10 @@ file data.
 `ProviderLogContext` creates a correlation ID, operation name, optional domain,
 drive, and item context, plus a start time. File Provider activity rows receive
 a correlation ID and measured duration. The `PotassiumKDriveService` records
-sanitized unified-log spans for every kDrive request with an operation name,
-correlation ID, duration, outcome, status code when available, and error
-domain/code.
+sanitized unified-log spans in standard builds and closed-schema JSONL spans in
+Stability for every typed kDrive request. Durable spans contain an enum
+operation/route/option shape, correlation UUID, bounded duration, phase, and
+status/error class; they never retain an error domain or description.
 
 Network spans never include request URLs, query parameters, filenames, request
 or response bodies, bearer tokens, refresh tokens, remote account identifiers,

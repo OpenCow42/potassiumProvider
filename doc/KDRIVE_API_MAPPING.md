@@ -14,6 +14,14 @@ potassiumChannel 0.3.0 at
 `db829f1f2bd8c2113a529c9c521bd5cdfb5ef4dc`; GPL client implementations are
 behavioral evidence only and are not copied.
 
+In the Stability profile, every operation below also emits a closed-enum
+diagnostic span with its route template and option shape. Callback TaskLocal
+correlation is inherited by nested requests; no raw URL, identifier, query
+value, header, body, name, path, or file bytes enter the diagnostic record.
+Lazy transfer spans begin only when their operation is consumed or cancelled.
+Expected share-link absence (`404`) completes successfully, while cancellation
+uses the closed cancelled phase instead of a failure record.
+
 ## Operation Map
 
 | Provider operation | Local method | potassiumChannel call | Visible endpoint |

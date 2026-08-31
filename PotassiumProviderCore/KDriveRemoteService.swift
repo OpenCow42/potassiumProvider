@@ -166,6 +166,8 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     private let apiClient: InfomaniakAPIClient
     private let driveClient: InfomaniakAPIClient
     private let service: KDriveService
+    private let diagnosticRecorder: (any ProviderDiagnosticRecording)?
+    private let diagnosticSource: ProviderDiagnosticSource
 
     /// kDrive advanced-listing routes reject `etag` and `files.etag` with HTTP
     /// 422. Direct metadata and ordinary directory listings remain the source
@@ -176,7 +178,9 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         bearerToken: String,
         apiBaseURL: URL = ProviderConstants.apiBaseURL,
         driveBaseURL: URL = ProviderConstants.driveBaseURL,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        diagnosticRecorder: (any ProviderDiagnosticRecording)? = nil,
+        diagnosticSource: ProviderDiagnosticSource = .app
     ) {
         self.apiClient = InfomaniakAPIClient(
             configuration: APIClientConfiguration(baseURL: apiBaseURL, bearerToken: bearerToken),
@@ -187,10 +191,12 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             session: session
         )
         self.service = KDriveService(client: apiClient)
+        self.diagnosticRecorder = diagnosticRecorder
+        self.diagnosticSource = diagnosticSource
     }
 
     public func listDrives() async throws -> [KDriveDriveSummary] {
-        try await performNetworkOperation("listDrives") {
+        try await performNetworkOperation(.listDrives) {
             let response = try await performDriveDiscoveryRequest(
                 endpoint: "/2/drive/init"
             ) {
@@ -214,13 +220,16 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("item") {
+        try await performNetworkOperation(.itemLookup) {
             try await service.getFile(driveId: driveID, fileId: fileID, with: "etag").data.remoteItem
         }
     }
 
     public func listDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
-        try await performNetworkOperation("listDirectory") {
+        try await performNetworkOperation(
+            .listDirectory,
+            additionalOptionShape: cursor == nil ? [] : [.paginationCursor]
+        ) {
             let options = ListKDriveDirectoryFilesOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
             let response: CursorPaginatedInfomaniakResponse<[KDriveFileItem]>
             do {
@@ -246,7 +255,11 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         let orderBy = ["type", "name"]
         let orderFor = ["type": "asc", "name": "asc"]
 
-        return try await performNetworkOperation("listAdvancedDirectory") {
+        return try await performNetworkOperation(
+            .listAdvancedDirectory,
+            routeTemplate: cursor == nil ? .listAdvancedDirectory : .continueAdvancedDirectory,
+            additionalOptionShape: cursor == nil ? [] : [.paginationCursor]
+        ) {
             let response: CursorPaginatedInfomaniakResponse<KDriveAdvancedDirectoryListing>
             if let cursor {
                 response = try await service.continueAdvancedDirectoryListing(
@@ -286,7 +299,10 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func listTrash(driveID: Int, cursor: String?, limit: Int) async throws -> KDriveItemPage {
-        try await performNetworkOperation("listTrash") {
+        try await performNetworkOperation(
+            .listTrash,
+            additionalOptionShape: cursor == nil ? [] : [.paginationCursor]
+        ) {
             let response = try await service.listTrashFiles(
                 driveId: driveID,
                 with: "etag",
@@ -297,7 +313,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
-        try await performNetworkOperation("listWorkingSetRelevantItems") {
+        try await performNetworkOperation(.listWorkingSetRelevantItems) {
             let latest = try await service.listLastModifiedFiles(driveId: driveID, with: "etag", limit: latestLimit).data
             let favorites = try await service.listFavoriteFiles(driveId: driveID, with: "etag", limit: latestLimit).data
             let myShared = try await service.listMySharedFiles(driveId: driveID, with: "etag", limit: latestLimit).data
@@ -319,7 +335,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         since: Date
     ) async throws -> [KDrivePartialActivityResult] {
         guard fileIDs.isEmpty == false else { return [] }
-        return try await performNetworkOperation("listPartialActivities") {
+        return try await performNetworkOperation(.listPartialActivities) {
             let response = try await service.listPartialFileActivities(
                 driveId: driveID,
                 with: "file,file.etag",
@@ -355,19 +371,34 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func downloadFileOperation(driveID: Int, fileID: Int) throws -> KDriveTransferOperation<Data> {
         let operation = try service.downloadFile(driveId: driveID, fileId: fileID)
+        let diagnosticSpan = makeDeferredDiagnosticSpan(for: .downloadFile)
         return KDriveTransferOperation(
             progress: operation.progress,
             value: {
-                try await performNetworkOperation("downloadFile") {
+                let span = await diagnosticSpan.resolve()
+                let progressTask = Self.trackProgress(
+                    operation.progress,
+                    with: span
+                )
+                defer { progressTask.cancel() }
+                return try await performNetworkOperation(
+                    .downloadFile,
+                    existingSpan: span
+                ) {
                     try await operation.value
                 }
             },
-            cancellation: operation.cancel
+            cancellation: {
+                operation.cancel()
+                Task {
+                    await diagnosticSpan.cancel()
+                }
+            }
         )
     }
 
     public func thumbnail(driveID: Int, fileID: Int, width: Int?, height: Int?) async throws -> Data {
-        try await performNetworkOperation("thumbnail") {
+        try await performNetworkOperation(.thumbnail) {
             try await service.getFileThumbnail(
                 driveId: driveID,
                 fileId: fileID,
@@ -421,14 +452,32 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                 totalChunkHash: contentHash
             )
         )
+        let diagnosticSpan = makeDeferredDiagnosticSpan(
+            for: .uploadFile,
+            additionalOptionShape: Self.diagnosticConflictOption(conflictStrategy)
+        )
         return KDriveTransferOperation(
             progress: operation.progress,
             value: {
-                try await performNetworkOperation("uploadFile") {
+                let span = await diagnosticSpan.resolve()
+                let progressTask = Self.trackProgress(
+                    operation.progress,
+                    with: span
+                )
+                defer { progressTask.cancel() }
+                return try await performNetworkOperation(
+                    .uploadFile,
+                    existingSpan: span
+                ) {
                     try await operation.value.data.remoteItem
                 }
             },
-            cancellation: operation.cancel
+            cancellation: {
+                operation.cancel()
+                Task {
+                    await diagnosticSpan.cancel()
+                }
+            }
         )
     }
 
@@ -473,19 +522,34 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                 totalChunkHash: contentHash
             )
         )
+        let diagnosticSpan = makeDeferredDiagnosticSpan(for: .replaceFile)
         return KDriveTransferOperation(
             progress: operation.progress,
             value: {
-                try await performNetworkOperation("replaceFile") {
+                let span = await diagnosticSpan.resolve()
+                let progressTask = Self.trackProgress(
+                    operation.progress,
+                    with: span
+                )
+                defer { progressTask.cancel() }
+                return try await performNetworkOperation(
+                    .replaceFile,
+                    existingSpan: span
+                ) {
                     try await operation.value.data.remoteItem
                 }
             },
-            cancellation: operation.cancel
+            cancellation: {
+                operation.cancel()
+                Task {
+                    await diagnosticSpan.cancel()
+                }
+            }
         )
     }
 
     public func createDirectory(driveID: Int, parentID: Int, name: String) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("createDirectory") {
+        try await performNetworkOperation(.createDirectory) {
             try await service.createDirectory(
                 driveId: driveID,
                 fileId: parentID,
@@ -495,13 +559,13 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func renameItem(driveID: Int, fileID: Int, name: String) async throws {
-        _ = try await performNetworkOperation("renameItem") {
+        _ = try await performNetworkOperation(.renameItem) {
             try await service.renameFile(driveId: driveID, fileId: fileID, options: RenameKDriveFileOptions(name: name))
         }
     }
 
     public func moveItem(driveID: Int, fileID: Int, destinationParentID: Int, name: String?) async throws {
-        _ = try await performNetworkOperation("moveItem") {
+        _ = try await performNetworkOperation(.moveItem) {
             try await service.moveFile(
                 driveId: driveID,
                 fileId: fileID,
@@ -512,7 +576,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws {
-        _ = try await performNetworkOperation("updateModificationDate") {
+        _ = try await performNetworkOperation(.updateModificationDate) {
             try await service.updateFileLastModified(
                 driveId: driveID,
                 fileId: fileID,
@@ -522,19 +586,19 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func trashItem(driveID: Int, fileID: Int) async throws {
-        _ = try await performNetworkOperation("trashItem") {
+        _ = try await performNetworkOperation(.trashItem) {
             try await service.trashFileV2(driveId: driveID, fileId: fileID)
         }
     }
 
     public func deleteTrashedItem(driveID: Int, fileID: Int) async throws {
-        _ = try await performNetworkOperation("deleteTrashedItem") {
+        _ = try await performNetworkOperation(.deleteTrashedItem) {
             try await service.removeTrashedFile(driveId: driveID, fileId: fileID)
         }
     }
 
     public func setFavorite(driveID: Int, fileID: Int, isFavorite: Bool) async throws {
-        _ = try await performNetworkOperation(isFavorite ? "favoriteItem" : "unfavoriteItem") {
+        _ = try await performNetworkOperation(.favoriteItem) {
             if isFavorite {
                 try await service.favoriteFile(driveId: driveID, fileId: fileID)
             } else {
@@ -544,20 +608,20 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func duplicateItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("duplicateItem") {
+        try await performNetworkOperation(.duplicateItem) {
             try await service.duplicateFile(driveId: driveID, fileId: fileID).data.remoteItem
         }
     }
 
     public func trashedItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        try await performNetworkOperation("trashedItem") {
+        try await performNetworkOperation(.trashedItem) {
             try await service.getTrashedFile(driveId: driveID, fileId: fileID).data.remoteItem
         }
     }
 
     public func existingFileIDs(driveID: Int, fileIDs: [Int]) async throws -> Set<Int> {
         guard fileIDs.isEmpty == false else { return [] }
-        return try await performNetworkOperation("existingFileIDs") {
+        return try await performNetworkOperation(.existingFileIDs) {
             Set(try await service.checkFilesExistence(driveId: driveID, fileIds: fileIDs).data.lazy
                 .filter(\.result)
                 .map(\.id))
@@ -565,7 +629,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func restoreTrashedItem(driveID: Int, fileID: Int, destinationParentID: Int) async throws {
-        _ = try await performNetworkOperation("restoreTrashedItem") {
+        _ = try await performNetworkOperation(.restoreTrashedItem) {
             try await service.restoreTrashedFile(
                 driveId: driveID,
                 fileId: fileID,
@@ -575,14 +639,47 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func shareLink(driveID: Int, fileID: Int) async throws -> KDriveShareLinkSummary? {
+        let span = await ProviderDiagnosticSpan.start(
+            source: diagnosticSource,
+            operation: .shareLink,
+            routeTemplate: Self.diagnosticRoute(for: .shareLink),
+            optionShape: Self.diagnosticOptions(for: .shareLink),
+            recorder: diagnosticRecorder
+        )
+        let correlationID = span.correlationID.uuidString
+        let startedAt = Date()
+        ProviderLog.network.debug("network start operation(\(ProviderDiagnosticOperation.shareLink.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public))")
         do {
-            return try await performNetworkOperation("shareLink") {
+            let summary = try await span.withCorrelation {
                 try Self.shareLinkSummary(
                     try await service.getFileShareLink(driveId: driveID, fileId: fileID).data
                 )
             }
+            await span.complete(statusClass: .success)
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            ProviderLog.network.info("network success operation(\(ProviderDiagnosticOperation.shareLink.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public))")
+            return summary
         } catch APIClientError.unacceptableStatusCode(let statusCode, _, _) where statusCode == 404 {
+            // Absence is the documented optional result for this adapter, not
+            // a failed provider operation.
+            await span.complete(statusClass: .success)
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            ProviderLog.network.info("network success operation(\(ProviderDiagnosticOperation.shareLink.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public))")
             return nil
+        } catch {
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            let statusCode = KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode
+            let nsError = error as NSError
+            ProviderLog.network.error("network failure operation(\(ProviderDiagnosticOperation.shareLink.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public)) httpStatusCode(\(statusCode ?? 0, privacy: .public)) errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))")
+            if ProviderDiagnosticErrorClassifier.classify(error) == .cancellation {
+                await span.cancel()
+            } else {
+                await span.fail(
+                    error: error,
+                    statusClass: statusCode.map(ProviderDiagnosticStatusClass.init)
+                )
+            }
+            throw error
         }
     }
 
@@ -594,7 +691,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         guard configuration.isValid else {
             throw KDriveContextActionError.passwordRequired
         }
-        return try await performNetworkOperation("createShareLink") {
+        return try await performNetworkOperation(.createShareLink) {
             let link = try await service.createFileShareLink(
                 driveId: driveID,
                 fileId: fileID,
@@ -609,7 +706,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         fileID: Int,
         configuration: KDriveShareLinkConfiguration
     ) async throws -> KDriveShareLinkSummary {
-        _ = try await performNetworkOperation("updateShareLink") {
+        _ = try await performNetworkOperation(.updateShareLink) {
             try await service.updateFileShareLink(
                 driveId: driveID,
                 fileId: fileID,
@@ -623,7 +720,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     public func deleteShareLink(driveID: Int, fileID: Int) async throws {
-        _ = try await performNetworkOperation("deleteShareLink") {
+        _ = try await performNetworkOperation(.deleteShareLink) {
             try await service.deleteFileShareLink(driveId: driveID, fileId: fileID)
         }
     }
@@ -634,7 +731,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         page: Int,
         pageSize: Int
     ) async throws -> KDriveFileVersionPage {
-        try await performNetworkOperation("fileVersions") {
+        try await performNetworkOperation(.fileVersions) {
             let response = try await service.listFileVersions(
                 driveId: driveID,
                 fileId: fileID,
@@ -668,7 +765,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         destinationParentID: Int,
         name: String
     ) async throws -> KDriveRemoteItem {
-        let restoredID = try await performNetworkOperation("restoreFileVersion") {
+        let restoredID = try await performNetworkOperation(.restoreFileVersion) {
             try await service.restoreFileVersionToDirectory(
                 driveId: driveID,
                 fileId: fileID,
@@ -743,7 +840,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     private func performDriveDiscoveryRequest<Value>(
         endpoint: String,
-        _ work: () async throws -> Value
+        _ work: @Sendable () async throws -> Value
     ) async throws -> Value {
         ProviderLog.network.debug(
             "drive discovery request endpoint(\(endpoint, privacy: .public))"
@@ -765,25 +862,161 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         }
     }
 
-    private func performNetworkOperation<Value>(
-        _ operation: String,
-        _ work: () async throws -> Value
+    private func performNetworkOperation<Value: Sendable>(
+        _ operation: ProviderDiagnosticOperation,
+        routeTemplate: ProviderDiagnosticRouteTemplate? = nil,
+        additionalOptionShape: [ProviderDiagnosticOption] = [],
+        existingSpan: ProviderDiagnosticSpan? = nil,
+        _ work: @Sendable () async throws -> Value
     ) async throws -> Value {
-        let correlationID = UUID().uuidString
+        let span: ProviderDiagnosticSpan
+        if let existingSpan {
+            span = existingSpan
+        } else {
+            span = await ProviderDiagnosticSpan.start(
+                source: diagnosticSource,
+                operation: operation,
+                routeTemplate: routeTemplate ?? Self.diagnosticRoute(for: operation),
+                optionShape: Self.diagnosticOptions(for: operation) + additionalOptionShape,
+                recorder: diagnosticRecorder
+            )
+        }
+        let correlationID = span.correlationID.uuidString
         let startedAt = Date()
-        ProviderLog.network.debug("network start operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public))")
+        ProviderLog.network.debug("network start operation(\(operation.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public))")
 
         do {
-            let value = try await work()
+            let value = try await span.withCorrelation(operation: work)
             let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
-            ProviderLog.network.info("network success operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public))")
+            ProviderLog.network.info("network success operation(\(operation.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public))")
+            await span.complete(statusClass: .success)
             return value
         } catch {
             let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
             let statusCode = KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode
             let nsError = error as NSError
-            ProviderLog.network.error("network failure operation(\(operation, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public)) httpStatusCode(\(statusCode ?? 0, privacy: .public)) errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))")
+            ProviderLog.network.error("network failure operation(\(operation.rawValue, privacy: .public)) correlationID(\(correlationID, privacy: .public)) durationMilliseconds(\(durationMilliseconds, privacy: .public)) httpStatusCode(\(statusCode ?? 0, privacy: .public)) errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))")
+            if ProviderDiagnosticErrorClassifier.classify(error) == .cancellation {
+                await span.cancel()
+            } else {
+                await span.fail(
+                    error: error,
+                    statusClass: statusCode.map(ProviderDiagnosticStatusClass.init)
+                )
+            }
             throw error
+        }
+    }
+
+    private func makeDeferredDiagnosticSpan(
+        for operation: ProviderDiagnosticOperation,
+        routeTemplate: ProviderDiagnosticRouteTemplate? = nil,
+        additionalOptionShape: [ProviderDiagnosticOption] = []
+    ) -> DeferredProviderDiagnosticSpan {
+        DeferredProviderDiagnosticSpan(
+            source: diagnosticSource,
+            operation: operation,
+            routeTemplate: routeTemplate ?? Self.diagnosticRoute(for: operation),
+            optionShape: Self.diagnosticOptions(for: operation) + additionalOptionShape,
+            recorder: diagnosticRecorder
+        )
+    }
+
+    private static func trackProgress(
+        _ progress: Progress,
+        with span: ProviderDiagnosticSpan
+    ) -> Task<Void, Never> {
+        Task {
+            while Task.isCancelled == false {
+                let total = progress.totalUnitCount
+                if total > 0 {
+                    await span.progress(
+                        fractionCompleted: Double(progress.completedUnitCount)
+                            / Double(total)
+                    )
+                }
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private static func diagnosticRoute(
+        for operation: ProviderDiagnosticOperation
+    ) -> ProviderDiagnosticRouteTemplate? {
+        switch operation {
+        case .listDrives: .driveDiscovery
+        case .itemLookup: .item
+        case .listDirectory: .listDirectory
+        case .listAdvancedDirectory: .listAdvancedDirectory
+        case .listTrash: .trash
+        case .listPartialActivities: .partialActivities
+        case .downloadFile: .download
+        case .thumbnail: .thumbnail
+        case .uploadFile, .replaceFile: .upload
+        case .createDirectory: .createDirectory
+        case .renameItem: .rename
+        case .moveItem: .move
+        case .trashItem: .trashItem
+        case .deleteTrashedItem: .deleteTrashedItem
+        case .favoriteItem: .favorite
+        case .duplicateItem: .duplicate
+        case .trashedItem: .trashedItem
+        case .existingFileIDs: .existingFileIDs
+        case .restoreTrashedItem: .restoreTrash
+        case .shareLink, .createShareLink, .updateShareLink, .deleteShareLink:
+            .shareLink
+        case .fileVersions: .versions
+        case .restoreFileVersion: .restoreVersion
+        default: nil
+        }
+    }
+
+    private static func diagnosticOptions(
+        for operation: ProviderDiagnosticOperation
+    ) -> [ProviderDiagnosticOption] {
+        switch operation {
+        case .itemLookup:
+            [.includeETag]
+        case .listDirectory, .listTrash:
+            [.pageLimit, .orderByName, .includeETag]
+        case .listAdvancedDirectory:
+            [.pageLimit, .orderByTypeThenName, .includeCapabilities]
+        case .listWorkingSetRelevantItems:
+            [.pageLimit, .includeETag]
+        case .listPartialActivities:
+            [.activityBatch, .includeETag]
+        case .downloadFile:
+            [.cancellableTransfer]
+        case .thumbnail:
+            [.thumbnailDimensions, .cancellableTransfer]
+        case .uploadFile:
+            [.includeETag, .clientToken, .contentHash, .lastModifiedAt, .cancellableTransfer]
+        case .replaceFile:
+            [.includeETag, .conditionalETag, .stableFileID, .clientToken, .contentHash, .lastModifiedAt, .cancellableTransfer]
+        case .moveItem:
+            [.destinationParent, .optionalName, .conflictRename]
+        case .restoreTrashedItem, .restoreFileVersion:
+            [.destinationParent]
+        case .createShareLink, .updateShareLink:
+            [.shareConfiguration]
+        case .fileVersions:
+            [.versionPagination]
+        default:
+            []
+        }
+    }
+
+    private static func diagnosticConflictOption(
+        _ strategy: KDriveUploadConflictStrategy
+    ) -> [ProviderDiagnosticOption] {
+        switch strategy {
+        case .error: [.conflictError]
+        case .rename: [.conflictRename]
+        case .version: [.conflictVersion]
         }
     }
 
@@ -893,6 +1126,66 @@ public enum KDriveRemoteAPIRejectionRecovery: Equatable, Sendable {
     case serverUnreachable
     case insufficientQuota
     case cannotSynchronize
+}
+
+/// Defers diagnostic start until a lazy transfer is consumed or cancelled.
+/// This preserves the transfer API's lazy contract and prevents abandoned
+/// operation values from leaving permanent start-only records.
+private actor DeferredProviderDiagnosticSpan {
+    private let source: ProviderDiagnosticSource
+    private let operation: ProviderDiagnosticOperation
+    private let routeTemplate: ProviderDiagnosticRouteTemplate?
+    private let optionShape: [ProviderDiagnosticOption]
+    private let recorder: (any ProviderDiagnosticRecording)?
+    private var span: ProviderDiagnosticSpan?
+    private var inFlightSpan: Task<ProviderDiagnosticSpan, Never>?
+
+    init(
+        source: ProviderDiagnosticSource,
+        operation: ProviderDiagnosticOperation,
+        routeTemplate: ProviderDiagnosticRouteTemplate?,
+        optionShape: [ProviderDiagnosticOption],
+        recorder: (any ProviderDiagnosticRecording)?
+    ) {
+        self.source = source
+        self.operation = operation
+        self.routeTemplate = routeTemplate
+        self.optionShape = optionShape
+        self.recorder = recorder
+    }
+
+    func resolve() async -> ProviderDiagnosticSpan {
+        if let span {
+            return span
+        }
+        if let inFlightSpan {
+            return await inFlightSpan.value
+        }
+        let source = source
+        let operation = operation
+        let routeTemplate = routeTemplate
+        let optionShape = optionShape
+        let recorder = recorder
+        let creation = Task {
+            await ProviderDiagnosticSpan.start(
+                source: source,
+                operation: operation,
+                routeTemplate: routeTemplate,
+                optionShape: optionShape,
+                recorder: recorder
+            )
+        }
+        inFlightSpan = creation
+        let created = await creation.value
+        span = created
+        inFlightSpan = nil
+        return created
+    }
+
+    func cancel() async {
+        let span = await resolve()
+        await span.cancel()
+    }
 }
 
 private struct KDriveInitPayload: Decodable, Sendable {

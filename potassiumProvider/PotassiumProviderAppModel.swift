@@ -79,7 +79,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let oauthAuthenticator: any KDriveOAuthAuthenticating
     private let domainRegistrar: any ProviderDomainRegistering
     private let snapshotStore: (any KDriveSnapshotStoring)?
-    private let eventStore: (any KDriveProviderEventStoring)?
+    private let injectedEventStore: (any KDriveProviderEventStoring)?
+    private let defaultEventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
     private let objectStoreFactory: (Int, String) -> any KDriveObjectStoreProviding
     private let vaultKeyStore: any VaultKeyStoring
@@ -97,6 +98,16 @@ final class PotassiumProviderAppModel: ObservableObject {
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
     private var fileProviderDomainChangeCancellable: AnyCancellable?
 
+    private var eventStore: (any KDriveProviderEventStoring)? {
+        if let injectedEventStore {
+            return injectedEventStore
+        }
+        if ProviderRuntimeProfile.current == .stability {
+            return Self.makeDefaultEventStore()
+        }
+        return defaultEventStore
+    }
+
     init(
         accountStore: (any ProviderAccountStoring)? = nil,
         domainStore: (any DomainConfigurationStoring)? = nil,
@@ -109,7 +120,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         initialAccounts: [ProviderAccount] = [],
         initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
         initialDomains: [ProviderDomainConfiguration] = [],
-        fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) },
+        fileProviderFactory: ((String) -> any KDriveFileProviding)? = nil,
         objectStoreFactory: @escaping (Int, String) -> any KDriveObjectStoreProviding = {
             PotassiumKDriveObjectStore(driveID: $0, bearerToken: $1)
         },
@@ -135,8 +146,27 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.oauthAuthenticator = oauthAuthenticator ?? KDriveOAuthWebAuthenticator()
         self.domainRegistrar = domainRegistrar ?? FileProviderDomainRegistrar()
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
-        self.eventStore = eventStore ?? Self.makeDefaultEventStore()
-        self.fileProviderFactory = fileProviderFactory
+        let resolvedEventStore = eventStore ?? Self.makeDefaultEventStore()
+        self.injectedEventStore = eventStore
+        self.defaultEventStore = resolvedEventStore
+        if let injectedRecorder = eventStore as? any ProviderDiagnosticRecording {
+            self.fileProviderFactory = fileProviderFactory ?? { token in
+                PotassiumKDriveService(
+                    bearerToken: token,
+                    diagnosticRecorder: injectedRecorder,
+                    diagnosticSource: .app
+                )
+            }
+        } else {
+            self.fileProviderFactory = fileProviderFactory ?? { token in
+                PotassiumKDriveService(
+                    bearerToken: token,
+                    diagnosticRecorder: Self.makeDefaultEventStore()
+                        as? any ProviderDiagnosticRecording,
+                    diagnosticSource: .app
+                )
+            }
+        }
         self.objectStoreFactory = objectStoreFactory
         let defaultVaultKeyStore = KeychainVaultKeyStore(
             accessGroup: ProviderConstants.keychainAccessGroup
