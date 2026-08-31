@@ -131,6 +131,60 @@ struct StabilityDiagnosticsTests {
         #expect(FileManager.default.fileExists(atPath: active.directoryURL.path))
     }
 
+    @Test func inactiveRunLeaseRejectsAnActiveRunAndAllowsSafeResetWorkAfterFinish() async throws {
+        let root = try temporaryDirectory()
+        let coordinator = StabilityRunCoordinator(rootDirectoryURL: root)
+        let run = try await coordinator.startRun(buildRevision: nil)
+
+        await #expect(throws: ProviderDiagnosticStoreError.runAlreadyActive) {
+            _ = try await coordinator.withInactiveRunLease { true }
+        }
+
+        _ = try await coordinator.finishRun(
+            runID: run.runID,
+            summary: StabilityRunSummary(
+                assertionCount: 0,
+                failedAssertionCount: 0,
+                checkpointCount: 0
+            )
+        )
+        #expect(try await coordinator.withInactiveRunLease { true })
+    }
+
+    @Test func inactiveRunLeaseBlocksAnIndependentRunStartUntilRelease() async throws {
+        let root = try temporaryDirectory()
+        let resetCoordinator = StabilityRunCoordinator(rootDirectoryURL: root)
+        let runCoordinator = StabilityRunCoordinator(rootDirectoryURL: root)
+        let leaseGate = StabilityLeaseTestGate()
+        let startState = StabilityRunStartTestState()
+
+        let leaseTask = Task {
+            try await resetCoordinator.withInactiveRunLease {
+                await leaseGate.hold()
+                return true
+            }
+        }
+        await leaseGate.waitUntilHeld()
+
+        let startTask = Task {
+            await startState.markAttempted()
+            let run = try await runCoordinator.startRun(buildRevision: "after-reset")
+            await startState.markCompleted()
+            return run
+        }
+        await startState.waitUntilAttempted()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        #expect(await startState.isCompleted == false)
+
+        await leaseGate.release()
+        #expect(try await leaseTask.value)
+        let run = try await startTask.value
+        #expect(await startState.isCompleted)
+        #expect(try await runCoordinator.activeRun()?.runID == run.runID)
+    }
+
     @Test func independentCoordinatorsSelectOneRunAndByteRetentionKeepsIncompleteRuns() async throws {
         let root = try temporaryDirectory()
         let first = StabilityRunCoordinator(rootDirectoryURL: root)
@@ -400,5 +454,57 @@ struct StabilityDiagnosticsTests {
             .appendingPathComponent("StabilityDiagnosticsTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+private actor StabilityLeaseTestGate {
+    private var isHeld = false
+    private var heldWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func hold() async {
+        isHeld = true
+        heldWaiters.forEach { $0.resume() }
+        heldWaiters.removeAll()
+        await withCheckedContinuation { continuation in
+            releaseWaiter = continuation
+        }
+    }
+
+    func waitUntilHeld() async {
+        guard isHeld == false else { return }
+        await withCheckedContinuation { continuation in
+            heldWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
+private actor StabilityRunStartTestState {
+    private var attempted = false
+    private var completed = false
+    private var attemptedWaiters: [CheckedContinuation<Void, Never>] = []
+
+    var isCompleted: Bool { completed }
+
+    func markAttempted() {
+        attempted = true
+        attemptedWaiters.forEach { $0.resume() }
+        attemptedWaiters.removeAll()
+    }
+
+    func waitUntilAttempted() async {
+        guard attempted == false else { return }
+        await withCheckedContinuation { continuation in
+            attemptedWaiters.append(continuation)
+        }
+    }
+
+    func markCompleted() {
+        completed = true
     }
 }

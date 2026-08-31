@@ -163,6 +163,10 @@ struct FileProviderRuntime: Sendable {
             FileProviderLog.runtime.error("missing configuration for domain(\(domain.identifier.rawValue, privacy: .public)); returning notAuthenticated")
             throw NSFileProviderError(.notAuthenticated)
         }
+        guard configuration.isCompatible(with: .current) else {
+            FileProviderLog.runtime.error("domain purpose does not match this runtime profile; returning cannotSynchronize")
+            throw NSFileProviderError(.cannotSynchronize)
+        }
         guard configuration.encryptionMode != .opaqueVaultV1 else {
             FileProviderLog.runtime.error("unsupported experimental encrypted vault v1 for domain(\(domain.identifier.rawValue, privacy: .public)); returning cannotSynchronize")
             throw NSFileProviderError(.cannotSynchronize)

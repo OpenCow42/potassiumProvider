@@ -78,6 +78,41 @@ struct PotassiumProviderCoreTests {
         #expect(configuration.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
         #expect(configuration.driveID == 42)
         #expect(configuration.knownFolderLayout == .legacyPrivate)
+        #expect(configuration.purpose == .ordinary)
+        #expect(configuration.stabilityLab == nil)
+    }
+
+    @Test func stabilityLabDomainConfigurationRoundTripsOwnershipEvidence() throws {
+        let marker = StabilityLabOwnershipMarker(
+            identifier: UUID(uuidString: "4AAB04E6-E73B-4D4D-B99C-9A3CC0949797")!,
+            driveID: 42,
+            rootFileID: 84,
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let configuration = ProviderDomainConfiguration(
+            domainIdentifier: "stability-domain",
+            accountIdentifier: ProviderConstants.legacyAccountIdentifier,
+            displayName: "Stability Lab",
+            driveID: marker.driveID,
+            driveName: "Development",
+            rootFileID: marker.rootFileID,
+            purpose: .stabilityLab,
+            stabilityLab: ProviderStabilityLabConfiguration(
+                driveRootFileID: 1,
+                markerFileID: 85,
+                ownershipMarker: marker
+            ),
+            createdAt: marker.createdAt,
+            updatedAt: marker.createdAt
+        )
+
+        let encoded = try JSONEncoder().encode(configuration)
+        let decoded = try JSONDecoder().decode(ProviderDomainConfiguration.self, from: encoded)
+
+        #expect(decoded == configuration)
+        #expect(decoded.hasConsistentPurposeConfiguration)
+        #expect(decoded.isCompatible(with: .stability))
+        #expect(decoded.isCompatible(with: .standard) == false)
     }
 
     @Test func newDomainConfigurationUsesMachineNamespaceKnownFolderLayout() {
@@ -88,6 +123,8 @@ struct PotassiumProviderCoreTests {
         )
 
         #expect(configuration.knownFolderLayout == .machineNamespace)
+        #expect(configuration.isCompatible(with: .standard))
+        #expect(configuration.isCompatible(with: .stability) == false)
     }
 
     @Test func inMemoryTokenStoreScopesTokensAndMigratesLegacyToken() async throws {

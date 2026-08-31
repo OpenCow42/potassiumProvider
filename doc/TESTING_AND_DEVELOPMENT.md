@@ -74,7 +74,7 @@ xcodebuild test \
   -only-testing:potassiumProviderTests/StabilityDiagnosticsTests
 ```
 
-An active run must be created by the Stability Lab command before production
+An active run must be created by the Stability Lab tab or command before production
 runtime processes append JSONL. The factory deliberately returns no event
 store when no run exists. Ordinary Debug and Release builds keep SQLite
 activity/conflict history. `Snapshots.sqlite3` remains the store for snapshots,
@@ -98,7 +98,8 @@ xcodebuild test \
   -destination 'platform=macOS,arch=arm64' \
   -only-testing:potassiumProviderTests/ProviderDiagnosticSpanTests \
   -only-testing:potassiumProviderTests/FileProviderOperationLifecycleTests \
-  -only-testing:potassiumProviderTests/StabilityLabSafetyTests
+  -only-testing:potassiumProviderTests/StabilityLabSafetyTests \
+  -only-testing:potassiumProviderTests/StabilityLabRemoteCoordinatorTests
 ```
 
 The exact network-outcome checks use Swift Testing identifiers including their
@@ -114,10 +115,53 @@ xcodebuild test-without-building \
   '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/concurrentLazyTransferStartAndCancelShareOneDiagnosticSpan()'
 ```
 
-These tests use only in-memory recorders and pure root observations. They do
+These tests use only in-memory recorders, fake kDrive services, and pure root observations. They do
 not read Keychain credentials, register a File Provider domain, or mutate a
 remote account. The hosted macOS test bundle must be signed on machines where
 the unsigned XCTest worker cannot materialize.
+
+### Stability Lab safety workflow
+
+The macOS Stability build exposes a dedicated Stability Lab tab. Provisioning
+is enabled only when no saved or system-registered File Provider domain is
+present. Connect the dedicated non-customer development account through the
+existing manual-token UI, load an internal non-maintenance drive reached by
+that account, and let the
+lab create one unique top-level folder plus a fixed-name ownership marker. The
+stable root and marker file IDs are stored in the domain configuration; the
+domain is registered only after that evidence is durable locally. A failed
+registration leaves the ownership record in place and never auto-deletes the
+remote folder.
+
+Drive discovery proves internal membership, not product ownership. Lab-root
+ownership is instead bound procedurally: this build creates the direct
+drive-root child and a random versioned marker, persists the exact root/marker
+IDs locally, and requires those remote objects and marker bytes to match on
+every preflight.
+
+Before using a shared-identity Stability build, inspect ordinary domains with:
+
+```sh
+scripts/uninstall-file-provider.sh --dry-run
+```
+
+If the plan is correct, use the explicit safe cleanup path:
+
+```sh
+scripts/uninstall-file-provider.sh --yes
+```
+
+The app, File Provider extension, and contextual-action runtime all reject a
+saved domain whose purpose does not match the current build profile. The lab
+never invokes `--hard-purge`. Reset requires the exact phrase
+`DELETE STABILITY LAB CONTENTS`. It fully consumes the root listing, preserves
+the root and marker, and immediately re-fetches the root, marker, and each
+planned child's current parent before calling the reversible trash endpoint.
+It also re-queries system registration isolation immediately before each
+mutation. It never calls permanent deletion. A cross-process lifecycle lease
+prevents a diagnostics run from starting during reset and rejects reset while a
+run is active. Live provisioning/reset is opt-in and was not executed by the
+automated test suite.
 
 ## Commands
 

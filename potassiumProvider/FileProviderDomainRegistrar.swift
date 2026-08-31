@@ -7,6 +7,7 @@ import PotassiumProviderCore
 protocol ProviderDomainRegistering {
     func addDomain(for configuration: ProviderDomainConfiguration) async throws
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws
+    func registeredDomainIdentifiers() async throws -> Set<String>
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState]
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws
     func claimKnownFolders(
@@ -75,6 +76,10 @@ struct KnownFolderPreflight: Equatable, Sendable {
 }
 
 extension ProviderDomainRegistering {
+    func registeredDomainIdentifiers() async throws -> Set<String> {
+        []
+    }
+
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {
         [:]
     }
@@ -143,6 +148,10 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
                 }
             }
         }
+    }
+
+    func registeredDomainIdentifiers() async throws -> Set<String> {
+        Set(try await registeredDomains().map { $0.identifier.rawValue })
     }
 
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {

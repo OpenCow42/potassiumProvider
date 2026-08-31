@@ -390,6 +390,26 @@ public actor StabilityRunCoordinator {
         try StabilityRunLocator.activeRun(rootDirectoryURL: rootDirectoryURL)
     }
 
+    /// Holds the cross-process run lifecycle lock for the full duration of a
+    /// destructive Stability Lab reset. A run cannot start between the reset
+    /// preflight and its final reversible trash operation.
+    public func withInactiveRunLease<T: Sendable>(
+        _ body: @Sendable () async throws -> T
+    ) async throws -> T {
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        return try await SecurePOSIXFile.withAsyncLock(
+            at: coordinatorLockURL,
+            operation: LOCK_EX
+        ) {
+            guard try StabilityRunLocator.activeRunUnlocked(
+                rootDirectoryURL: rootDirectoryURL
+            ) == nil else {
+                throw ProviderDiagnosticStoreError.runAlreadyActive
+            }
+            return try await body()
+        }
+    }
+
     @discardableResult
     public func pruneCompletedRuns(
         maximumRunCount: Int = defaultMaximumRunCount,
@@ -1184,6 +1204,25 @@ private enum SecurePOSIXFile {
         return try body()
     }
 
+    static func withAsyncLock<T: Sendable>(
+        at url: URL,
+        operation: Int32,
+        _ body: @Sendable () async throws -> T
+    ) async throws -> T {
+        let descriptor = Darwin.open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW, 0o600)
+        guard descriptor >= 0 else { throw ProviderDiagnosticStoreError.fileSystemError(errno) }
+        defer { Darwin.close(descriptor) }
+        try requireRegularFile(descriptor)
+        guard fchmod(descriptor, 0o600) == 0 else {
+            throw ProviderDiagnosticStoreError.fileSystemError(errno)
+        }
+        guard flock(descriptor, operation) == 0 else {
+            throw ProviderDiagnosticStoreError.fileSystemError(errno)
+        }
+        defer { flock(descriptor, LOCK_UN) }
+        return try await body()
+    }
+
     static func read(_ url: URL, maximumBytes: Int) throws -> Data {
         let descriptor = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW)
         guard descriptor >= 0 else { throw ProviderDiagnosticStoreError.fileSystemError(errno) }
@@ -1332,6 +1371,7 @@ public enum ProviderDiagnosticStoreError: Error, Equatable, LocalizedError, Send
     case invalidActiveRunPointer
     case runNotFound(UUID)
     case runAlreadyFinished(UUID)
+    case runAlreadyActive
     case fileSystemError(Int32)
 
     public var errorDescription: String? {
@@ -1358,6 +1398,8 @@ public enum ProviderDiagnosticStoreError: Error, Equatable, LocalizedError, Send
             "The Stability run does not exist."
         case .runAlreadyFinished:
             "The Stability run is already complete."
+        case .runAlreadyActive:
+            "A Stability run is active."
         case .fileSystemError(let code):
             "The Stability event file operation failed with errno \(code)."
         }

@@ -117,7 +117,7 @@ audited truth table takes precedence and the inconsistency must be corrected.
 ## Legacy Plaintext Audit Status
 
 - Last source audit: 2026-08-31
-- Audited baseline: `codex/file-provider-stability-loop` milestone 2 working
+- Audited baseline: `codex/file-provider-stability-loop` milestone 3 working
   tree, retaining the 2026-08-13 mutation decisions
 - Validation:
   - `potassiumChannel`: `swift test` — 559 tests passed
@@ -169,6 +169,22 @@ audited truth table takes precedence and the inconsistency must be corrected.
     existing changed-field, conditional-mutation, preserve-both, and cleanup
     decisions; it does not retry, replay, or alter any mutation. Focused span,
     lifecycle, request-shape, and redaction tests are the regression evidence.
+  - 2026-09-01 Stability Lab validation passed 47 focused macOS tests across
+    diagnostics/run leasing, pure safety, and injected remote-lifecycle suites after the complete
+    Stability app/extension/test graph built successfully. Provision rejects
+    ordinary/existing lab domains and external or maintenance drives before a
+    mutation. Drive discovery establishes internal membership, while exact
+    locally persisted and remote root/marker evidence establishes lab-root
+    ownership. Provisioned roots are direct drive-root children; marker upload
+    uses conflict-as-error. Reset requires exact confirmation, complete bounded
+    pagination, matching local/remote marker evidence, and fresh root/marker/
+    child-parent plus system-registration validation before each reversible
+    trash request. A cross-process lifecycle lease excludes active/new runs
+    for the full reset. Root, marker,
+    and permanent-delete endpoints are not representable in the reset plan.
+    No live account or remote mutation was used for this validation. The final
+    signed hosted command exited 0 with `TEST EXECUTE SUCCEEDED` and a finalized
+    result bundle.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change
@@ -240,6 +256,15 @@ Infomaniak's public API contract documents the primitives used here:
 ETags fail closed into preserve-both or `.failOnConflict` behavior.
 
 ## Legacy Plaintext Core Mutation Truth Table
+
+### Stability Lab Provisioning And Cleanup
+
+| Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
+| --- | --- | --- | --- | --- | --- |
+| Provision lab root | No saved or registered domain; selected drive has one internal non-maintenance discovery record; explicit drive root resolves as a directory | Create one unique direct child, upload the fixed random marker with `conflict=error`, re-read both, persist exact root/marker evidence, then register File Provider | Creates a directory and marker file | Low. Internal discovery proves membership, while created-and-matched root/marker evidence proves lab ownership. Partial provisioning is never auto-cleaned, so a failed local save/registration can leave an orphaned development folder but cannot delete unrelated data. | Inspect the dedicated development drive and remove an abandoned folder manually only after verifying its marker. |
+| Marker collision or incomplete provisioning | Marker upload/verification fails | Stop, retain any created root, and do not register it or issue compensating deletion | No additional mutation after failure | Low data-loss risk; possible empty/orphaned lab root. | Verify the marker and remove the orphan manually from the dedicated account. |
+| Reset lab contents | Exact confirmation; root is non-root/top-level and has matching created-and-persisted ownership evidence; marker and registered lab domain match; complete bounded listing | Exclude root and marker; before each action re-fetch root, marker, and target parent; call reversible trash only for a still-immediate child | Trashes verified immediate children | Low. There remains an unavoidable request-time race after the final metadata fetch, but trash is reversible and the target stable ID was inside the verified lab root at preflight. | Restore an item from kDrive trash if the reset intent was wrong. |
+| Missing/ordinary/unknown domain, wrong-profile runtime, encrypted domain, stale marker/root, partial/cyclic listing, moved target, or active run | Any safety predicate fails; registration is re-queried and the run lifecycle lock is held through reset | Reject before the affected mutation; never hard purge or permanently delete | No | Safe fail-closed behavior. | Use the documented dry-run plus safe uninstall path, repair registration/marker state, then retry. |
 
 | Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
 | --- | --- | --- | --- | --- | --- |

@@ -31,6 +31,10 @@ public struct ProviderActionRuntime: Sendable {
             throw ProviderActionRuntimeError.configurationUnavailable
         }
 
+        guard configuration.isCompatible(with: .current) else {
+            throw ProviderActionRuntimeError.configurationUnavailable
+        }
+
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         guard configuration.encryptionMode != .opaqueVaultV1 else {
             throw ProviderActionRuntimeError.configurationUnavailable

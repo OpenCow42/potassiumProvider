@@ -70,6 +70,14 @@ cursor/anchor state, and numeric status/error codes. They never include raw
 URLs, headers, request or response bodies, account identifiers, share links, or
 file data.
 
+The Stability Lab stores its remote root and ownership-marker identifiers only
+in the local domain configuration. The remote marker contains a random marker
+UUID plus drive/root identity, but no account identifier, display name, path,
+URL, or credential. None of these operational identifiers or marker bytes are
+copied into diagnostic events. Lab provisioning and reset use the same closed
+typed-network spans as other requests, so only route and option shapes are
+durable.
+
 The shared `ProviderDiagnosticSpan` emits one best-effort start and at most one
 terminal event even when completion, failure, and cancellation race. Every
 span has its own stable random span UUID; a separate Task-local random UUID

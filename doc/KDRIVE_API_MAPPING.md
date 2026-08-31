@@ -75,6 +75,18 @@ claim to prove product ownership. Stored File Provider domains remain visible
 for recovery when a later discovery response no longer includes an eligible
 drive.
 
+The Stability Lab applies a stricter access gate before any remote mutation:
+exactly one discovery record must match the selected drive, its role must be
+internal, and it must not be in maintenance. This is internal membership, not
+an account-ownership claim. Provisioning then verifies
+the explicit drive-root metadata, creates one direct child, uploads a marker
+with `conflict=error`, and re-reads the root and marker. Reset fully paginates
+ordinary listing and uses only `trashItem`; it re-reads ownership evidence and
+each target's parent immediately before every trash request. The lab never
+calls `deleteTrashedItem` and never removes its root or marker.
+The locally persisted random marker plus exact remote root/marker identity is
+the Stability Lab ownership proof.
+
 Binary operations are exposed to File Provider as `KDriveTransferOperation`.
 It preserves potassiumChannel's live Foundation progress, shared async result,
 and cancellation of the underlying URL session task. Async convenience methods

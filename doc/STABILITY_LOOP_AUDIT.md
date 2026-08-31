@@ -21,8 +21,8 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Milestone | Implementation state | Focused validation | Adversarial review | Commit |
 | --- | --- | --- | --- | --- |
 | Stability build profile and JSONL event store | implemented; reviewer fixes applied | 13 macOS `StabilityDiagnosticsTests` passed 2026-08-31 | all actionable findings fixed | `2fd9fbb` |
-| Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | pending |
-| Stability Lab and safe root lifecycle | pending | pending | pending | pending |
+| Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | `c348d0c` |
+| Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | this milestone commit |
 | Finder Accessibility runner and checkpoints | pending | pending | pending | pending |
 | API evidence matrix and adapter corrections | evidence pinned; implementation pending | pending | pending | pending |
 | Cross-platform completion validation | pending | pending | pending | pending |
@@ -120,6 +120,48 @@ explicitly supplies a development account and lab-owned non-root folder.
   and made app activity storage resolve the active run dynamically.
 - `git diff --check` and the added-line credential/private-URL scan passed.
 - No live network or remote mutation was performed.
+
+### 2026-09-01 — Milestone 3 Stability Lab
+
+- Added a Stability-only macOS lab UI backed by the existing manual-token
+  Keychain flow. Standard and Stability build identities register only their
+  matching ordinary/lab domain purpose.
+- Provisioning rejects any saved or registered domain and any external,
+  unavailable, duplicate, or maintenance drive before remote mutation. It
+  verifies the explicit drive root, creates one unique top-level directory,
+  uploads a fixed marker with conflict-as-error, verifies it, persists root and
+  marker IDs, and only then registers File Provider. Partial provisioning is
+  retained for manual recovery; there is no automatic remote rollback.
+- Reset requires an exact typed phrase and a complete bounded listing. The
+  reset plan cannot represent root/marker/permanent deletion. Before every
+  `trashItem`, the coordinator re-reads internal drive access, system domain
+  registration, root, marker, and target parent and aborts on drift. A
+  cross-process lifecycle lease blocks an active or newly starting diagnostics
+  run for the entire reset. File Provider and action runtimes reject a domain
+  purpose that does not match their compiled profile.
+- `xcodebuild build-for-testing -quiet -project potassiumProvider.xcodeproj
+  -scheme potassiumProvider-Stability -configuration Stability -destination
+  'platform=macOS,arch=arm64' -derivedDataPath
+  /tmp/potassium-provider-stability-lab-dd
+  COMPILER_INDEX_STORE_ENABLE=NO` exited 0.
+- The final signed `test-without-building`, restricted to
+  `StabilityDiagnosticsTests`, `StabilityLabSafetyTests`, and
+  `StabilityLabRemoteCoordinatorTests`, exited 0 with `TEST EXECUTE SUCCEEDED`:
+  47 Swift Testing cases passed in three suites and the result bundle finalized
+  at `/tmp/potassium-lab-final-v4-20260901.xcresult`. An earlier two-suite run had
+  passed before local Xcode stalled during result-bundle finalization; the
+  successful final run supersedes that incomplete result artifact.
+- No live credential was read, no File Provider domain was registered, and no
+  remote mutation was performed.
+
+## Milestone 3 Decision Records
+
+| Decision | Evidence | Live result | Chosen behavior | Tests | Truth-table impact |
+| --- | --- | --- | --- | --- | --- |
+| Domain/build isolation | shared production identity; File Provider registration map; plan invariant | not run | legacy records decode ordinary; app, File Provider, and action runtimes accept only the current profile's consistent purpose; live registration evidence is re-queried before provision/reset mutations | configuration profile tests; ordinary-domain no-call and domain-change race tests | adds fail-closed lab registration/cleanup row |
+| Lab-root ownership | pinned client drive eligibility plus server-authoritative discovery/root/marker metadata | not run | treat discovery as internal membership only; prove lab ownership by this build's random marker plus exact persisted and remote root/marker identity under the explicit drive root | external-drive no-mutation, provision-shape, and marker mismatch tests | adds provisioning predicate without claiming product ownership |
+| Ownership marker | plan requirement; remote upload/download and local configuration contracts | not run | marker payload has no name/path/account data; persist marker file ID separately; require local/remote marker equality and preserve the file | marker round-trip, missing/mismatch/parent/duplicate evidence tests | adds marker collision and preservation rows |
+| Reset mutation | safe cleanup policy and truth-table trash/permanent-delete distinction | not run | exact confirmation, complete bounded pagination, preserve root/marker, fresh TOCTOU checks, trash only, live domain isolation, and a cross-process inactive-run lease | pagination/cursor, reset preservation, target/root/marker/domain drift, and run-lease tests | documents reversible trash and keeps unconditional permanent delete risk separate |
 
 ## API Decision Ledger
 
