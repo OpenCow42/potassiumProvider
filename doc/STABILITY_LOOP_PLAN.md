@@ -1,5 +1,11 @@
 # File Provider Stability Loop
 
+Implementation progress and the required evidence/decision ledger live in
+[`STABILITY_LOOP_AUDIT.md`](STABILITY_LOOP_AUDIT.md). That ledger is part of
+this plan: a milestone is not complete until its implementation, validation,
+privacy scan, reviewer result, and affected truth-table cells are recorded
+there.
+
 ## Summary
 
 Build an opt-in macOS Stability configuration for the legacy plaintext File

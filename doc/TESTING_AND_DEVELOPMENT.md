@@ -7,6 +7,8 @@ source of truth.
 
 - Project: `potassiumProvider.xcodeproj`
 - Scheme: `potassiumProvider`
+- Stability schemes: `potassiumProvider-Stability` and
+  `potassiumProviderFileProvider-Stability`
 - App target: `potassiumProvider`
 - File Provider extension target: `potassiumProviderFileProvider`
 - File Provider UI extension target: `potassiumProviderActions`
@@ -14,9 +16,11 @@ source of truth.
 - Unit test target: `potassiumProviderTests`
 - UI test target: `potassiumProviderUITests`
 
-The shared `potassiumProvider` scheme runs `potassiumProviderTests` in its Test
-action. UI automation remains a separate Xcode test-target workflow and is not
-part of the shared scheme's command-line test path.
+The existing `potassiumProvider` scheme includes both unit and UI test bundles.
+The `potassiumProvider-Stability` Test action intentionally includes only the
+unit test bundle so a diagnostic-store test never drives Finder or consumes a
+live credential. The File Provider Stability scheme has no Test action because
+the unit target imports the shared core, not the extension executable.
 
 Do not use Tuist or root-level SwiftPM commands for validation unless the
 project is intentionally migrated.
@@ -35,10 +39,55 @@ Swift package dependencies are resolved by Xcode:
 The app imports split potassiumChannel modules directly. It should not import an
 old monolithic `potassiumChannel` module name.
 
-The project requires the published potassiumChannel 0.2 release line.
-`Package.resolved` must stay locked to the validated 0.2.0 release unless a
-later compatible package version is adopted and the full validation matrix is
-rerun.
+The project requires potassiumChannel 0.3.0. `Package.resolved` is locked to
+tag `0.3.0` at commit
+`db829f1f2bd8c2113a529c9c521bd5cdfb5ef4dc`. Changing that pin requires the
+adapter evidence matrix and full validation matrix to be rerun.
+
+## Stability Profile
+
+The `Stability` configuration is an opt-in debug-shaped build profile. It uses
+the production app identity, app group, entitlements, and manual-token Keychain
+flow, while adding the `STABILITY` Swift compilation condition. It never reads
+credentials from scheme arguments, environment variables, scripts, or test
+fixtures. The Debug-only UI fixture and all existing unified loggers are
+compiled out/disabled in this profile. Live checks stay outside CI.
+
+List and inspect it with:
+
+```sh
+xcodebuild -list -project potassiumProvider.xcodeproj
+xcodebuild -showBuildSettings \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -configuration Stability \
+  -destination 'platform=macOS'
+```
+
+Run only the profile/JSONL unit slice on macOS:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -destination 'platform=macOS,arch=arm64' \
+  -only-testing:potassiumProviderTests/StabilityDiagnosticsTests
+```
+
+An active run must be created by the Stability Lab command before production
+runtime processes append JSONL. The factory deliberately returns no event
+store when no run exists. Ordinary Debug and Release builds keep SQLite
+activity/conflict history. `Snapshots.sqlite3` remains the store for snapshots,
+anchors, and working-set state in every profile.
+
+`StabilityDiagnosticsTests` covers run-manifest/pointer selection, concurrent
+coordinators, a real subprocess writer, two in-process writers, interrupted
+tail recovery, complete-line corruption, capacity refusal, symlink rejection,
+post-finish append refusal, retention, redaction, paging/filtering, statistics,
+cross-store observation, tombstone clear/domain removal, export, and factory
+selection. Its subprocess check uses Xcode's bundled Python executable only to
+act as an independent POSIX-locking process; production code has no Python or
+script dependency.
 
 ## Commands
 

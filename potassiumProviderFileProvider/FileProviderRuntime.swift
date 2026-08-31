@@ -178,9 +178,9 @@ struct FileProviderRuntime: Sendable {
 
     static func makeEventStore() -> (any KDriveProviderEventStoring)? {
         do {
-            return try KDriveProviderEventSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+            return try ProviderEventStoreFactory.makeDefault()
         } catch {
-            FileProviderLog.runtime.error("failed to open provider event store in app group: \(error.localizedDescription, privacy: .public)")
+            FileProviderLog.runtime.error("failed to open provider event store in app group")
             return nil
         }
     }

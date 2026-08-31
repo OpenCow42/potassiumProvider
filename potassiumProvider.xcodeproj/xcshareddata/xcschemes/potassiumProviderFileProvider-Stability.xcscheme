@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion="2650" wasCreatedForAppExtension="YES" version="2.0">
+   <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES" buildArchitectures="Automatic">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="D10000612FFB000000000001" BuildableName="potassiumProviderFileProvider.appex" BlueprintName="potassiumProviderFileProvider" ReferencedContainer="container:potassiumProvider.xcodeproj"/>
+         </BuildActionEntry>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="C09842852FF847AD00CB8B7E" BuildableName="potassiumProvider.app" BlueprintName="potassiumProvider" ReferencedContainer="container:potassiumProvider.xcodeproj"/>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction buildConfiguration="Stability" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES" shouldAutocreateTestPlan="YES"/>
+   <LaunchAction buildConfiguration="Stability" selectedDebuggerIdentifier="" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.PosixSpawn" launchStyle="0" askForAppToLaunch="Yes" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="NO" launchAutomaticallySubstyle="2">
+      <BuildableProductRunnable runnableDebuggingMode="0">
+         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="C09842852FF847AD00CB8B7E" BuildableName="potassiumProvider.app" BlueprintName="potassiumProvider" ReferencedContainer="container:potassiumProvider.xcodeproj"/>
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction buildConfiguration="Stability" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES" askForAppToLaunch="Yes" launchAutomaticallySubstyle="2">
+      <BuildableProductRunnable runnableDebuggingMode="0">
+         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="C09842852FF847AD00CB8B7E" BuildableName="potassiumProvider.app" BlueprintName="potassiumProvider" ReferencedContainer="container:potassiumProvider.xcodeproj"/>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction buildConfiguration="Stability"/>
+   <ArchiveAction buildConfiguration="Stability" revealArchiveInOrganizer="YES"/>
+</Scheme>

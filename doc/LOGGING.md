@@ -1,16 +1,74 @@
 # Logging
 
-`potassiumProvider` uses three complementary diagnostic layers:
+`potassiumProvider` uses complementary diagnostic layers selected by build
+profile:
 
 - Unified logging (`OSLog`) for developer diagnostics in the app and File
   Provider extension.
 - `Snapshots.sqlite3` activity/conflict rows for the user-visible Activities
   timeline and retained support context.
 - A redacted JSON support-log export created from the Activities tab.
+- In the opt-in `Stability` profile only, one versioned JSONL run bundle in the
+  app-group container for activity, conflict, callback, and API-shape evidence.
 
 These layers are deliberately separate. Unified logging can be more granular
-for local development, while the SQLite trail and exported document only carry
+for local development, while durable trails and exported documents carry only
 the small set of sanitized fields that are useful to users and support.
+
+## Stability Run Bundles
+
+`Stability` defines the `STABILITY` compilation condition on the app, shared
+core, File Provider, actions, unit-test, and UI-test targets. It does not change
+bundle identifiers, app groups, entitlements, or the Keychain credential flow.
+The standard profile continues to store activity and conflict history in
+`Snapshots.sqlite3`.
+
+All existing unified `Logger` instances resolve to `OSLog.disabled` in
+Stability. The older debug log call sites include raw identifiers and localized
+error descriptions, so enabling them would violate the Stability privacy
+contract. Debug and Release keep unified logging; Stability uses only the
+closed-schema recorder. The environment-driven Debug UI fixture is also
+compiled out of Stability, even though the profile otherwise inherits Debug
+settings.
+
+After the operator explicitly starts a Stability run, every production event
+store construction site selects `KDriveProviderEventJSONLStore`. Snapshot,
+sync-anchor, enumerator, and working-set state still use SQLite; their table
+creation is intentionally independent from event-table creation. With no
+active run, the Stability factory returns no durable event recorder rather than
+falling back to SQLite or inventing a run.
+
+Each run is a complete directory under the app-group `StabilityRuns/runs`
+folder. `run.json` is exclusive-created and immutable; `events.jsonl` is
+append-only; `summary.json` marks completion. Empty
+`api-observations.jsonl` and `assertions.jsonl` files reserve the final bundle
+shape until later milestones add their typed append APIs. The
+`current-run.json` pointer contains only a random run UUID. Retention keeps the
+newest 20 completed bundles within 250 MiB and never prunes the active or an
+incomplete bundle. The active event file also rejects an append before it would
+exceed 250 MiB, preserving a replayable run that the operator can finish.
+
+JSONL writers use an advisory exclusive lock, one complete encoded record per
+write transaction, and `fsync`; readers take a shared lock. A second lifecycle
+lock serializes active-run selection, finish, append/read, and retention across
+the app, File Provider, and actions processes. Run paths reject symlinks and
+non-regular files, use owner-only permissions, and synchronize file and
+directory transitions. Replay ignores only an unterminated final record, which
+represents an interrupted append; the next writer truncates that tail before
+appending. A corrupt complete record is surfaced. Activity paging, statistics,
+observation, clear, domain removal, and support export use replay through the
+existing protocols; clear/removal are append-only tombstones.
+
+The Stability serializer removes names, paths, item and request identifiers,
+drive identifiers, recovery strings, staged paths, and arbitrary error domains
+before bytes reach the log. Domain identifiers become run-salted SHA-256
+pseudonyms, which remain stable only within that run. Callback/API diagnostics
+use closed enums for operation, phase,
+field/option shape, route template, and error/status class. They may include a
+random correlation UUID, bounded duration/progress values, booleans describing
+cursor/anchor state, and numeric status/error codes. They never include raw
+URLs, headers, request or response bodies, account identifiers, share links, or
+file data.
 
 ## Categories And Correlation
 
@@ -39,11 +97,11 @@ optional `correlationID`, `durationMilliseconds`, `networkOperation`,
 `httpStatusCode`, and `remoteRequestID` fields. Existing databases migrate these
 columns as nullable values.
 
-`KDriveProviderEventSQLiteStore` retains the newest 5,000 activity rows by
-default. This applies only to activity rows: unresolved, blocked, and failed
-conflict rows remain until a user action or domain cleanup removes them. The
-existing Clear action removes all activity rows and automatically resolved
-conflicts, preserving unresolved conflict state.
+In the standard profile, `KDriveProviderEventSQLiteStore` retains the newest
+5,000 activity rows by default. In Stability, whole completed run bundles are
+retained instead. In both profiles unresolved, blocked, and failed conflict
+events remain visible, and Clear removes activity plus automatically resolved
+conflicts while preserving unresolved conflict state.
 
 The Activities screen pages over this retained history in batches of 50. This
 only limits UI decoding and rendering; it does not reduce retention or support

@@ -7,6 +7,13 @@ potassiumChannel's typed `KDriveService` and request builders.
 Action-only operations are separated behind `KDriveContextActionProviding` so
 the existing File Provider mutation protocol remains unchanged.
 
+The version-pinned comparison sources, live-result status, adapter decisions,
+tests, and truth-table impact are maintained in
+[`STABILITY_LOOP_AUDIT.md`](STABILITY_LOOP_AUDIT.md). The current dependency is
+potassiumChannel 0.3.0 at
+`db829f1f2bd8c2113a529c9c521bd5cdfb5ef4dc`; GPL client implementations are
+behavioral evidence only and are not copied.
+
 ## Operation Map
 
 | Provider operation | Local method | potassiumChannel call | Visible endpoint |
@@ -95,16 +102,20 @@ Trash listing uses:
 
 File create uses `UploadKDriveFileOptions` with:
 
-- `conflict: "version"`
+- `conflict: "rename"` in the production mutation coordinator, preserving the
+  server-created item when a name collision exists
 - `directoryId: parentID`
 - `fileName`
 - optional `lastModifiedAt`
+- deterministic `clientToken`, SHA-256 `totalChunkHash`, and `with=etag`
 
 File replace uses `UploadKDriveFileOptions` with:
 
-- `conflict: "version"`
-- `fileId`
+- stable `fileId`
+- required `If-Match` ETag
+- deterministic `clientToken`, SHA-256 `totalChunkHash`, and `with=etag`
 - optional `lastModifiedAt`
+- no create-conflict option, directory ID, or filename
 
 Move uses `MoveKDriveFileOptions` with:
 

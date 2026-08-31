@@ -17,7 +17,7 @@ struct ConflictLogView: View {
         actionDependencies: ProviderActivityActionDependencies? = nil
     ) {
         let viewModel = ConflictLogViewModel(eventStore: eventStore)
-        #if DEBUG
+        #if DEBUG && !STABILITY
         viewModel.actionErrorMessage = ProviderUITestFixture.initialActivityActionError()
         self.actionDependencies = actionDependencies
             ?? ProviderUITestFixture.activityActionDependencies()

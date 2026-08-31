@@ -116,8 +116,9 @@ audited truth table takes precedence and the inconsistency must be corrected.
 
 ## Legacy Plaintext Audit Status
 
-- Last source audit: 2026-08-13
-- Audited baseline: `codex/conflict-resolution-hardening` working tree
+- Last source audit: 2026-08-31
+- Audited baseline: `codex/file-provider-stability-loop` milestone 1 working
+  tree, retaining the 2026-08-13 mutation decisions
 - Validation:
   - `potassiumChannel`: `swift test` — 559 tests passed
   - macOS: `KDriveMutationCoordinatorTests` — 25 tests passed (the selected
@@ -147,6 +148,17 @@ audited truth table takes precedence and the inconsistency must be corrected.
     visionOS Simulator using the `potassiumProviderTests` target. It covers
     initial and continued advanced listings, ETag exclusion, and propagation
     of an unexpected 422 without changing listing protocols.
+  - 2026-08-31 Stability diagnostics validation passed thirteen focused macOS
+    tests, including a real subprocess writer, interrupted-tail recovery,
+    tombstone parity, unresolved-conflict preservation, paging/statistics,
+    cross-store observation, export/redaction, and completed-only retention.
+    In Stability only, activity and conflict evidence moves from SQLite to a
+    redacted append-only JSONL run bundle. Snapshot, anchor, enumerator, and
+    working-set state remains SQLite. Clear/domain removal use tombstones and
+    retain unresolved, blocked, and failed conflict events exactly as the
+    standard event-store contract requires. Uninstall cleanup removes only
+    local event/snapshot state through the selected store; no remote mutation,
+    conflict decision, staged-content cleanup, or hard purge was added.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change
@@ -173,8 +185,11 @@ The table is derived from these implementation boundaries:
   maps provider and API failures to File Provider errors.
 - [`FileProviderEnumerator`](../potassiumProviderFileProvider/FileProviderEnumerator.swift)
   validates listing, cursor, and snapshot state.
-- [`ProviderEventStore`](../PotassiumProviderCore/ProviderEventStore.swift) and
-  the Activities UI record conflict state but do not replay failed mutations.
+- [`ProviderEventStore`](../PotassiumProviderCore/ProviderEventStore.swift),
+  [`StabilityDiagnostics`](../PotassiumProviderCore/StabilityDiagnostics.swift),
+  and the Activities UI record conflict state but do not replay failed
+  mutations. Stability serialization removes private item/account context while
+  retaining the decision state needed for this register.
 
 Apple's replicated File Provider contract is also normative:
 

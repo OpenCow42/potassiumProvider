@@ -2078,7 +2078,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private static func makeDefaultEventStore() -> (any KDriveProviderEventStoring)? {
-        try? KDriveProviderEventSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+        try? ProviderEventStoreFactory.makeDefault()
     }
 
     private func trimmed(_ value: String) -> String {

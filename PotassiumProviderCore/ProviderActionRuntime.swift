@@ -50,9 +50,7 @@ public struct ProviderActionRuntime: Sendable {
         }
 
         let service = PotassiumKDriveService(bearerToken: token.accessToken)
-        let eventStore = try? KDriveProviderEventSQLiteStore(
-            appGroupIdentifier: ProviderConstants.appGroupIdentifier
-        )
+        let eventStore = try? ProviderEventStoreFactory.makeDefault()
         let encryptedVault: (any EncryptedVaultProviding)?
         if configuration.encryptionMode == .opaqueVaultV2 {
             guard let vaultConfiguration = configuration.vault else {
