@@ -24,8 +24,8 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | `c348d0c` |
 | Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | `871c04d` |
 | Finder Accessibility runner and checkpoints | implemented; reviewer repairs applied | current signed Stability test graph built with Finder-only entitlements; all 33 focused cases reported passed in both scheme executions; standard macOS, iOS Simulator, and generic visionOS app graphs built | all actionable findings fixed | `347b2a3` |
-| API evidence matrix and adapter corrections | implemented; reviewer repairs applied | signed Stability graph built; final eight-case API slice reported 16/16 passes; Xcode then hung only in result-log/coverage finalization | final bounded pass: no remaining blocker | pending |
-| Cross-platform completion validation | pending | pending | pending | pending |
+| API evidence matrix and adapter corrections | implemented; reviewer repairs applied | signed Stability graph built; final eight-case API slice reported 16/16 passes; Xcode then hung only in result-log/coverage finalization | final bounded pass: no remaining blocker | `c61cf6e` |
+| Cross-platform completion validation | complete; no live checks run | macOS, iPhone 17 iOS 26.5 Simulator, Apple Vision Pro visionOS 26.5 Simulator test graphs built; generic visionOS built; each full unit-test execution emitted only passes before Xcode's post-test finalization hang | final evidence pass: no remaining finding | pending |
 
 ## Architecture Integration Checklist
 
@@ -220,7 +220,8 @@ explicitly supplies a development account and lab-owned non-root folder.
 - Corrected five discrepancies: modeled inherited share access and rejected
   unknown access values; explicitly encoded a cleared share expiration as JSON
   null while retaining the pinned typed route; rejected direct uploads above
-  `1_000_000_000` bytes before request construction; mapped 408/429 to retryable
+  `1_000_000_000` bytes before callback buffering or request construction;
+  mapped 408/429 to retryable
   server-unreachable recovery while retaining only safe parsed delta seconds;
   and sent an explicit extension-preserving duplicate name instead of `{}`.
 - A fresh signed Stability `build-for-testing` completed successfully. The
@@ -236,6 +237,44 @@ explicitly supplies a development account and lab-owned non-root folder.
 - `git diff --check` and the credential/private-value scan were rerun after the
   final repairs. No live API request, File Provider mutation, or remote cleanup
   was performed.
+
+## 2026-09-01 — Cross-platform completion validation
+
+All commands removed the inherited Infomaniak and App Store Connect credential
+variables. The four build commands exited successfully:
+
+```sh
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild build-for-testing -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/potassium-final-macos COMPILER_INDEX_STORE_ENABLE=NO
+
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild build-for-testing -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -derivedDataPath /tmp/potassium-final-ios COMPILER_INDEX_STORE_ENABLE=NO
+
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild build -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'generic/platform=visionOS' -derivedDataPath /tmp/potassium-final-vision-device COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild build-for-testing -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro' -derivedDataPath /tmp/potassium-final-vision COMPILER_INDEX_STORE_ENABLE=NO
+```
+
+The full Swift unit-test target was then run without rebuilding on each hosted
+destination. Output was filtered only for terminal test/error lines:
+
+```sh
+set -o pipefail
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild test-without-building -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/potassium-final-macos COMPILER_INDEX_STORE_ENABLE=NO -only-testing:potassiumProviderTests 2>&1 | rg --line-buffered "(Test case .* (passed|failed)|Test Suite|Testing started|error:|TEST EXECUTE|BUILD INTERRUPTED)"
+
+set -o pipefail
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild test-without-building -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' -derivedDataPath /tmp/potassium-final-ios COMPILER_INDEX_STORE_ENABLE=NO -only-testing:potassiumProviderTests 2>&1 | rg --line-buffered "(Test case .* (passed|failed)|Test Suite|Testing started|error:|TEST EXECUTE|BUILD INTERRUPTED)"
+
+set -o pipefail
+env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild test-without-building -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro' -derivedDataPath /tmp/potassium-final-vision COMPILER_INDEX_STORE_ENABLE=NO -only-testing:potassiumProviderTests 2>&1 | rg --line-buffered "(Test case .* (passed|failed)|Test Suite|Testing started|error:|TEST EXECUTE|BUILD INTERRUPTED)"
+```
+
+On macOS, iOS Simulator, and visionOS Simulator, the unit-test process exited
+after emitting only passing terminal cases and no failure/error line. Xcode
+17.5 then remained blocked in its result-log/coverage finalization path, so each
+`xcodebuild` wrapper was interrupted and returned 130 without a final `TEST
+EXECUTE SUCCEEDED` marker. This is the sole validation limitation. Existing
+non-fatal Swift Testing/Sendable warnings remain outside this stability-loop
+change. No live credential was consumed, no Finder scenario ran, and no local
+or remote File Provider mutation was performed.
 
 ## API Decision Ledger
 
@@ -300,9 +339,11 @@ typed builders; app fixture names identify local adapter or policy coverage.
    fallback to a typed failure.
 2. Added an app-owned update body that explicitly sends `valid_until: null`
    while retaining potassiumChannel's pinned method, path, response, and client.
-3. Rejected direct create and replacement payloads above one billion bytes
-   before constructing an upload operation. Session uploads remain a documented
-   implementation gap; the provider keeps its staged copy.
+3. Rejected direct create and replacement callback files above one billion
+   bytes before buffering, then rechecked the loaded count before constructing
+   an upload operation. Session uploads remain a documented implementation gap;
+   the callback source stays File Provider-owned but this early path creates no
+   separate conflict-stage copy.
 4. Changed HTTP 408 and 429 recovery to `.serverUnreachable` and retained only
    parsed delta seconds from Retry-After.
 5. Changed duplicate-in-place to send an explicit derived name instead of an

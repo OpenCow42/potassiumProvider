@@ -228,6 +228,14 @@ audited truth table takes precedence and the inconsistency must be corrected.
     credential, network request, or remote mutation was used. `CR-017` through
     `CR-020` record the corrected/mitigated discrepancies; `CR-021` remains open
     because share mutations expose no documented conditional version token.
+  - 2026-09-01 completion validation built the signed Stability test graph and
+    ran the full unit-test target on macOS, iPhone 17 iOS 26.5 Simulator, and
+    Apple Vision Pro visionOS 26.5 Simulator; it also built the generic visionOS
+    graph with signing disabled. Every emitted terminal test case passed with no
+    failure/error line. Xcode 17.5 stalled only after test execution while
+    finalizing result logs/coverage, so the wrappers were interrupted without a
+    final success marker. Exact commands and the limitation are recorded in
+    `STABILITY_LOOP_AUDIT.md`; no live or remote mutation check ran.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change
