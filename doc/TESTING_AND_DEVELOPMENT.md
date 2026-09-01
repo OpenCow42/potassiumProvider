@@ -163,6 +163,90 @@ prevents a diagnostics run from starting during reset and rejects reset while a
 run is active. Live provisioning/reset is opt-in and was not executed by the
 automated test suite.
 
+### Finder Stability runner
+
+The macOS Stability app has a command mode and a wrapper script. Preflight is
+read-only: it loads exactly one compatible lab domain, reads the existing
+manual-token Keychain entry, re-verifies the remote root and marker, checks the
+system File Provider registration and visible-domain consent, and inspects
+Accessibility and Finder Automation permission state.
+Only the macOS Stability configuration carries the hardened-runtime Automation
+entitlement and the sandbox's Finder-scoped Apple Events exception; ordinary
+Debug/Release builds retain their existing entitlements.
+
+```sh
+scripts/run-finder-stability.sh --preflight
+scripts/run-finder-stability.sh --preflight --request-permissions
+scripts/run-finder-stability.sh --recover-stale-run --yes-recover
+```
+
+Exit `0` means ready, `3` is an operator checkpoint for macOS consent or
+variable Finder UI, `2` is a safety rejection, and `1` is a failed run. No
+credential, account ID, root path, or private URL is accepted as an argument,
+environment variable, script fixture, or scheme setting.
+
+Only an operator with an explicitly provisioned development account and the
+verified disposable non-root lab may run the mutation sequence:
+
+```sh
+scripts/run-finder-stability.sh --run --yes-live
+```
+
+The 16 ordered scenarios cover enumeration/change anchors, hydrate, evict,
+download, file/directory creation, edit/upload, rename, move, trash, restore,
+permanent deletion, concurrent preserve-both behavior, cancellation/progress,
+working-set refresh, and supported contextual actions. Stable operations use
+the File Provider-visible root while Finder is opened and raised through
+Accessibility. Restore and permanent deletion keep the verified lab root
+selected and stop without opening the user-global Trash or directing any
+destructive action. Transfer cancellation stops with an exact evicted item
+selected in Finder without starting a download, and contextual actions stop at
+the selected Finder item. These are typed operator
+checkpoints because the localized/OS-owned UI has no stable automation contract;
+the runner never starts a transfer that could outlive the sealed report,
+substitutes a direct remote request, or uses domain-global progress and calls it
+Finder evidence. Before every
+scenario, the runner freshly rechecks the sole saved/system domain plus the
+remote root and marker; drift stops the sequence before that step's mutation.
+Immediately before overwriting, renaming, moving, recycling, or evicting an
+existing visible item, it also resolves the URL and requires the expected File
+Provider item identifier and configured domain. Move binds its destination
+directory too, and eviction reuses the same validated identifier instead of
+resolving again. Before every scenario, the cached lab-root URL must also
+re-resolve as File Provider's root-container identifier in the configured lab
+domain. Item/domain or root-mount drift therefore fails before the local
+mutation.
+OS-owned consent and variable Finder UI are checkpoints, not false product
+failures. A checkpoint terminates that step but independent later scenarios
+remain eligible; a failed step skips all later scenarios. Every
+passing step requires both Finder-visible and freshly fetched
+server-authoritative evidence plus a correlated successful terminal diagnostic
+for the scenario's expected File Provider callback or typed network operation.
+Enumeration requires both item-enumeration and anchor/change terminal evidence,
+and persisted checkpoint reasons must match the scenario that owns them.
+The working-set step must contain a known same-run item; preserve-both must
+resolve two distinct same-step server candidates as Finder-visible items. The
+immutable report, assertion JSONL, and API
+observation JSONL contain only closed enums, correlation IDs, timestamps,
+booleans, and bucketed counts. A runner-owned active run cannot be reused or
+sealed by another coordinator, and each step publishes a private cross-process
+correlation pointer until its terminal result. The report is the evidence
+commit marker; final sealing also verifies the summary's assertion, failure,
+and checkpoint totals against that immutable report. An assembly failure leaves an unsealed active bundle for
+explicit inspection rather than producing a misleading completed summary. The
+runner retains its private owner marker after failure. If the process exits,
+`--recover-stale-run --yes-recover` verifies that PID is gone, writes an
+immutable abandonment marker, clears any stale step pointer, and releases only
+the local active-run lease. It performs no Finder or remote mutation, and an
+abandoned bundle can never be ordinarily finalized.
+
+The Stability scheme never runs this command or its live scenarios from the
+Test action or CI. Unit coverage validates the report model, evidence writer,
+argument safety, owned-run exclusion, stale-owner abandonment, partial-write
+recovery, step correlation, required diagnostic terminals, and checkpoint
+classification using no Keychain credential,
+File Provider registration, Finder action, or network mutation.
+
 ## Commands
 
 List project information:

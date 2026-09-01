@@ -303,36 +303,57 @@ public struct StabilityRunHandle: Codable, Equatable, Sendable {
     public var eventsURL: URL { directoryURL.appendingPathComponent("events.jsonl") }
     public var observationsURL: URL { directoryURL.appendingPathComponent("api-observations.jsonl") }
     public var assertionsURL: URL { directoryURL.appendingPathComponent("assertions.jsonl") }
+    public var finderReportURL: URL { directoryURL.appendingPathComponent("finder-report.json") }
+    public var finderAbandonedURL: URL { directoryURL.appendingPathComponent("finder-abandoned.json") }
+    fileprivate var finderOwnerURL: URL { directoryURL.appendingPathComponent("finder-owner.json") }
+    fileprivate var finderStepURL: URL { directoryURL.appendingPathComponent("finder-step.json") }
     public var summaryURL: URL { directoryURL.appendingPathComponent("summary.json") }
+}
+
+public struct StabilityOwnedRunHandle: Equatable, Sendable {
+    public let run: StabilityRunHandle
+    fileprivate let ownershipToken: UUID
 }
 
 public actor StabilityRunCoordinator {
     public static let defaultMaximumRunCount = 20
     public static let defaultMaximumTotalBytes = 250 * 1_024 * 1_024
+    private static let maximumFinderReportBytes = 1 * 1_024 * 1_024
 
     private let rootDirectoryURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let processIdentifier: Int32
 
-    public init(rootDirectoryURL: URL) {
+    public init(rootDirectoryURL: URL, processIdentifier: Int32 = getpid()) {
         self.rootDirectoryURL = rootDirectoryURL
         self.encoder = Self.makeEncoder()
         self.decoder = Self.makeDecoder()
+        self.processIdentifier = processIdentifier
     }
 
-    public init(appGroupIdentifier: String = ProviderConstants.appGroupIdentifier) throws {
+    public init(
+        appGroupIdentifier: String = ProviderConstants.appGroupIdentifier,
+        processIdentifier: Int32 = getpid()
+    ) throws {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         ) else {
             throw ProviderDiagnosticStoreError.missingAppGroupContainer(appGroupIdentifier)
         }
-        self.init(rootDirectoryURL: containerURL.appendingPathComponent("StabilityRuns", isDirectory: true))
+        self.init(
+            rootDirectoryURL: containerURL.appendingPathComponent("StabilityRuns", isDirectory: true),
+            processIdentifier: processIdentifier
+        )
     }
 
     public func startRun(buildRevision: String? = nil) throws -> StabilityRunHandle {
         try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
         return try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
             if let active = try StabilityRunLocator.activeRunUnlocked(rootDirectoryURL: rootDirectoryURL) {
+                guard SecurePOSIXFile.pathKind(active.finderAbandonedURL) == .missing else {
+                    throw ProviderDiagnosticStoreError.runAbandonedByFinderRunner(active.runID)
+                }
                 return active
             }
 
@@ -358,6 +379,55 @@ public actor StabilityRunCoordinator {
         }
     }
 
+    /// Starts a new run that only its creator may finish. Unlike `startRun`,
+    /// this rejects a pre-existing active run so a command cannot repurpose a
+    /// UI-owned bundle. The owner marker is retained after failures so partial
+    /// evidence cannot be finalized as an ordinary successful run. A separate,
+    /// explicit stale-owner recovery transition preserves an abandonment
+    /// marker before releasing the active-run lease.
+    public func startOwnedRun(buildRevision: String? = nil) throws -> StabilityOwnedRunHandle {
+        guard processIdentifier > 0 else {
+            throw ProviderDiagnosticStoreError.malformedRecord
+        }
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        return try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard try StabilityRunLocator.activeRunUnlocked(rootDirectoryURL: rootDirectoryURL) == nil else {
+                throw ProviderDiagnosticStoreError.runAlreadyActive
+            }
+            try SecurePOSIXFile.ensureDirectory(runsDirectoryURL)
+            let runID = UUID()
+            let token = UUID()
+            let directoryURL = runsDirectoryURL.appendingPathComponent(
+                runID.uuidString.lowercased(),
+                isDirectory: true
+            )
+            try SecurePOSIXFile.createDirectoryExclusively(directoryURL)
+            let handle = StabilityRunHandle(runID: runID, directoryURL: directoryURL)
+            try SecurePOSIXFile.createExclusively(
+                encoder.encode(StabilityRunManifest(runID: runID, buildRevision: buildRevision)),
+                at: handle.manifestURL,
+                permissions: 0o400
+            )
+            for url in [handle.eventsURL, handle.observationsURL, handle.assertionsURL] {
+                try SecurePOSIXFile.createExclusively(Data(), at: url, permissions: 0o600)
+            }
+            try SecurePOSIXFile.createExclusively(
+                encoder.encode(FinderRunOwnership(
+                    token: token,
+                    processIdentifier: processIdentifier
+                )),
+                at: handle.finderOwnerURL,
+                permissions: 0o400
+            )
+            try SecurePOSIXFile.replaceAtomically(
+                encoder.encode(ActiveRunPointer(runID: runID)),
+                at: activeRunURL,
+                permissions: 0o600
+            )
+            return StabilityOwnedRunHandle(run: handle, ownershipToken: token)
+        }
+    }
+
     @discardableResult
     public func finishRun(runID: UUID, summary: StabilityRunSummary) throws -> StabilityRunHandle {
         try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
@@ -368,6 +438,12 @@ public actor StabilityRunCoordinator {
             )
             guard SecurePOSIXFile.isRegularFile(handle.manifestURL) else {
                 throw ProviderDiagnosticStoreError.runNotFound(runID)
+            }
+            guard SecurePOSIXFile.pathKind(handle.finderOwnerURL) == .missing else {
+                throw ProviderDiagnosticStoreError.runOwnedByFinderRunner(runID)
+            }
+            guard SecurePOSIXFile.pathKind(handle.finderAbandonedURL) == .missing else {
+                throw ProviderDiagnosticStoreError.runAbandonedByFinderRunner(runID)
             }
             guard SecurePOSIXFile.pathKind(handle.summaryURL) == .missing else {
                 throw ProviderDiagnosticStoreError.runAlreadyFinished(runID)
@@ -386,8 +462,227 @@ public actor StabilityRunCoordinator {
         }
     }
 
+    @discardableResult
+    public func finishOwnedRun(
+        _ ownedRun: StabilityOwnedRunHandle,
+        summary: StabilityRunSummary
+    ) throws -> StabilityRunHandle {
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        return try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            let handle = ownedRun.run
+            guard try StabilityRunLocator.activeRunUnlocked(
+                rootDirectoryURL: rootDirectoryURL
+            )?.runID == handle.runID,
+                  SecurePOSIXFile.isRegularFile(handle.manifestURL),
+                  SecurePOSIXFile.isRegularFile(handle.finderReportURL),
+                  SecurePOSIXFile.pathKind(handle.finderAbandonedURL) == .missing,
+                  SecurePOSIXFile.pathKind(handle.finderStepURL) == .missing,
+                  SecurePOSIXFile.pathKind(handle.summaryURL) == .missing,
+                  try Self.matchesOwnership(ownedRun, decoder: decoder) else {
+                throw ProviderDiagnosticStoreError.runNotFound(handle.runID)
+            }
+            let report = try decoder.decode(
+                StabilityFinderRunReport.self,
+                from: SecurePOSIXFile.read(
+                    handle.finderReportURL,
+                    maximumBytes: Self.maximumFinderReportBytes
+                )
+            )
+            let expectedAssertionCount = report.stepResults.reduce(into: 0) {
+                $0 += $1.assertions.count
+            }
+            let expectedFailedAssertionCount = report.stepResults.reduce(into: 0) { count, step in
+                count += step.assertions.filter {
+                    if case .failed = $0.outcome { return true }
+                    return false
+                }.count
+            }
+            let expectedCheckpointCount = report.preflightSummary.checkpointed
+                + report.stepSummary.checkpointed
+            guard summary.assertionCount == expectedAssertionCount,
+                  summary.failedAssertionCount == expectedFailedAssertionCount,
+                  summary.checkpointCount == expectedCheckpointCount else {
+                throw ProviderDiagnosticStoreError.finderSummaryMismatch
+            }
+            try SecurePOSIXFile.createExclusively(
+                encoder.encode(summary),
+                at: handle.summaryURL,
+                permissions: 0o400
+            )
+            try SecurePOSIXFile.removeRegularFile(activeRunURL)
+            try SecurePOSIXFile.removeRegularFile(handle.finderOwnerURL)
+            return handle
+        }
+    }
+
+    /// Abandons an incomplete Finder run only after its recorded owner process
+    /// is no longer alive. Evidence remains on disk and is marked incomplete;
+    /// the active pointer is removed so a new run or reversible lab reset can
+    /// proceed. This operation never mutates remote data.
+    @discardableResult
+    public func abandonStaleOwnedRun() throws -> StabilityRunHandle {
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        return try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard let handle = try StabilityRunLocator.activeRunUnlocked(
+                rootDirectoryURL: rootDirectoryURL
+            ) else {
+                throw ProviderDiagnosticStoreError.noStaleFinderRun
+            }
+
+            switch SecurePOSIXFile.pathKind(handle.finderAbandonedURL) {
+            case .regularFile:
+                break
+            case .missing:
+                guard SecurePOSIXFile.isRegularFile(handle.finderOwnerURL) else {
+                    throw ProviderDiagnosticStoreError.noStaleFinderRun
+                }
+                let ownership = try decoder.decode(
+                    FinderRunOwnership.self,
+                    from: SecurePOSIXFile.read(handle.finderOwnerURL, maximumBytes: 4 * 1_024)
+                )
+                guard ownership.processIdentifier > 0 else {
+                    throw ProviderDiagnosticStoreError.malformedRecord
+                }
+                errno = 0
+                if kill(ownership.processIdentifier, 0) == 0 || errno == EPERM {
+                    throw ProviderDiagnosticStoreError.finderOwnerProcessStillRunning
+                }
+                guard errno == ESRCH else {
+                    throw ProviderDiagnosticStoreError.fileSystemError(errno)
+                }
+                try SecurePOSIXFile.createExclusively(
+                    encoder.encode(FinderRunAbandonment()),
+                    at: handle.finderAbandonedURL,
+                    permissions: 0o400
+                )
+            case .directory, .other:
+                throw ProviderDiagnosticStoreError.unsafeFileType
+            }
+
+            switch SecurePOSIXFile.pathKind(handle.finderStepURL) {
+            case .missing:
+                break
+            case .regularFile:
+                try SecurePOSIXFile.removeRegularFile(handle.finderStepURL)
+            case .directory, .other:
+                throw ProviderDiagnosticStoreError.unsafeFileType
+            }
+            switch SecurePOSIXFile.pathKind(handle.finderOwnerURL) {
+            case .missing:
+                break
+            case .regularFile:
+                try SecurePOSIXFile.removeRegularFile(handle.finderOwnerURL)
+            case .directory, .other:
+                throw ProviderDiagnosticStoreError.unsafeFileType
+            }
+            try SecurePOSIXFile.removeRegularFile(activeRunURL)
+            return handle
+        }
+    }
+
+    public func beginFinderStep(
+        ownedRun: StabilityOwnedRunHandle,
+        correlationID: UUID
+    ) throws {
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard try StabilityRunLocator.activeRunUnlocked(
+                rootDirectoryURL: rootDirectoryURL
+            )?.runID == ownedRun.run.runID,
+                  try Self.matchesOwnership(ownedRun, decoder: decoder),
+                  SecurePOSIXFile.pathKind(ownedRun.run.summaryURL) == .missing else {
+                throw ProviderDiagnosticStoreError.runNotFound(ownedRun.run.runID)
+            }
+            guard SecurePOSIXFile.pathKind(ownedRun.run.finderStepURL) == .missing else {
+                throw ProviderDiagnosticStoreError.finderStepAlreadyActive
+            }
+            try SecurePOSIXFile.createExclusively(
+                encoder.encode(FinderStepPointer(correlationID: correlationID)),
+                at: ownedRun.run.finderStepURL,
+                permissions: 0o400
+            )
+        }
+    }
+
+    public func endFinderStep(
+        ownedRun: StabilityOwnedRunHandle,
+        correlationID: UUID
+    ) throws {
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard try Self.matchesOwnership(ownedRun, decoder: decoder),
+                  SecurePOSIXFile.isRegularFile(ownedRun.run.finderStepURL) else {
+                throw ProviderDiagnosticStoreError.runNotFound(ownedRun.run.runID)
+            }
+            let pointer = try decoder.decode(
+                FinderStepPointer.self,
+                from: SecurePOSIXFile.read(
+                    ownedRun.run.finderStepURL,
+                    maximumBytes: 4 * 1_024
+                )
+            )
+            guard pointer.correlationID == correlationID else {
+                throw ProviderDiagnosticStoreError.finderStepCorrelationMismatch
+            }
+            try SecurePOSIXFile.removeRegularFile(ownedRun.run.finderStepURL)
+        }
+    }
+
     public func activeRun() throws -> StabilityRunHandle? {
         try StabilityRunLocator.activeRun(rootDirectoryURL: rootDirectoryURL)
+    }
+
+    /// Assembles closed Finder assertion and API-observation evidence. Each
+    /// file replacement is atomic; the immutable report is the commit marker
+    /// and can be written only once. Run summary sealing remains a separate
+    /// final lifecycle transition.
+    public func writeFinderEvidence(
+        ownedRun: StabilityOwnedRunHandle,
+        report: StabilityFinderRunReport,
+        observations: [StabilityFinderAPIObservation]
+    ) throws {
+        try SecurePOSIXFile.ensureDirectory(rootDirectoryURL)
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            let handle = ownedRun.run
+            guard try StabilityRunLocator.activeRunUnlocked(
+                rootDirectoryURL: rootDirectoryURL
+            )?.runID == handle.runID,
+                  SecurePOSIXFile.isRegularFile(handle.manifestURL),
+                  SecurePOSIXFile.pathKind(handle.summaryURL) == .missing,
+                  SecurePOSIXFile.pathKind(handle.finderStepURL) == .missing,
+                  try Self.matchesOwnership(ownedRun, decoder: decoder) else {
+                throw ProviderDiagnosticStoreError.runNotFound(handle.runID)
+            }
+            guard SecurePOSIXFile.pathKind(handle.finderReportURL) == .missing else {
+                throw ProviderDiagnosticStoreError.finderEvidenceAlreadyFinalized(handle.runID)
+            }
+            try Self.validateFinderObservations(observations, report: report)
+            try Self.validateFinderDiagnostics(
+                try Self.readDiagnosticEvents(from: handle.eventsURL, decoder: decoder),
+                report: report
+            )
+
+            let assertionRecords = report.preflightResults.map {
+                FinderAssertionRecord.preflight($0)
+            } + report.stepResults.map {
+                FinderAssertionRecord.step($0)
+            }
+            try SecurePOSIXFile.replaceAtomically(
+                try Self.jsonLines(assertionRecords, encoder: encoder),
+                at: handle.assertionsURL,
+                permissions: 0o400
+            )
+            try SecurePOSIXFile.replaceAtomically(
+                try Self.jsonLines(observations, encoder: encoder),
+                at: handle.observationsURL,
+                permissions: 0o400
+            )
+            try SecurePOSIXFile.createExclusively(
+                encoder.encode(report),
+                at: handle.finderReportURL,
+                permissions: 0o400
+            )
+        }
     }
 
     /// Holds the cross-process run lifecycle lock for the full duration of a
@@ -492,6 +787,131 @@ public actor StabilityRunCoordinator {
         return size
     }
 
+    private static func validateFinderObservations(
+        _ observations: [StabilityFinderAPIObservation],
+        report: StabilityFinderRunReport
+    ) throws {
+        let steps = Dictionary(uniqueKeysWithValues: report.stepResults.map {
+            ($0.scenario, $0)
+        })
+        var seen: Set<FinderObservationKey> = []
+        for observation in observations {
+            let key = FinderObservationKey(
+                scenario: observation.scenario,
+                phase: observation.phase
+            )
+            guard seen.insert(key).inserted else {
+                throw StabilityFinderEvidenceValidationError.duplicateObservation(
+                    scenario: observation.scenario,
+                    phase: observation.phase
+                )
+            }
+            guard steps[observation.scenario]?.correlationID == observation.correlationID else {
+                throw StabilityFinderEvidenceValidationError.observationCorrelationMismatch(
+                    observation.scenario
+                )
+            }
+        }
+
+        for step in report.stepResults where step.outcome == .passed {
+            for phase in [
+                StabilityFinderAPIObservationPhase.baseline,
+                .postcondition,
+            ] {
+                guard let observation = observations.first(where: {
+                    $0.scenario == step.scenario && $0.phase == phase
+                }) else {
+                    throw StabilityFinderEvidenceValidationError.missingPassedObservation(
+                        scenario: step.scenario,
+                        phase: phase
+                    )
+                }
+                guard observation.outcome == .passed else {
+                    throw StabilityFinderEvidenceValidationError.invalidPassedObservation(
+                        step.scenario
+                    )
+                }
+            }
+        }
+    }
+
+    private static func readDiagnosticEvents(
+        from eventsURL: URL,
+        decoder: JSONDecoder
+    ) throws -> [ProviderDiagnosticEvent] {
+        let data = try LockedJSONLFile.read(
+            from: eventsURL,
+            maximumBytes: defaultMaximumTotalBytes
+        )
+        let endsInNewline = data.last == 0x0A || data.isEmpty
+        let lines = data.split(separator: 0x0A, omittingEmptySubsequences: false)
+        var diagnostics: [ProviderDiagnosticEvent] = []
+        for (offset, line) in lines.enumerated() where line.isEmpty == false {
+            if endsInNewline == false, offset == lines.count - 1 {
+                break
+            }
+            let record: JSONLRecord
+            do {
+                record = try decoder.decode(JSONLRecord.self, from: Data(line))
+            } catch {
+                throw ProviderDiagnosticStoreError.corruptRecord(line: offset + 1)
+            }
+            guard record.schemaVersion == JSONLRecord.schemaVersion else {
+                throw ProviderDiagnosticStoreError.unsupportedSchemaVersion(record.schemaVersion)
+            }
+            if case .diagnostic(let event) = try record.payload {
+                diagnostics.append(event)
+            }
+        }
+        return diagnostics
+    }
+
+    private static func validateFinderDiagnostics(
+        _ diagnostics: [ProviderDiagnosticEvent],
+        report: StabilityFinderRunReport
+    ) throws {
+        for step in report.stepResults where step.outcome == .passed {
+            guard let requirement = step.scenario.diagnosticRequirement,
+                  requirement.operationGroups.isEmpty == false,
+                  requirement.operationGroups.allSatisfy({ operationGroup in
+                      operationGroup.isEmpty == false && diagnostics.contains(where: {
+                          $0.correlationID == step.correlationID
+                              && $0.source == requirement.source
+                              && operationGroup.contains($0.operation)
+                              && $0.phase == .completed
+                      })
+                  }) else {
+                throw StabilityFinderEvidenceValidationError.missingDiagnosticEvidence(
+                    step.scenario
+                )
+            }
+        }
+    }
+
+    private static func jsonLines<T: Encodable>(
+        _ values: [T],
+        encoder: JSONEncoder
+    ) throws -> Data {
+        var data = Data()
+        for value in values {
+            data.append(try encoder.encode(value))
+            data.append(0x0A)
+        }
+        return data
+    }
+
+    private static func matchesOwnership(
+        _ ownedRun: StabilityOwnedRunHandle,
+        decoder: JSONDecoder
+    ) throws -> Bool {
+        guard SecurePOSIXFile.isRegularFile(ownedRun.run.finderOwnerURL) else { return false }
+        let ownership = try decoder.decode(
+            FinderRunOwnership.self,
+            from: SecurePOSIXFile.read(ownedRun.run.finderOwnerURL, maximumBytes: 4 * 1_024)
+        )
+        return ownership.token == ownedRun.ownershipToken
+    }
+
     fileprivate static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -510,6 +930,37 @@ private struct ActiveRunPointer: Codable {
     let runID: UUID
 }
 
+private struct FinderRunOwnership: Codable {
+    let token: UUID
+    let processIdentifier: Int32
+}
+
+private struct FinderRunAbandonment: Codable {
+    static let schemaVersion = 1
+
+    let schemaVersion: Int
+    let abandonedAt: Date
+
+    init(abandonedAt: Date = Date()) {
+        self.schemaVersion = Self.schemaVersion
+        self.abandonedAt = abandonedAt
+    }
+}
+
+private struct FinderStepPointer: Codable {
+    let correlationID: UUID
+}
+
+private struct FinderObservationKey: Hashable {
+    let scenario: StabilityFinderScenario
+    let phase: StabilityFinderAPIObservationPhase
+}
+
+private enum FinderAssertionRecord: Codable {
+    case preflight(StabilityFinderPreflightResult)
+    case step(StabilityFinderStepResult)
+}
+
 public enum StabilityRunLocator {
     public static func activeRun(rootDirectoryURL: URL) throws -> StabilityRunHandle? {
         switch SecurePOSIXFile.pathKind(rootDirectoryURL) {
@@ -525,6 +976,31 @@ public enum StabilityRunLocator {
             operation: LOCK_SH
         ) {
             try activeRunUnlocked(rootDirectoryURL: rootDirectoryURL)
+        }
+    }
+
+    public static func activeFinderStepCorrelation(
+        rootDirectoryURL: URL
+    ) throws -> UUID? {
+        guard SecurePOSIXFile.pathKind(rootDirectoryURL) == .directory else { return nil }
+        return try SecurePOSIXFile.withLock(
+            at: rootDirectoryURL.appendingPathComponent("coordinator.lock"),
+            operation: LOCK_SH
+        ) {
+            guard let run = try activeRunUnlocked(rootDirectoryURL: rootDirectoryURL) else {
+                return nil
+            }
+            switch SecurePOSIXFile.pathKind(run.finderStepURL) {
+            case .missing:
+                return nil
+            case .regularFile:
+                return try StabilityRunCoordinator.makeDecoder().decode(
+                    FinderStepPointer.self,
+                    from: SecurePOSIXFile.read(run.finderStepURL, maximumBytes: 4 * 1_024)
+                ).correlationID
+            case .directory, .other:
+                throw ProviderDiagnosticStoreError.unsafeFileType
+            }
         }
     }
 
@@ -1323,6 +1799,19 @@ private enum SecurePOSIXFile {
 }
 
 public enum ProviderEventStoreFactory {
+    public static func activeFinderStepCorrelation(
+        appGroupIdentifier: String = ProviderConstants.appGroupIdentifier
+    ) throws -> UUID? {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) else {
+            throw ProviderDiagnosticStoreError.missingAppGroupContainer(appGroupIdentifier)
+        }
+        return try StabilityRunLocator.activeFinderStepCorrelation(
+            rootDirectoryURL: containerURL.appendingPathComponent("StabilityRuns", isDirectory: true)
+        )
+    }
+
     public static func makeDefault(
         profile: ProviderRuntimeProfile = .current,
         appGroupIdentifier: String = ProviderConstants.appGroupIdentifier
@@ -1372,6 +1861,14 @@ public enum ProviderDiagnosticStoreError: Error, Equatable, LocalizedError, Send
     case runNotFound(UUID)
     case runAlreadyFinished(UUID)
     case runAlreadyActive
+    case runOwnedByFinderRunner(UUID)
+    case runAbandonedByFinderRunner(UUID)
+    case finderOwnerProcessStillRunning
+    case noStaleFinderRun
+    case finderEvidenceAlreadyFinalized(UUID)
+    case finderSummaryMismatch
+    case finderStepAlreadyActive
+    case finderStepCorrelationMismatch
     case fileSystemError(Int32)
 
     public var errorDescription: String? {
@@ -1400,6 +1897,22 @@ public enum ProviderDiagnosticStoreError: Error, Equatable, LocalizedError, Send
             "The Stability run is already complete."
         case .runAlreadyActive:
             "A Stability run is active."
+        case .runOwnedByFinderRunner:
+            "The active Stability run is owned by the Finder runner."
+        case .runAbandonedByFinderRunner:
+            "The Stability run was abandoned by the Finder runner and cannot be finalized."
+        case .finderOwnerProcessStillRunning:
+            "The Stability Finder run owner process is still running."
+        case .noStaleFinderRun:
+            "There is no stale Stability Finder run to recover."
+        case .finderEvidenceAlreadyFinalized:
+            "The Stability Finder evidence is already finalized."
+        case .finderSummaryMismatch:
+            "The Stability Finder summary does not match its immutable report."
+        case .finderStepAlreadyActive:
+            "A Stability Finder step is already active."
+        case .finderStepCorrelationMismatch:
+            "The active Stability Finder step correlation does not match."
         case .fileSystemError(let code):
             "The Stability event file operation failed with errno \(code)."
         }

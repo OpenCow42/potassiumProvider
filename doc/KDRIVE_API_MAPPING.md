@@ -82,10 +82,20 @@ an account-ownership claim. Provisioning then verifies
 the explicit drive-root metadata, creates one direct child, uploads a marker
 with `conflict=error`, and re-reads the root and marker. Reset fully paginates
 ordinary listing and uses only `trashItem`; it re-reads ownership evidence and
-each target's parent immediately before every trash request. The lab never
+each target's parent immediately before every trash request. Lab reset never
 calls `deleteTrashedItem` and never removes its root or marker.
 The locally persisted random marker plus exact remote root/marker identity is
 the Stability Lab ownership proof.
+
+The separately invoked Finder Stability run never calls `deleteTrashedItem`
+directly. After `--yes-live` and the same exact lab/marker preflight, its restore
+and permanent-delete scenarios retain the verified lab-root selection and emit
+typed operator checkpoints without opening the user-global Trash or directing
+a destructive action. This avoids both an irreversible, unconditional remote
+request and presenting unrelated Trash contents as lab-scoped UI. `CR-013` remains
+open for the product's existing permanent-delete callback; the runner does not
+claim to automate that unresolved risk, and CI/preflight never runs the live
+sequence.
 
 Binary operations are exposed to File Provider as `KDriveTransferOperation`.
 It preserves potassiumChannel's live Foundation progress, shared async result,

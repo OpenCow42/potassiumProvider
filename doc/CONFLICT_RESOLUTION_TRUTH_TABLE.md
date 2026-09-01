@@ -185,6 +185,35 @@ audited truth table takes precedence and the inconsistency must be corrected.
     No live account or remote mutation was used for this validation. The final
     signed hosted command exited 0 with `TEST EXECUTE SUCCEEDED` and a finalized
     result bundle.
+  - 2026-09-01 Finder-runner implementation added a 16-step validated report,
+    immutable closed-schema assertions/API observations, read-only permission
+    preflight, and an explicit `--yes-live` command gate. Automated validation
+    uses only model, evidence-writer, parser, and checkpoint tests; it reads no
+    credential and performs no Finder or remote action. A live run was not
+    performed. Saved/system domain plus root/marker safety is rechecked before
+    every scenario. The runner never calls permanent deletion directly: restore
+    and permanent-delete scenarios retain the verified lab-root selection and
+    checkpoint without opening the user-global Trash or directing a destructive
+    action. Cancellation leaves the exact evicted item selected in Finder and
+    checkpoints without starting a transfer that could outlive the report;
+    contextual actions likewise checkpoint rather than invoking the remote API.
+    Existing-item mutation URLs (including the move destination) must resolve
+    to their expected File Provider item and configured domain immediately
+    before mutation; eviction reuses that single validated identifier. The
+    cached lab-root URL is rebound as the configured domain's root container
+    after baseline pagination and immediately before scenario execution.
+    Enumeration requires both item-listing and anchor/change terminal evidence,
+    and checkpoint reasons are scenario-bound.
+    Final sealing verifies all assertion/failure/checkpoint totals against the
+    immutable report. The current signed Stability test graph, including its
+    Stability-only Finder Automation entitlements, built successfully and all
+    33 focused Swift Testing cases reported passed in both scheme executions;
+    Xcode then stalled while finalizing its result log/coverage, so the runner
+    was terminated without a final `TEST EXECUTE SUCCEEDED` marker. The iPhone
+    17 iOS 26.5 Simulator and generic visionOS Stability app/extension graphs
+    also built successfully.
+    No live credential, Finder action, or remote mutation was used.
+    `CR-013` stays open for the product callback.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change
@@ -265,6 +294,9 @@ ETags fail closed into preserve-both or `.failOnConflict` behavior.
 | Marker collision or incomplete provisioning | Marker upload/verification fails | Stop, retain any created root, and do not register it or issue compensating deletion | No additional mutation after failure | Low data-loss risk; possible empty/orphaned lab root. | Verify the marker and remove the orphan manually from the dedicated account. |
 | Reset lab contents | Exact confirmation; root is non-root/top-level and has matching created-and-persisted ownership evidence; marker and registered lab domain match; complete bounded listing | Exclude root and marker; before each action re-fetch root, marker, and target parent; call reversible trash only for a still-immediate child | Trashes verified immediate children | Low. There remains an unavoidable request-time race after the final metadata fetch, but trash is reversible and the target stable ID was inside the verified lab root at preflight. | Restore an item from kDrive trash if the reset intent was wrong. |
 | Missing/ordinary/unknown domain, wrong-profile runtime, encrypted domain, stale marker/root, partial/cyclic listing, moved target, or active run | Any safety predicate fails; registration is re-queried and the run lifecycle lock is held through reset | Reject before the affected mutation; never hard purge or permanently delete | No | Safe fail-closed behavior. | Use the documented dry-run plus safe uninstall path, repair registration/marker state, then retry. |
+| Finder Stability existing-item mutation | Explicit `--yes-live`; exact lab preflight is fresh; the user-visible URL resolves once immediately before the mutation to the expected stable item ID and configured domain, and that validated identifier is reused for eviction. A move also resolves its destination directory to the expected stable ID and domain. | Perform the scenario mutation only while both bindings match; otherwise fail the step before changing local or remote state. | Edit, rename, move, and trash use the normal File Provider callback path. Eviction is local only. Preserve-both setup deliberately combines a direct conditional remote replacement with a bound local write. | Low. Stable-ID/domain binding closes same-path replacement drift; a narrow request-time race remains after the final lookup, while trash remains reversible and content/version conflicts retain the existing preserve-both policy. | Correct the lab/Finder state and retry. Restore trash or compare preserved versions if a later callback fails. |
+| Finder Stability root-targeted create | Explicit `--yes-live`; immediately before each scenario the cached visible root URL still resolves as the File Provider root-container identifier in the configured lab domain, in addition to fresh saved/registered/remote lab evidence | Create the scenario file or directory only below that bound root URL; otherwise fail before the local write | Normal File Provider create callback path | Low. The repeated root-container/domain binding prevents a stale cached mount path from redirecting a write outside the lab; a narrow request-time race remains after resolution. | Repair File Provider registration/consent or the lab mount, then retry. |
+| Finder Stability restore/permanent-delete scenarios | Explicit `--yes-live`; exact saved/registered lab/root/marker preflight is fresh before every scenario; checkpoint reason must match the scenario | Keep the verified lab root selected and record a typed checkpoint. Never open the user-global Trash, direct a destructive action, call restore/permanent-delete APIs directly, or claim callback evidence. | No runner mutation | Safe runner boundary; the product's unconditional permanent-delete callback still has the high-impact request-time race tracked by `CR-013`. | Use a separately designed stable-ID, domain-scoped workflow before collecting restore/permanent-delete evidence; the current runner intentionally does not instruct the operator to act. |
 
 | Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
 | --- | --- | --- | --- | --- | --- |

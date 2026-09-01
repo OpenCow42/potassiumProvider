@@ -22,8 +22,8 @@ explicitly supplies a development account and lab-owned non-root folder.
 | --- | --- | --- | --- | --- |
 | Stability build profile and JSONL event store | implemented; reviewer fixes applied | 13 macOS `StabilityDiagnosticsTests` passed 2026-08-31 | all actionable findings fixed | `2fd9fbb` |
 | Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | `c348d0c` |
-| Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | this milestone commit |
-| Finder Accessibility runner and checkpoints | pending | pending | pending | pending |
+| Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | `871c04d` |
+| Finder Accessibility runner and checkpoints | implemented; reviewer repairs applied | current signed Stability test graph built with Finder-only entitlements; all 33 focused cases reported passed in both scheme executions; standard macOS, iOS Simulator, and generic visionOS app graphs built | all actionable findings fixed | pending |
 | API evidence matrix and adapter corrections | evidence pinned; implementation pending | pending | pending | pending |
 | Cross-platform completion validation | pending | pending | pending | pending |
 
@@ -162,6 +162,52 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Lab-root ownership | pinned client drive eligibility plus server-authoritative discovery/root/marker metadata | not run | treat discovery as internal membership only; prove lab ownership by this build's random marker plus exact persisted and remote root/marker identity under the explicit drive root | external-drive no-mutation, provision-shape, and marker mismatch tests | adds provisioning predicate without claiming product ownership |
 | Ownership marker | plan requirement; remote upload/download and local configuration contracts | not run | marker payload has no name/path/account data; persist marker file ID separately; require local/remote marker equality and preserve the file | marker round-trip, missing/mismatch/parent/duplicate evidence tests | adds marker collision and preservation rows |
 | Reset mutation | safe cleanup policy and truth-table trash/permanent-delete distinction | not run | exact confirmation, complete bounded pagination, preserve root/marker, fresh TOCTOU checks, trash only, live domain isolation, and a cross-process inactive-run lease | pagination/cursor, reset preservation, target/root/marker/domain drift, and run-lease tests | documents reversible trash and keeps unconditional permanent delete risk separate |
+
+## Milestone 4 Decision Records
+
+| Decision | Evidence | Live result | Chosen behavior | Tests | Truth-table impact |
+| --- | --- | --- | --- | --- | --- |
+| Command and credential boundary | plan invariant; existing manual-token Keychain flow | not run | command accepts preflight/run plus local stale-run recovery, permission prompting only where applicable, explicit `--yes-live`, and explicit `--yes-recover`; context loads the saved manual-token credential from Keychain and never accepts credential/account/root inputs; recovery reads no credential and performs no remote action | parser rejection, recovery dispatch, and closed console-status tests | no mutation semantic change |
+| macOS permission preflight | Apple Accessibility trust and Apple Events target-permission APIs; File Provider registered/visible-domain APIs | not run | Accessibility, Finder Automation, File Provider registration, consent, and lab safety are typed preflights; the macOS Stability configuration alone carries Automation plus Finder-scoped sandbox Apple Events entitlements; OS consent and variable contextual UI return checkpoint exit 3, not product failure | pure permission/consent/checkpoint evaluator and build-setting/entitlements isolation tests | no conflict decision change |
+| Scenario and assertion contract | plan's fixed scenario list; File Provider-visible root; typed remote adapter | not run | execute 16 steps in fixed order; a failure skips later steps while a typed UI checkpoint permits independent later scenarios; checkpoint reasons are restricted to their scenario; every passing step requires Finder-visible plus fresh server-authoritative assertions, correlated baseline/postcondition observations, and scenario-appropriate successful callback/network terminals; enumeration requires both item enumeration and anchor/change evidence; working-set requires a known same-run item and preserve-both requires two distinct Finder-visible candidates; restore/delete/cancel/contextual UI stop at checkpoints instead of substituting direct APIs, starting an unobserved transfer, or using global progress | report order, checkpoint classification, terminal-state, correlation, conjunctive enumeration/anchor evidence, missing/wrong-source diagnostic, round-trip, and immutable-evidence tests | observes mutation/conflict cells without redefining them |
+| Finder evidence privacy and durability | Stability JSONL lifecycle and privacy boundary | not applicable | create an exclusive runner-owned run, publish a private per-step cross-process correlation pointer, replace closed assertion/API JSONL files, exclusive-create one immutable validated report as commit marker, verify caller summary counts against that report, then seal summary; on failure retain owner PID/token and the active unsealed bundle; explicit recovery requires a dead owner, writes immutable abandonment evidence, clears a stale step, and prevents ordinary finalization; store no identifiers, names, paths, URLs, bodies, headers, shares, or bytes in report evidence | prohibited-key/canary, duplicate/missing observation and diagnostic, summary mismatch, ownership exclusion, live/dead owner, stale-step abandonment, partial-write/retry, and one-write tests | diagnostics only |
+| Live mutation scope | exact lab root/marker preflight and explicit operator confirmation | not run | live sequence is outside CI and operates only through the verified non-root lab; recheck sole saved/system domain, remote root/marker, and cached root URL's root-container/configured-domain binding before every scenario; immediately bind every existing-item mutation URL (and move destination) to its expected File Provider item and configured domain, reusing the single validated identifier for eviction; reset stays trash-only; restore and permanent deletion leave the lab root selected and never open global Trash or direct a destructive action; cancellation leaves an exact evicted item selected without starting a download; contextual actions never call the remote API directly | structural model, single-resolution item/domain drift, root/domain drift, and command safety tests; live validation remains operator-only | runner adds no permanent-delete mutation; `CR-013` remains open for the product callback |
+
+## 2026-09-01 — Milestone 4 Finder runner
+
+- Added the Stability-only macOS command and wrapper, Apple permission
+  preflight, File Provider-visible scenario runner, closed 16-step report, and
+  immutable assertion/API evidence assembly. No credential or private value is
+  accepted on the command line or written to the evidence schema.
+- The command exclusively owns its active run, uses a private per-step pointer
+  for cross-process diagnostic correlation, and cannot seal a partial evidence
+  assembly. Restore, permanent-delete, cancellation, and localized contextual
+  UI terminate at explicit Finder/operator checkpoints rather than being
+  represented by direct remote calls, an unobserved transfer, or domain-global
+  progress.
+- Failed/crashed commands retain ownership; explicit local recovery verifies
+  the owner process is gone, writes an abandonment marker, removes a stale
+  correlation pointer, and prevents ordinary summary finalization. Passing
+  steps now require scenario-specific correlated terminal diagnostics;
+  enumeration requires both listing and anchor/change terminals. Checkpoint
+  reasons are scenario-bound, existing mutation URLs and the move destination
+  are rebound to expected File Provider item/domain identities, eviction reuses
+  its single validated identifier, the cached lab root is rebound after
+  baseline pagination and immediately before execution, and summary sealing
+  rejects aggregate counts that differ from the immutable report.
+- The current signed Stability graph completed `build-for-testing`, including
+  the Stability-only Automation and Finder-scoped sandbox Apple Events
+  entitlements. All 33 selected Swift Testing cases reported passed in both
+  scheme executions across three suites. Xcode 17.5 then remained blocked while
+  finalizing its result log and coverage after printing every successful case,
+  so the exact test runner was terminated and did not emit `TEST EXECUTE
+  SUCCEEDED`. The Stability app/extension graph also built successfully for a
+  standard macOS Debug build, the iPhone 17 iOS 26.5 Simulator Stability build,
+  and the generic visionOS Stability build after verifying all Finder-only
+  sources are platform-gated. The final read-only adversarial review found no
+  remaining code defect; its stale-evidence finding was closed by this current
+  rebuild/run. No live credential was read, no Finder operation ran, and no
+  remote mutation was performed during automated validation.
 
 ## API Decision Ledger
 

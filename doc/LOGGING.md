@@ -40,10 +40,18 @@ falling back to SQLite or inventing a run.
 
 Each run is a complete directory under the app-group `StabilityRuns/runs`
 folder. `run.json` is exclusive-created and immutable; `events.jsonl` is
-append-only; `summary.json` marks completion. Empty
-`api-observations.jsonl` and `assertions.jsonl` files reserve the final bundle
-shape until later milestones add their typed append APIs. The
-`current-run.json` pointer contains only a random run UUID. Retention keeps the
+append-only; `summary.json` marks completion. The Finder runner owns a newly
+created run through a private random-token and process-ID coordination file, atomically
+replaces the reserved `api-observations.jsonl` and `assertions.jsonl` files, and
+exclusive-creates immutable `finder-report.json` as their commit marker before
+the run is sealed. Final sealing decodes that report and rejects assertion,
+failure, or checkpoint totals that do not match it. A failed assembly never
+creates `summary.json` and retains
+ownership. Explicit stale-run recovery first proves the recorded owner process
+has exited, creates immutable `finder-abandoned.json`, removes any stale step
+pointer, and only then releases the active-run lease. An abandoned bundle stays
+incomplete and cannot be finalized by the ordinary app lifecycle.
+The `current-run.json` pointer contains only a random run UUID. Retention keeps the
 newest 20 completed bundles within 250 MiB and never prunes the active or an
 incomplete bundle. The active event file also rejects an append before it would
 exceed 250 MiB, preserving a replayable run that the operator can finish.
@@ -78,10 +86,32 @@ copied into diagnostic events. Lab provisioning and reset use the same closed
 typed-network spans as other requests, so only route and option shapes are
 durable.
 
+Finder evidence uses a closed schema: fixed scenario, preflight, assertion,
+checkpoint, failure, skip, and API-observation enums; random correlation UUIDs;
+timestamps and bounded durations; booleans; and bucketed item counts. A passing
+step requires one correlated baseline and one correlated postcondition, both
+Finder-visible and server-authoritative assertions, and a successful terminal
+File Provider callback or typed network diagnostic appropriate to that
+scenario. The enumeration/anchor scenario requires both a completed item
+enumeration and a completed change-enumeration or current-anchor callback;
+unrelated alternatives cannot mask missing anchor evidence. Checkpoint reasons
+are restricted to the four scenarios that deliberately stop for operator UI.
+Checkpointed steps are exempt from terminal diagnostic requirements
+and never masquerade as passing coverage. No evidence field can
+hold a credential, account/drive/item identifier, name, path, URL, header,
+body, share link, response payload, or file bytes. Report assembly validates
+the complete ordered 16-step plan before any immutable Finder report is
+created.
+
 The shared `ProviderDiagnosticSpan` emits one best-effort start and at most one
 terminal event even when completion, failure, and cancellation race. Every
 span has its own stable random span UUID; a separate Task-local random UUID
-correlates nested callback and request spans. Recorder
+correlates nested callback and request spans. During each Finder scenario, a
+private owner-only step pointer makes the same random correlation UUID visible
+to the app, File Provider extension, and action-extension processes; callback
+spans fall back to that value when there is no inherited task-local context.
+The pointer contains no domain, item, name, or path value and is removed before
+evidence finalization. Recorder
 failure never changes an API result. A terminal append is attempted before the
 system callback so finishing a run cannot silently turn a completed callback
 into start-only evidence.

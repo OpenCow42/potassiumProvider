@@ -239,8 +239,18 @@ public actor ProviderDiagnosticSpan {
         optionShape: [ProviderDiagnosticOption] = [],
         recorder: (any ProviderDiagnosticRecording)? = nil
     ) async -> ProviderDiagnosticSpan {
+        let inheritedCorrelationID: UUID?
+        if let taskCorrelationID = ProviderDiagnosticCorrelationContext.current {
+            inheritedCorrelationID = taskCorrelationID
+        } else {
+            #if STABILITY
+            inheritedCorrelationID = try? ProviderEventStoreFactory.activeFinderStepCorrelation()
+            #else
+            inheritedCorrelationID = nil
+            #endif
+        }
         let span = ProviderDiagnosticSpan(
-            correlationID: correlationID ?? ProviderDiagnosticCorrelationContext.current ?? UUID(),
+            correlationID: correlationID ?? inheritedCorrelationID ?? UUID(),
             source: source,
             operation: operation,
             fieldShape: fieldShape,
