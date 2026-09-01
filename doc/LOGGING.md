@@ -127,6 +127,12 @@ sealed writer. Transfer diagnostics
 start only when the lazy transfer is consumed or cancelled and use the same
 span for deduplicated progress, cancellation, and completion. An expected
 missing share link is recorded as a successful optional result.
+For an HTTP rejection, durable diagnostics keep only the numeric status and
+closed recovery class. The API adapter may retain a parsed nonnegative
+Retry-After delta-seconds integer for retry decisions, but never copies the raw
+header value or response body into JSONL, unified logs, activities, or exports.
+Share adapter diagnostics likewise never retain the selected access value,
+expiration, password, or returned URL.
 
 ## Categories And Correlation
 
@@ -143,8 +149,9 @@ operation/route/option shape, correlation UUID, bounded duration, phase, and
 status/error class; they never retain an error domain or description.
 
 Network spans never include request URLs, query parameters, filenames, request
-or response bodies, bearer tokens, refresh tokens, remote account identifiers,
-or file bytes. The service does not currently expose a kDrive request ID, so the
+or response bodies, raw Retry-After values, bearer tokens, refresh tokens,
+remote account identifiers, or file bytes. The service does not currently
+expose a kDrive request ID, so the
 optional durable `remoteRequestID` field remains empty unless a future typed API
 surface provides one safely.
 

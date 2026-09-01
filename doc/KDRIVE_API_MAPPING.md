@@ -46,13 +46,13 @@ uses the closed cancelled phase instead of a failure record.
 | Trash | `trashItem(...)` | `trashFileV2` | `DELETE /2/drive/{driveId}/files/{fileId}` |
 | Permanently delete trashed item | `deleteTrashedItem(...)` | `removeTrashedFile` | `DELETE /2/drive/{driveId}/trash/{fileId}` |
 | Favorite/unfavorite | `setFavorite(...)` | `favoriteFile` / `unfavoriteFile` | typed kDrive favorite endpoints |
-| Duplicate in place | `duplicateItem(...)` | `duplicateFile` | `POST /3/drive/{driveId}/files/{fileId}/duplicate` |
+| Duplicate in place | `duplicateItem(..., name:)` | `duplicateFile` with explicit options | `POST /3/drive/{driveId}/files/{fileId}/duplicate` |
 | Read trashed metadata | `trashedItem(...)` | `getTrashedFile` | typed kDrive trash metadata endpoint |
 | Check restore parent | `existingFileIDs(...)` | `checkFilesExistence` | typed kDrive existence endpoint |
 | Restore from trash | `restoreTrashedItem(...)` | `restoreTrashedFile` | typed kDrive trash restore endpoint |
 | Read share link | `shareLink(...)` | `getFileShareLink` | `GET /2/drive/{driveId}/files/{fileId}/link` |
 | Create share link | `createShareLink(...)` | `createFileShareLink` | `POST /2/drive/{driveId}/files/{fileId}/link` |
-| Update share link | `updateShareLink(...)` | `updateFileShareLink` | `PUT /2/drive/{driveId}/files/{fileId}/link` |
+| Update share link | `updateShareLink(...)` | pinned `updateFileShareLink` route plus corrected nullable-body adapter | `PUT /2/drive/{driveId}/files/{fileId}/link` |
 | Disable share link | `deleteShareLink(...)` | `deleteFileShareLink` | `DELETE /2/drive/{driveId}/files/{fileId}/link` |
 | List versions | `fileVersions(...)` | nondeprecated `listFileVersions` | `GET /3/drive/{driveId}/files/{fileId}/versions` |
 | Restore version as copy | `restoreFileVersion(...)` | `restoreFileVersionToDirectory` | `POST /3/drive/{driveId}/files/{fileId}/versions/{versionId}/restore/{destinationDirectoryId}` |
@@ -147,12 +147,59 @@ File replace uses `UploadKDriveFileOptions` with:
 - optional `lastModifiedAt`
 - no create-conflict option, directory ID, or filename
 
+The direct-upload endpoint has a documented maximum `total_size` of
+`1_000_000_000` bytes. File Provider create and replacement callbacks preflight
+the callback URL's file size before mapping it into `Data`; the loaded byte
+count is checked again before constructing the potassiumChannel upload
+operation to close a file-size/read race. Larger files fail closed with
+`KDriveDirectUploadError.requiresUploadSession` and map to File Provider
+`.cannotSynchronize`. The callback URL remains File Provider-owned, but no
+provider conflict-stage copy is created for this pre-buffer rejection. The app
+does not yet implement the file-backed upload-session/chunk path, so it never
+attempts a live direct upload above the limit.
+
 Move uses `MoveKDriveFileOptions` with:
 
 - `conflict: "rename"`
 - optional new name when move and rename happen together
 
 Directory create does not currently pass an explicit conflict policy.
+
+## Contextual Mutation Adapters
+
+Duplicate-in-place refetches the source metadata and sends an explicit,
+extension-preserving destination name such as `Document copy.txt`. The pinned
+potassium request model makes the name optional, but official iOS and desktop
+clients always choose a name and the public evidence does not define an
+empty-body/server-selected naming contract. A collision is allowed to fail
+without mutating the source; the adapter never guesses that an empty body is
+safe.
+
+Share access supports the three documented values: `public`, `inherit`, and
+`password`. Any unknown response value throws
+`unsupportedShareLinkAccess`; it never widens access by defaulting to public.
+Share updates retain potassiumChannel's typed method, path, response envelope,
+and API client. The app replaces only the encoded body because the 0.3.0
+synthesized encoder omits a nil optional, while the endpoint defines
+`valid_until` as nullable. A missing local expiration is therefore encoded as
+JSON null to clear an existing expiration. Request bodies, passwords, and
+returned share URLs never enter diagnostics.
+
+Favorite, trash restore, share update/delete, and permanent trash deletion do
+not have a documented conditional version token. Their exact last-writer and
+recovery behavior is recorded in the conflict truth table; no ETag condition is
+invented from client behavior alone.
+
+## Retry And Error Evidence
+
+Infomaniak's global API rule is 60 requests per minute, with stricter limits
+possible on individual routes. HTTP 408 and 429 are classified as retryable
+`.serverUnreachable` File Provider failures, alongside 5xx responses. When
+potassiumChannel supplies Retry-After metadata, the adapter retains only a
+parsed nonnegative delta-seconds integer. HTTP-date or invalid values are
+discarded, and raw headers and response bodies are never logged or persisted.
+The provider still delegates retry scheduling to File Provider; it does not
+sleep or run an independent retry loop.
 
 ## Advanced Listing Response Mapping
 

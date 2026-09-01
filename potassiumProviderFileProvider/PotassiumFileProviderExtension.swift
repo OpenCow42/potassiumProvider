@@ -463,7 +463,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     )
                 } else {
                     createdItem = try await Self.contentTransferLimiter.withPermit {
-                        let contents = try url.map { try Data(contentsOf: $0, options: .mappedIfSafe) } ?? Data()
+                        let contents = try url.map {
+                            try KDriveDirectUploadContentLoader.loadContents(at: $0)
+                        } ?? Data()
                         progress.prepareForByteCount(contents.count)
                         FileProviderLog.replicatedExtension.debug("upload new file parentFileID(\(parentID, privacy: .public)) bytes(\(contents.count, privacy: .public))")
                         return try await coordinator.createFile(
@@ -684,7 +686,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     }
                     do {
                         let result = try await Self.contentTransferLimiter.withPermit {
-                            let data = try Data(contentsOf: newContents, options: .mappedIfSafe)
+                            let data = try KDriveDirectUploadContentLoader.loadContents(
+                                at: newContents
+                            )
                             progress.prepareForByteCount(data.count)
                             return try await coordinator.replaceContents(
                                 itemIdentifier: item.itemIdentifier.rawValue,

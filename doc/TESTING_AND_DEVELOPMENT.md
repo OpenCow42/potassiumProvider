@@ -392,14 +392,16 @@ and visionOS Files:
    and can still be permanently deleted.
 3. Verify Download Now and Remove Download are system-provided for normal files
    and folders.
-4. Create public and password-protected links, update options, copy/share the
-   URL, and disable the link. Inspect activity export and unified logs to ensure
-   the URL and password never appear.
+4. Create public, inherited-access, and password-protected links. Set and then
+   clear an expiration, copy/share the URL, and disable the link. Inspect
+   activity export and unified logs to ensure the URL, password, access value,
+   and expiration never appear. An unknown returned access value must stop the
+   action instead of being displayed as public.
 5. Page a document's version history and restore a version as a collision-safe
    copy in its current parent. Confirm the current file is unchanged.
 6. Exercise Show in Finder/Files and Sync Now for every configured drive.
 
-## 0.2.0 Transfer Gates
+## 0.3.0 Transfer Gates
 
 Run these checks on macOS with a development File Provider domain and a test
 kDrive account. Do not use customer data.
@@ -414,6 +416,16 @@ kDrive account. Do not use customer data.
    below 125% of the single-transfer baseline.
 3. Repeat cancellation while the second transfer is waiting. Confirm it never
    starts and the next transfer can acquire the released permit.
+4. Confirm a direct create or replacement at exactly `1_000_000_000` bytes is
+   admitted by the pure request preflight, while one byte above is rejected
+   before callback content loading or request construction with the
+   session-required error. Automated coverage uses a sparse oversized file to
+   exercise the pre-buffer boundary without allocating or sending a one-gigabyte
+   payload. Use an official session-capable client for larger files until this
+   provider has a file-backed session path.
+5. With a sanitized mock response, confirm HTTP 408 and 429 map to File Provider
+   `.serverUnreachable`, a numeric Retry-After value is parsed, and invalid or
+   HTTP-date values are discarded without entering diagnostics.
 
 Automated `AsyncOperationLimiter` tests cover the concurrency cap, cancellation
 while waiting, and permit release after errors. These manual checks cover the

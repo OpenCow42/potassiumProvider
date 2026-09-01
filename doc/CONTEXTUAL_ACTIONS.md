@@ -1,7 +1,7 @@
 # Contextual Actions
 
-Version 0.3 adds actionable kDrive commands to Finder and Files while remaining
-on potassiumChannel 0.2.0. Every action is single-selection.
+Version 0.3 adds actionable kDrive commands to Finder and Files using the
+version-pinned potassiumChannel 0.3.0 adapter. Every action is single-selection.
 
 ## Direct Provider Actions
 
@@ -20,8 +20,10 @@ contextual action is offered for the provider root.
 
 `KDriveContextActionCoordinator` performs the remote sequence and returns the
 affected parent IDs. Favorite mutations refetch authoritative metadata.
-Duplicate uses kDrive's server-side operation and refetches the created item,
-without downloading content. Restore checks whether the original parent still
+Duplicate refetches the source, derives an explicit extension-preserving copy
+name, sends it to kDrive's server-side operation, and refetches the created
+item without downloading content. It does not rely on undocumented empty-body
+server naming. Restore checks whether the original parent still
 exists and falls back to the drive root when it does not. The extension then
 invalidates affected snapshots and signals each parent plus the working set.
 
@@ -38,7 +40,7 @@ owns Download Now and Remove Download presentation. Trash items have the trash
 container as their parent, expose trash state, and allow reading and permanent
 deletion without rename, move, write, or retrash capabilities.
 
-The provider does not set `favoriteRank`: potassiumChannel 0.2.0 exposes
+The provider does not set `favoriteRank`: potassiumChannel 0.3.0 exposes
 favorite state but no portable favorite ordering.
 
 ## UI Actions
@@ -62,9 +64,11 @@ failures propagate.
 
 New links default to public read-only access, downloads enabled, file
 information visible, and comments, editing, access requests, statistics, and
-expiry disabled. The user can choose password access, expiry, downloads, and
-comments. Existing links can be copied, sent through the system share sheet,
-updated, or disabled after destructive confirmation.
+expiry disabled. The user can choose public, inherited, or password access,
+expiry, downloads, and comments. Clearing expiry explicitly sends nullable
+`valid_until`; an unknown returned access value fails closed instead of
+defaulting to public. Existing links can be copied, sent through the system
+share sheet, updated, or disabled after destructive confirmation.
 
 Passwords and returned URLs remain in view-model memory only. They are never
 logged, persisted, placed in activity summaries, or exported in diagnostics.
@@ -87,9 +91,11 @@ After success, it signals the destination parent and working set.
 
 `KDriveContextActionProviding` contains only action-specific methods:
 favorite, duplicate, trash restore, share-link CRUD, version pagination, and
-version restore. `PotassiumKDriveService` implements it exclusively with typed
-PotassiumKDrive 0.2.0 service calls. Existing `KDriveFileProviding` mutation
-semantics remain unchanged.
+version restore. `PotassiumKDriveService` implements it with typed
+PotassiumKDrive 0.3.0 service calls plus the documented nullable share-update
+body correction. Existing `KDriveFileProviding` mutation
+semantics remain unchanged except for the version-pinned corrections recorded
+in the conflict truth table.
 
 For encrypted items, favorite, duplicate, trash restore, and logical version
 restore call `EncryptedVaultProviding`. Thumbnails and versions are local

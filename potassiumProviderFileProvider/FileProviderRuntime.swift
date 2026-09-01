@@ -318,6 +318,19 @@ func providerErrorMapping(_ error: Error) -> ProviderErrorMapping {
         )
     }
 
+    if let directUploadError = error as? KDriveDirectUploadError {
+        let mappedError = fileProviderError(for: directUploadError.recovery)
+        return ProviderErrorMapping(
+            mappedError: mappedError,
+            diagnostic: providerDiagnostic(
+                category: directUploadError.diagnosticCategory,
+                originalError: error,
+                mappedError: mappedError,
+                diagnosticSummary: directUploadError.diagnosticSummary
+            )
+        )
+    }
+
     if let mutationConflictError = error as? KDriveMutationConflictError {
         switch mutationConflictError {
         case .staleVersion:

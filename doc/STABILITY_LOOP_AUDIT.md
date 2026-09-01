@@ -23,8 +23,8 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Stability build profile and JSONL event store | implemented; reviewer fixes applied | 13 macOS `StabilityDiagnosticsTests` passed 2026-08-31 | all actionable findings fixed | `2fd9fbb` |
 | Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | `c348d0c` |
 | Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | `871c04d` |
-| Finder Accessibility runner and checkpoints | implemented; reviewer repairs applied | current signed Stability test graph built with Finder-only entitlements; all 33 focused cases reported passed in both scheme executions; standard macOS, iOS Simulator, and generic visionOS app graphs built | all actionable findings fixed | pending |
-| API evidence matrix and adapter corrections | evidence pinned; implementation pending | pending | pending | pending |
+| Finder Accessibility runner and checkpoints | implemented; reviewer repairs applied | current signed Stability test graph built with Finder-only entitlements; all 33 focused cases reported passed in both scheme executions; standard macOS, iOS Simulator, and generic visionOS app graphs built | all actionable findings fixed | `347b2a3` |
+| API evidence matrix and adapter corrections | implemented; reviewer repairs applied | signed Stability graph built; final eight-case API slice reported 16/16 passes; Xcode then hung only in result-log/coverage finalization | final bounded pass: no remaining blocker | pending |
 | Cross-platform completion validation | pending | pending | pending | pending |
 
 ## Architecture Integration Checklist
@@ -69,7 +69,7 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Correlation | plan privacy boundary and structured-concurrency task inheritance | not applicable | propagate only a random callback UUID through `TaskLocal`; give each nested span a separate stable UUID so concurrent child operations can be paired | nested-correlation and span-identity tests | no mutation/conflict change |
 | Typed request evidence | potassiumChannel `0.3.0` service calls and the route map | not run | record only enum operation, route template, option shape, phase, duration, and class; never raw request data | drive-discovery request/diagnostic test; schema/redaction tests | no request behavior change |
 | Transfer cancellation | potassiumChannel progress/cancel operation and File Provider progress contract | not run | start lazily when consumed or cancelled; forward progress by deduplicated buckets; race cancel and value completion through one terminal gate | lazy transfer, progress, forwarding, and terminal-race tests | retries and conflict policies unchanged |
-| HTTP and callback diagnostic class | API rejection classifier plus `NSFileProviderError.Code`, without retaining body/header/user-info metadata | not run | map closed HTTP and File Provider recovery classes; cancellation records `cancelled`; expected share-link 404 is a successful optional result | closed classifier tests including 429/507 and File Provider recovery cases; optional-404 adapter test | diagnostic-only; File Provider error behavior remains unchanged pending API milestone |
+| HTTP and callback diagnostic class | API rejection classifier plus `NSFileProviderError.Code`, without retaining body/header/user-info metadata | not run | map closed HTTP and File Provider recovery classes; cancellation records `cancelled`; expected share-link 404 is a successful optional result | closed classifier tests including 429/507 and File Provider recovery cases; optional-404 adapter test | Milestone 5 maps 408/429 and oversized direct uploads to recoverable File Provider errors; diagnostic payloads remain closed |
 | Active-run binding | JSONL writers reject sealed runs and a Stability run may start after a long-lived app/extension object | not applicable | resolve the active recorder at callback or service-construction time; never cache a missing or sealed run writer for the object lifetime | factory/run lifecycle tests plus reviewer inspection | no mutation/conflict change |
 
 ## Review And Validation Log
@@ -209,16 +209,106 @@ explicitly supplies a development account and lab-owned non-root folder.
   rebuild/run. No live credential was read, no Finder operation ran, and no
   remote mutation was performed during automated validation.
 
+## 2026-09-01 — Milestone 5 API evidence and adapters
+
+- Completed the operation-by-operation matrix against the potassiumChannel
+  `0.3.0` pin, the captured official documentation revision, and pinned iOS,
+  Android, and desktop sources. Reference client code was used only as behavior
+  evidence; no GPL implementation was copied. Every live-result cell remains
+  `not run` except the already-sanitized advanced-listing observation because
+  no development credential or remote-mutation authority was provided.
+- Corrected five discrepancies: modeled inherited share access and rejected
+  unknown access values; explicitly encoded a cleared share expiration as JSON
+  null while retaining the pinned typed route; rejected direct uploads above
+  `1_000_000_000` bytes before request construction; mapped 408/429 to retryable
+  server-unreachable recovery while retaining only safe parsed delta seconds;
+  and sent an explicit extension-preserving duplicate name instead of `{}`.
+- A fresh signed Stability `build-for-testing` completed successfully. The
+  focused `test-without-building` selected `KDriveAPIEvidenceTests` and
+  `KDriveContextActionTests`; all 17 unique cases passed in both scheme
+  executions (34/34 reported successes). After the HTTP 429 precedence and
+  fixture-literal repairs, the then-current seven-case API slice reported 14/14
+  passes. After the pre-buffer repair, the final eight-case API slice reported
+  all 16 passes across both scheme executions. Xcode 17.5 then repeated the known
+  result-log/coverage finalization hang after every case was terminal, so the
+  runner was interrupted and did not emit `TEST EXECUTE SUCCEEDED` or finalize
+  the result bundle.
+- `git diff --check` and the credential/private-value scan were rerun after the
+  final repairs. No live API request, File Provider mutation, or remote cleanup
+  was performed.
+
 ## API Decision Ledger
 
-The complete per-operation matrix is added in the final API-evidence milestone.
-Current high-risk discrepancies are tracked now so they cannot be lost:
+Evidence keys used by the per-operation matrix:
 
-| API decision | Evidence | Live result | Provisional behavior | Required tests | Truth-table impact |
+- **P** — the project-pinned OpenCow42 potassiumChannel `0.3.0`, peeled commit
+  [`db829f1f`](https://github.com/OpenCow42/potassiumChannel/tree/db829f1f2bd8c2113a529c9c521bd5cdfb5ef4dc).
+- **D** — [Infomaniak API reference](https://developer.infomaniak.com/docs/api)
+  snapshot identified in Evidence Revisions. The public site exposes no source
+  commit; each route was re-read from that captured page-data revision.
+- **I** — official [iOS kDrive source](https://github.com/Infomaniak/ios-kDrive/tree/90c2e2560630b075b77b9e87b46b44d385a05283)
+  at `90c2e256`; API fetchers and File Provider behavior were compared.
+- **A** — official [Android kDrive source](https://github.com/Infomaniak/android-kDrive/tree/25e07993e87e8ae50f7c73aeaf4c6802eef1d434)
+  at `25e07993`, including Core submodule `7037dab1`.
+- **K** — official [desktop kDrive source](https://github.com/Infomaniak/desktop-kDrive/tree/f72372661e79744c243fd4963465aaae92a6eba7)
+  at `f7237266`; network-job request shapes were compared.
+
+Reference-client code is GPL behavioral evidence only. No implementation was
+copied. `not run` means no development credential was supplied and therefore
+no live request was sent. Dependency request tests at **P** cover unmodified
+typed builders; app fixture names identify local adapter or policy coverage.
+
+| Protocol operation | Version-pinned evidence and discrepancy | Live result | Chosen behavior | Affected tests | Truth-table impact |
 | --- | --- | --- | --- | --- | --- |
-| Share-link `right=inherit` and unknown rights | official create/update docs plus all pinned clients | not run | add explicit inherit; fail closed for unknown values, never default to public | encode/decode/unknown response tests | add share create/update rows and fail-open finding |
-| Clear share expiration | update docs define nullable `valid_until`; iOS/Android explicitly serialize null; potassium 0.3.0 omits nil | not run | adapter must send JSON null when clearing | exact body test | add share-update recovery row |
-| Direct upload size | upload docs cap `total_size` at 1,000,000,000; clients use sessions/chunks above it | not run | block direct request above limit until a session/file-backed adapter exists | boundary/no-request test | add high-risk large-upload finding |
-| Rate limiting | Infomaniak Getting Started documents 60 requests/minute; potassium retains Retry-After metadata | not run | decide retryable 408/429 mapping; retain only parsed safe delay metadata | table-driven 408/429 tests | update retry/error-mapping cells |
-| Listing 422 fallback | public ordinary listing supports ETag; only sanitized prior live evidence shows advanced-listing field rejection | prior sanitized result: `etag`/`files.etag` rejected for advanced listing, `files.capabilities` accepted | do not retry ordinary listing without `with` for every unrelated 422 | known-field versus unrelated-422 tests | refresh listing/version evidence |
-| Permanent trashed-item deletion | docs expose no ETag/If-Match condition | not run | remain explicitly unconditional and keep CR-013 open | preflight/refetch/rejection tests | CR-013 remains open |
+| `listDrives()` | P typed core has no public discovery helper; I/A load eligible drive roles; public D does not expose `/2/drive/init` | not run | retain the small typed app request, accept one internal non-maintenance membership record, and never claim account ownership | `kdriveServiceLoadsDriveRolesFromDriveInitOnly`; Stability Lab external/duplicate/maintenance rejection | lab ownership rows remain fail closed |
+| `item(driveID:fileID:)` | P/D/I/A/K agree on stable file ID metadata; ETag is an included resource | not run | request direct metadata with `with=etag`; treat it as authoritative before versioned mutations | mutation coordinator matching/stale-version suites | `C` remains stable ID plus ETag |
+| `listDirectory(...)` | P/D/I/A expose per-folder cursor listing; ordinary listing accepts ETag | not run | request ETag first; retry without `with` only for the known 422 compatibility response | `kdriveServiceFallsBackToDirectoryListingWithoutETagAfter422` | no cursor protocol substitution |
+| `listAdvancedDirectory(..., cursor:nil, ...)` | P supplies `/listing`; K uses drive-wide advanced listing; D currently has no public route page | prior sanitized observation only: `etag` and `files.etag` rejected; `files.capabilities` accepted | use `files.capabilities`; surface 422 and retain the prior snapshot/anchor | initial advanced-listing and 422 tests | advanced-listing row retained |
+| `listAdvancedDirectory(..., cursor:value, ...)` | P supplies `/listing/continue`; K corroborates advanced cursors; D currently has no page | same prior sanitized observation | preserve advanced cursor/action semantics and never fall back to ordinary listing | continued advanced-listing and 422 tests | advanced-listing row retained |
+| `listTrash(...)` | P/D/I/A expose cursor-paginated trash listing | not run | order and page through typed trash results; validate pagination before committing state | listing validator; trash enumeration coverage | no mutation change |
+| `downloadFile(...)` | P/D/I/A/K agree on stable-ID download | not run | async convenience consumes the same lazy operation | lazy download fixture; transfer diagnostics tests | no conflict change |
+| `downloadFileOperation(...)` | P exposes Foundation progress/cancel; I/K corroborate cancellable transfer work | not run | lazy start, one underlying cancellation, deduplicated progress, one terminal diagnostic | lazy transfer/progress/start-cancel tests | retry semantics unchanged |
+| `thumbnail(...)` | P/D/I/A expose typed thumbnail size options | not run | use typed request; record only option shape | `kdriveServiceFetchesThumbnailThroughPotassiumRoute` | no mutation change |
+| `uploadFile(...)` | P/D/I/A/K direct-upload contract; D says files over 1 GB require a session | not run | async convenience uses the guarded operation | upload request and direct-size boundary tests | adds large-upload fail-closed row |
+| `uploadFileOperation(...)` | P encodes total size/conflict/token/hash; D caps direct upload at `1_000_000_000` bytes and documents sessions above it | not run | preflight callback-file size before loading, validate the loaded count again before request construction, and return a mapped synchronization error until a file-backed session adapter exists | upload shape; pure byte boundary; sparse-file pre-buffer rejection | `CR-017` mitigated |
+| `replaceFile(...)` | P/D agree `file_id` plus `If-Match`; I/K corroborate conditional replacement | not run | async convenience performs the same guarded stable-ID replacement | conditional replace and race tests | conditional preserve-both rows unchanged |
+| `replaceFileOperation(...)` | P/D support ETag condition and direct-upload limit | not run | validate size first; send stable ID, ETag, deterministic token/hash; preserve both on 409/412 | exact replace request; conditional-race tests; size boundary | `C`/409/412 and `CR-017` |
+| `createDirectory(...)` | P/D/I/A/K expose parent-ID plus name creation | not run | typed create; recognized collisions receive one explicit conflict name | directory create/collision coordinator tests | directory-collision row unchanged |
+| `renameItem(...)` | P/D/I/A/K use stable ID plus explicit name | not run | local same-field intent wins; recognized collision gets one conflict name | rename/refetch/idempotence/drift tests | rename rows unchanged |
+| `moveItem(...)` | P/D/I/A/K use stable ID and destination; P supports `conflict=rename` and optional name | not run | merge move-only with remote rename; combined move/rename applies local name | move/rename concurrency suites | move rows unchanged |
+| `updateModificationDate(...)` | P/D/I expose integer `last_modified_at` | not run | update only when it is the remaining requested field, then refetch | combined-field coordinator tests | combined-fields date row unchanged |
+| `trashItem(...)` | P/D/I/A/K use stable ID and reversible trash | not run | local trash intent wins after requested content/metadata work | trash drift/concurrent-edit tests | reversible trash row unchanged |
+| `deleteTrashedItem(...)` | P/D expose stable-ID delete; no source documents ETag/If-Match | not run | retain preflight/refetch rejection, but accepted request remains unconditional | permanent-delete matching/stale tests | `CR-013` remains open |
+| `setFavorite(...)` | P/D/I/A expose separate favorite/unfavorite mutations; no conditional token | not run | mutate stable ID, then refetch authoritative metadata and invalidate both possible parents | `favoriteRefetchesMetadataAndInvalidatesBothParents` | adds favorite row |
+| `duplicateItem(...)` | P allows an optional name and previously emitted `{}`; I/K always provide an explicit name; A uses copy-to-directory | not run | refetch source, derive an explicit extension-preserving `copy` name, send it, then refetch the created stable ID; never depend on server-selected naming | duplicate coordinator/name-policy and exact request-body tests | `CR-019` resolved |
+| `trashedItem(...)` | P/D/I/A expose trashed metadata | not run | re-read the stable trashed item before choosing a restore parent | restore coordinator tests | adds restore row |
+| `existingFileIDs(...)` | P/I/A expose batch existence checks | not run | verify the original restore parent, otherwise choose configured drive root | restore original/root fallback tests | adds restore row |
+| `restoreTrashedItem(...)` | P/D/I/A use stable ID plus explicit destination | not run | restore to verified original parent or root fallback; never permanently delete | restore original/root failure tests | adds restore row |
+| `shareLink(...)` | P/D/I/A expose `public`, `inherit`, and `password`; prior app decoder treated unknown rights as public | not run | decode all three known rights; expected 404 is optional success; unknown rights fail closed | optional-404, inherit decode, unknown-right tests | `CR-018` resolved |
+| `createShareLink(...)` | P/D/I/A define known rights and capability fields | not run | validate password mode and encode the selected known right; diagnostics never retain URL/password | share defaults plus exact body tests | adds share-create row |
+| `updateShareLink(...)` | D makes `valid_until` nullable; I/A explicitly clear with null; P 0.3.0 synthesized encoding omitted nil | not run | retain P's typed route/response but replace its body with an app adapter that explicitly encodes JSON null; unknown response rights fail closed | exact null/inherit body and response tests | `CR-018` resolved; `CR-021` open for no ETag |
+| `deleteShareLink(...)` | P/D/I/A expose unconditional delete and no link-version condition | not run | disable by stable item ID; do not log/share the URL; document stale-editor race | contextual-action and diagnostic tests | adds share-delete row; `CR-021` open |
+| `fileVersions(...)` | P/D/I expose page/per-page, descending creation order, and immutable version IDs | not run | use nondeprecated typed route and explicit paging | version-page model/action tests | adds version-list/restore evidence |
+| `restoreFileVersion(...)` | P/D/I restore a selected version to an explicit destination/name | not run | always restore as a new copy and refetch its stable ID; current file is unchanged | version action/coordinator tests | adds restore-as-copy row |
+| working-set listings | P typed latest/favorite/shared routes; I/A/K corroborate working-set categories | not run | bounded deduplicated union; never infer success from root existence alone | `WorkingSetSyncTests`; Finder working-set assertion tests | no mutation change |
+| `listPartialActivities(...)` | P typed `/listing/partial`; D currently has no public page; I/K corroborate change feeds | not run | batch 200 stable IDs; advance watermark only after a validated complete response | partial-activity and failed-poll tests | cursor/anchor fail-closed rows unchanged |
+| HTTP rejection mapping | D documents a global 60 requests/minute limit; P retains raw Retry-After metadata | not run | map 408/429 to retryable `.serverUnreachable`; retain only a parsed nonnegative delta-seconds integer, never the raw header/body; other 4xx remain deliberate | table-driven 408/429/507/5xx classifier tests | adds retry mapping row; `CR-020` mitigated |
+
+### Accepted discrepancy corrections
+
+1. Added `inherit` and changed unknown share access from a widening `.public`
+   fallback to a typed failure.
+2. Added an app-owned update body that explicitly sends `valid_until: null`
+   while retaining potassiumChannel's pinned method, path, response, and client.
+3. Rejected direct create and replacement payloads above one billion bytes
+   before constructing an upload operation. Session uploads remain a documented
+   implementation gap; the provider keeps its staged copy.
+4. Changed HTTP 408 and 429 recovery to `.serverUnreachable` and retained only
+   parsed delta seconds from Retry-After.
+5. Changed duplicate-in-place to send an explicit derived name instead of an
+   empty options body.
+
+The advanced-listing and `/2/drive/init` routes remain client/live-evidence
+adapters because the public documentation snapshot does not contain them.
+Permanent trash deletion and share update/delete remain marked unconditional;
+no conditional primitive is invented without authoritative evidence.

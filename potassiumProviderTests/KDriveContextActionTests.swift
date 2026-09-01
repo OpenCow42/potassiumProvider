@@ -83,10 +83,11 @@ struct KDriveContextActionTests {
     }
 
     @Test func duplicateRefetchesAuthoritativeResultAndInvalidatesItsParent() async throws {
+        let source = item(id: 42, parentID: 10, name: "Document.txt")
         let response = item(id: 99, parentID: 10, name: "Copy (pending)")
         let authoritative = item(id: 99, parentID: 12, name: "Copy")
         let remote = ContextActionRemoteMock(
-            metadataResponses: [99: [authoritative]],
+            metadataResponses: [42: [source], 99: [authoritative]],
             duplicateResult: response
         )
         let coordinator = KDriveContextActionCoordinator(
@@ -101,9 +102,16 @@ struct KDriveContextActionTests {
         #expect(execution.activityItem == authoritative)
         #expect(execution.affectedParentIDs == [12])
         #expect(await remote.calls() == [
-            .duplicate(fileID: 42),
+            .item(fileID: 42),
+            .duplicate(fileID: 42, name: "Document copy.txt"),
             .item(fileID: 99),
         ])
+    }
+
+    @Test func duplicateNamePolicyPreservesExtensionsAndHandlesDirectories() {
+        #expect(KDriveDuplicateNamePolicy.duplicateName(for: "Report.pdf") == "Report copy.pdf")
+        #expect(KDriveDuplicateNamePolicy.duplicateName(for: "Archive") == "Archive copy")
+        #expect(KDriveDuplicateNamePolicy.duplicateName(for: ".settings") == ".settings copy")
     }
 
     @Test func restoreUsesOriginalParentWhenItStillExists() async throws {
@@ -297,7 +305,7 @@ private actor ContextActionRemoteMock: KDriveItemMetadataProviding, KDriveContex
     enum Call: Equatable {
         case item(fileID: Int)
         case setFavorite(fileID: Int, isFavorite: Bool)
-        case duplicate(fileID: Int)
+        case duplicate(fileID: Int, name: String)
         case trashedItem(fileID: Int)
         case existingFileIDs([Int])
         case restore(fileID: Int, destinationParentID: Int)
@@ -342,8 +350,8 @@ private actor ContextActionRemoteMock: KDriveItemMetadataProviding, KDriveContex
         recordedCalls.append(.setFavorite(fileID: fileID, isFavorite: isFavorite))
     }
 
-    func duplicateItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
-        recordedCalls.append(.duplicate(fileID: fileID))
+    func duplicateItem(driveID: Int, fileID: Int, name: String) async throws -> KDriveRemoteItem {
+        recordedCalls.append(.duplicate(fileID: fileID, name: name))
         guard let duplicateResult else {
             throw ContextActionMockError.missingFixture
         }

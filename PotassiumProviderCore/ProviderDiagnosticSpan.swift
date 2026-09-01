@@ -44,6 +44,10 @@ public enum ProviderDiagnosticErrorClassifier {
             return .conflict
         }
 
+        if error is KDriveDirectUploadError {
+            return .validation
+        }
+
         let cocoaError = error as NSError
         if cocoaError.domain == NSFileProviderErrorDomain,
            let code = NSFileProviderError.Code(rawValue: cocoaError.code) {

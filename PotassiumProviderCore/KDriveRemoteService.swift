@@ -162,6 +162,65 @@ public enum KDriveUploadConflictStrategy: String, Sendable {
     case rename
 }
 
+public enum KDriveDirectUploadError: Error, Equatable, LocalizedError, Sendable {
+    case fileSizeUnavailable
+    case requiresUploadSession(maximumByteCount: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .fileSizeUnavailable:
+            return "The file size could not be verified before direct upload."
+        case .requiresUploadSession(let maximumByteCount):
+            return "Files larger than \(maximumByteCount) bytes require a session-backed upload."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .fileSizeUnavailable:
+            return "Keep the callback source available and retry once its size can be verified."
+        case .requiresUploadSession:
+            return "Keep the local content and retry after session-backed uploads are available."
+        }
+    }
+
+    public var recovery: KDriveRemoteAPIRejectionRecovery {
+        .cannotSynchronize
+    }
+
+    public var diagnosticCategory: KDriveProviderActivityErrorCategory {
+        .validation
+    }
+
+    public var diagnosticSummary: String {
+        switch self {
+        case .fileSizeUnavailable:
+            return "The callback file size could not be verified before direct upload."
+        case .requiresUploadSession:
+            return "The direct-upload size limit requires a session-backed transfer."
+        }
+    }
+}
+
+/// Loads callback content only after a cheap file-size preflight. The service
+/// validates the resulting `Data` again before constructing a request, closing
+/// the file-size/read race without first mapping an unsupported large file into
+/// the File Provider extension's address space.
+public enum KDriveDirectUploadContentLoader {
+    public static func loadContents(at fileURL: URL) throws -> Data {
+        guard let declaredByteCount = try? fileURL.resourceValues(
+            forKeys: [.fileSizeKey]
+        ).fileSize else {
+            throw KDriveDirectUploadError.fileSizeUnavailable
+        }
+        try PotassiumKDriveService.validateDirectUploadByteCount(declaredByteCount)
+
+        let contents = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+        try PotassiumKDriveService.validateDirectUploadByteCount(contents.count)
+        return contents
+    }
+}
+
 public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemoteProviding, KDriveContextActionProviding {
     private let apiClient: InfomaniakAPIClient
     private let driveClient: InfomaniakAPIClient
@@ -173,6 +232,22 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     /// 422. Direct metadata and ordinary directory listings remain the source
     /// of authoritative ETags for content mutations.
     private static let advancedDirectoryListingIncludedResources = "files.capabilities"
+
+    /// Maximum `total_size` accepted by kDrive's direct upload endpoint.
+    /// Larger transfers must use the upload-session API and are rejected before
+    /// a request operation is constructed.
+    public static let directUploadMaximumByteCount = 1_000_000_000
+
+    public static func validateDirectUploadByteCount(_ byteCount: Int) throws {
+        guard byteCount >= 0 else {
+            throw KDriveDirectUploadError.fileSizeUnavailable
+        }
+        guard byteCount <= directUploadMaximumByteCount else {
+            throw KDriveDirectUploadError.requiresUploadSession(
+                maximumByteCount: directUploadMaximumByteCount
+            )
+        }
+    }
 
     public init(
         bearerToken: String,
@@ -439,6 +514,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         clientToken: String? = nil,
         contentHash: String? = nil
     ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
+        try Self.validateDirectUploadByteCount(contents.count)
         let operation = try service.uploadFile(
             driveId: driveID,
             data: contents,
@@ -510,6 +586,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         contents: Data,
         lastModifiedAt: Date?
     ) throws -> KDriveTransferOperation<KDriveRemoteItem> {
+        try Self.validateDirectUploadByteCount(contents.count)
         let operation = try service.uploadFile(
             driveId: driveID,
             data: contents,
@@ -607,9 +684,13 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         }
     }
 
-    public func duplicateItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
+    public func duplicateItem(driveID: Int, fileID: Int, name: String) async throws -> KDriveRemoteItem {
         try await performNetworkOperation(.duplicateItem) {
-            try await service.duplicateFile(driveId: driveID, fileId: fileID).data.remoteItem
+            try await service.duplicateFile(
+                driveId: driveID,
+                fileId: fileID,
+                options: DuplicateKDriveFileOptions(name: name)
+            ).data.remoteItem
         }
     }
 
@@ -707,11 +788,23 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         configuration: KDriveShareLinkConfiguration
     ) async throws -> KDriveShareLinkSummary {
         _ = try await performNetworkOperation(.updateShareLink) {
-            try await service.updateFileShareLink(
+            let options = Self.updateShareLinkOptions(configuration)
+            let potassiumRequest = try KDriveRequests.updateFileShareLink(
                 driveId: driveID,
                 fileId: fileID,
-                options: Self.updateShareLinkOptions(configuration)
+                options: options
             )
+            let body = try JSONEncoder().encode(
+                UpdateShareLinkRequestBody(options: options)
+            )
+            let request = APIRequest<InfomaniakResponse<Bool>>(
+                method: potassiumRequest.method,
+                path: potassiumRequest.path,
+                queryParameters: potassiumRequest.queryParameters,
+                headers: potassiumRequest.headers,
+                body: body
+            )
+            return try await apiClient.send(request)
         }
         guard let link = try await shareLink(driveID: driveID, fileID: fileID) else {
             throw KDriveContextActionError.invalidShareLinkURL
@@ -813,7 +906,9 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         guard let url = URL(string: link.url) else {
             throw KDriveContextActionError.invalidShareLinkURL
         }
-        let access = KDriveShareLinkConfiguration.Access(rawValue: link.right) ?? .public
+        guard let access = KDriveShareLinkConfiguration.Access(rawValue: link.right) else {
+            throw KDriveContextActionError.unsupportedShareLinkAccess
+        }
         return KDriveShareLinkSummary(
             url: url,
             configuration: KDriveShareLinkConfiguration(
@@ -828,6 +923,43 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             ),
             viewCount: link.views
         )
+    }
+
+    /// potassiumChannel 0.3.0 uses synthesized optional encoding for share
+    /// updates, which omits a nil `valid_until`. The endpoint defines that
+    /// field as nullable, so this adapter deliberately encodes JSON null to
+    /// clear an existing expiration while retaining the pinned typed route.
+    private struct UpdateShareLinkRequestBody: Encodable {
+        let options: UpdateKDriveFileShareLinkOptions
+
+        private enum CodingKeys: String, CodingKey {
+            case canComment = "can_comment"
+            case canDownload = "can_download"
+            case canEdit = "can_edit"
+            case canRequestAccess = "can_request_access"
+            case canSeeInfo = "can_see_info"
+            case canSeeStats = "can_see_stats"
+            case password
+            case right
+            case validUntil = "valid_until"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(options.canComment, forKey: .canComment)
+            try container.encodeIfPresent(options.canDownload, forKey: .canDownload)
+            try container.encodeIfPresent(options.canEdit, forKey: .canEdit)
+            try container.encodeIfPresent(options.canRequestAccess, forKey: .canRequestAccess)
+            try container.encodeIfPresent(options.canSeeInfo, forKey: .canSeeInfo)
+            try container.encodeIfPresent(options.canSeeStats, forKey: .canSeeStats)
+            try container.encodeIfPresent(options.password, forKey: .password)
+            try container.encodeIfPresent(options.right, forKey: .right)
+            if let validUntil = options.validUntil {
+                try container.encode(validUntil, forKey: .validUntil)
+            } else {
+                try container.encodeNil(forKey: .validUntil)
+            }
+        }
     }
 
     private static func displayName(for user: KDriveUser) -> String {
@@ -1027,11 +1159,24 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
 public enum KDriveRemoteErrorClassifier {
     public static func apiRejection(from error: Error) -> KDriveRemoteAPIRejection? {
-        guard case let APIClientError.unacceptableStatusCode(statusCode, body, _) = error else {
+        guard case let APIClientError.unacceptableStatusCode(statusCode, body, metadata) = error else {
             return nil
         }
 
-        return KDriveRemoteAPIRejection(statusCode: statusCode, responseBody: body)
+        return KDriveRemoteAPIRejection(
+            statusCode: statusCode,
+            responseBody: body,
+            retryAfterSeconds: parsedRetryAfterSeconds(metadata.retryAfter)
+        )
+    }
+
+    private static func parsedRetryAfterSeconds(_ value: String?) -> Int? {
+        guard let value,
+              let seconds = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              seconds >= 0 else {
+            return nil
+        }
+        return seconds
     }
 
     public static func isInvalidCursor(_ error: Error) -> Bool {
@@ -1075,15 +1220,20 @@ public enum KDriveRemoteErrorClassifier {
 public struct KDriveRemoteAPIRejection: Equatable, Sendable {
     public let statusCode: Int
     public let responseBody: String
+    public let retryAfterSeconds: Int?
 
-    public init(statusCode: Int, responseBody: String) {
+    public init(statusCode: Int, responseBody: String, retryAfterSeconds: Int? = nil) {
         self.statusCode = statusCode
         self.responseBody = responseBody
+        self.retryAfterSeconds = retryAfterSeconds
     }
 
     public var recovery: KDriveRemoteAPIRejectionRecovery {
         if statusCode == 401 {
             return .notAuthenticated
+        }
+        if statusCode == 408 || statusCode == 429 {
+            return .serverUnreachable
         }
         if isInsufficientQuota {
             return .insufficientQuota

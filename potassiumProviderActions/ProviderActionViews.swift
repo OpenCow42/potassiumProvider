@@ -170,6 +170,7 @@ private struct ShareLinkActionView: View {
             Section("Access") {
                 Picker("Access", selection: $model.configuration.access) {
                     Text("Public").tag(KDriveShareLinkConfiguration.Access.public)
+                    Text("Inherit Access").tag(KDriveShareLinkConfiguration.Access.inherit)
                     Text("Password Protected").tag(KDriveShareLinkConfiguration.Access.password)
                 }
                 if model.configuration.access == .password {
