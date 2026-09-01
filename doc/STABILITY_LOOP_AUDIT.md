@@ -25,7 +25,7 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | `871c04d` |
 | Finder Accessibility runner and checkpoints | implemented; reviewer repairs applied | current signed Stability test graph built with Finder-only entitlements; all 33 focused cases reported passed in both scheme executions; standard macOS, iOS Simulator, and generic visionOS app graphs built | all actionable findings fixed | `347b2a3` |
 | API evidence matrix and adapter corrections | implemented; reviewer repairs applied | signed Stability graph built; final eight-case API slice reported 16/16 passes; Xcode then hung only in result-log/coverage finalization | final bounded pass: no remaining blocker | `c61cf6e` |
-| Cross-platform completion validation | complete; no live checks run | macOS, iPhone 17 iOS 26.5 Simulator, Apple Vision Pro visionOS 26.5 Simulator test graphs built; generic visionOS built; each full unit-test execution emitted only passes before Xcode's post-test finalization hang | final evidence pass: no remaining finding | pending |
+| Cross-platform completion validation | complete; no live checks run | macOS, iPhone 17 iOS 26.5 Simulator, Apple Vision Pro visionOS 26.5 Simulator test graphs built; generic visionOS built; each full unit-test execution emitted only passes before Xcode's post-test finalization hang | final evidence pass: no remaining finding | `5acee67` |
 
 ## Architecture Integration Checklist
 
