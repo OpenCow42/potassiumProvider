@@ -130,13 +130,14 @@ struct StabilityLabRemoteCoordinatorTests {
         )
         let domainStore = StabilityLabRegistrationRaceStore()
         let registrar = StabilityLabRegistrationRecorder()
+        let privateCanary = UUID().uuidString
         let account = ProviderAccount(
             accountIdentifier: ProviderConstants.legacyAccountIdentifier,
             displayName: "fixture",
             authenticationKind: .manualAccessToken
         )
         let tokenStore = InMemoryOAuthTokenStore(token: KDriveOAuthToken(
-            accessToken: "lab-private-canary",
+            accessToken: privateCanary,
             tokenType: "Synthetic",
             refreshToken: nil,
             scope: nil,

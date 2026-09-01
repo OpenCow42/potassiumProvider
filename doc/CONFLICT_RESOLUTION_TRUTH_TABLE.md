@@ -235,7 +235,10 @@ audited truth table takes precedence and the inconsistency must be corrected.
     failure/error line. Xcode 17.5 stalled only after test execution while
     finalizing result logs/coverage, so the wrappers were interrupted without a
     final success marker. Exact commands and the limitation are recorded in
-    `STABILITY_LOOP_AUDIT.md`; no live or remote mutation check ran.
+    `STABILITY_LOOP_AUDIT.md`; no live or remote mutation check ran. A final
+    added-line privacy scan also replaced the last credential-shaped test
+    literal with a runtime-only UUID canary; both affected suites then reported
+    46/46 passes and the reviewer returned PASS.
 - Finding state vocabulary: **Open**, **Mitigated**, or **Resolved**
 
 Unit tests validate isolated coordinator operations, including a remote change

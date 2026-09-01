@@ -168,9 +168,10 @@ struct FinderStabilityCommandTests {
             authenticationKind: .manualAccessToken
         )
         let tokenStore = InMemoryOAuthTokenStore()
+        let privateCanary = UUID().uuidString
         await tokenStore.saveToken(
             KDriveOAuthToken(
-                accessToken: UUID().uuidString,
+                accessToken: privateCanary,
                 tokenType: "Synthetic",
                 refreshToken: nil,
                 scope: nil,

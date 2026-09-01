@@ -276,6 +276,16 @@ non-fatal Swift Testing/Sendable warnings remain outside this stability-loop
 change. No live credential was consumed, no Finder scenario ran, and no local
 or remote File Provider mutation was performed.
 
+A final scan of every added line in `codex/stability-loop-plan...HEAD` found one
+credential-shaped literal in a newly added in-memory test fixture. It was
+replaced with a per-execution UUID canary; the related Finder-command and Lab
+remote-coordinator fixtures now contain no committed credential value, and the
+injected remotes discard the canary without logging or persistence. The signed
+macOS test graph rebuilt successfully and all 23 affected cases reported passed
+in both scheme executions (46/46) before the same Xcode finalization hang. The
+reviewer returned PASS, and the repeated branch-range added-literal scan found
+no nonempty credential or authorization-header fixture.
+
 ## API Decision Ledger
 
 Evidence keys used by the per-operation matrix:
