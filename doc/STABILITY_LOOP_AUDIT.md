@@ -24,8 +24,9 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Callback and network instrumentation | implemented; final reviewer repairs applied | signed `build-for-testing` passed; 27/27 focused executions passed | final bounded pass: no remaining finding | `c348d0c` |
 | Stability Lab and safe root lifecycle | implemented; reviewer fixes applied | Stability graph built; 47/47 focused executions passed | final pass: no remaining actionable defect | `871c04d` |
 | Finder Accessibility runner and checkpoints | implemented; reviewer repairs applied | current signed Stability test graph built with Finder-only entitlements; all 33 focused cases reported passed in both scheme executions; standard macOS, iOS Simulator, and generic visionOS app graphs built | all actionable findings fixed | `347b2a3` |
-| API evidence matrix and adapter corrections | implemented; reviewer repairs applied | signed Stability graph built; final eight-case API slice reported 16/16 passes; Xcode then hung only in result-log/coverage finalization | final bounded pass: no remaining blocker | `c61cf6e` |
-| Cross-platform completion validation | complete; no live checks run | macOS, iPhone 17 iOS 26.5 Simulator, Apple Vision Pro visionOS 26.5 Simulator test graphs built; generic visionOS built; each full unit-test execution emitted only passes before Xcode's post-test finalization hang | final evidence pass: no remaining finding | `5acee67` |
+| API evidence matrix and adapter corrections | implemented; reviewer repairs applied | signed Stability graph built; final eight-case API slice reported 16/16 passes; historical macOS finalization evidence is superseded by the 2026-09-08 finalized profile results below | final bounded pass: no remaining blocker | `c61cf6e` |
+| Cross-platform completion validation | complete; no live checks run | macOS, iPhone 17 iOS 26.5 Simulator, Apple Vision Pro visionOS 26.5 Simulator test graphs built; generic visionOS built; 2026-09-08 finalized macOS profile results replace the earlier incomplete macOS-host observation | final evidence pass: no remaining finding | `5acee67` |
+| macOS test-profile reliability | implemented; no production behavior changed | finalized standard unit result: 319 passed; finalized Stability unit result: 327 passed; both zero failed/skipped. Shared schemes now explicitly disable coverage. | profile-boundary and ordinary-domain fail-closed coverage reviewed; local full UI-host rerun remains an environment limitation | `test: isolate profile-specific macOS tests`; `chore: stabilize macOS test schemes` |
 
 ## Architecture Integration Checklist
 
@@ -73,6 +74,39 @@ explicitly supplies a development account and lab-owned non-root folder.
 | Active-run binding | JSONL writers reject sealed runs and a Stability run may start after a long-lived app/extension object | not applicable | resolve the active recorder at callback or service-construction time; never cache a missing or sealed run writer for the object lifetime | factory/run lifecycle tests plus reviewer inspection | no mutation/conflict change |
 
 ## Review And Validation Log
+
+### 2026-09-09 — macOS test-profile reliability repair
+
+- `FinderStabilityCommandTests` now compiles only under `os(macOS) &&
+  STABILITY`. Five ordinary-domain app-model tests and the concurrent ordinary
+  domain-add setup test compile only in the standard profile. A Stability-only
+  regression proves `addDomain` rejects an ordinary domain before either
+  registration or persistence. The related Stability Lab registration-race
+  test is also profile-gated because it exercises Stability provisioning.
+  This changes no File Provider mutation, version, retry, cleanup, or error
+  mapping decision.
+- Before the scheme edit, the following credential-free macOS commands created
+  finalized result bundles on macOS 26.6.2. The standard unit result at
+  `/tmp/potassium-provider-m1-standard-rerun/Logs/Test/Test-potassiumProvider-2026.09.08_23-43-42-+0200.xcresult`
+  reports `result: Passed`, 319 total/passed, zero failed, and zero skipped.
+  The Stability result at
+  `/tmp/potassium-provider-m1-stability/Logs/Test/Test-potassiumProvider-Stability-2026.09.08_23-40-14-+0200.xcresult`
+  reports `result: Passed`, 327 total/passed, zero failed, and zero skipped:
+
+  ```sh
+  env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild test -project potassiumProvider.xcodeproj -scheme potassiumProvider -configuration Debug -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO -only-testing:potassiumProviderTests -derivedDataPath /tmp/potassium-provider-m1-standard-rerun CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO
+
+  env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild test -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO -derivedDataPath /tmp/potassium-provider-m1-stability CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO
+  ```
+
+- The two shared app Test actions now persist `codeCoverageEnabled="NO"`; no
+  coverage consumer exists in the repository. A follow-up unadorned full
+  standard-scheme run (including UI) and unadorned profile runs reached their
+  app-hosted test processes but this local Xcode host did not write a result
+  bundle `Info.plist`. They were interrupted and are not recorded as passes.
+  This is an environment limitation, not a test success or a File Provider
+  behavior result. No credential, File Provider registration, Finder command,
+  or remote mutation occurred in any attempt.
 
 ### 2026-08-31 — Milestone 1 review and repair
 
@@ -195,13 +229,13 @@ explicitly supplies a development account and lab-owned non-root folder.
   its single validated identifier, the cached lab root is rebound after
   baseline pagination and immediately before execution, and summary sealing
   rejects aggregate counts that differ from the immutable report.
-- The current signed Stability graph completed `build-for-testing`, including
+- The then-current signed Stability graph completed `build-for-testing`, including
   the Stability-only Automation and Finder-scoped sandbox Apple Events
   entitlements. All 33 selected Swift Testing cases reported passed in both
-  scheme executions across three suites. Xcode 17.5 then remained blocked while
-  finalizing its result log and coverage after printing every successful case,
-  so the exact test runner was terminated and did not emit `TEST EXECUTE
-  SUCCEEDED`. The Stability app/extension graph also built successfully for a
+  scheme executions across three suites. That historical invocation did not
+  finalize its result bundle. The finalized 2026-09-08 macOS Stability result
+  above supersedes it with 327 passed and zero failures. The Stability
+  app/extension graph also built successfully for a
   standard macOS Debug build, the iPhone 17 iOS 26.5 Simulator Stability build,
   and the generic visionOS Stability build after verifying all Finder-only
   sources are platform-gated. The final read-only adversarial review found no
@@ -230,10 +264,9 @@ explicitly supplies a development account and lab-owned non-root folder.
   executions (34/34 reported successes). After the HTTP 429 precedence and
   fixture-literal repairs, the then-current seven-case API slice reported 14/14
   passes. After the pre-buffer repair, the final eight-case API slice reported
-  all 16 passes across both scheme executions. Xcode 17.5 then repeated the known
-  result-log/coverage finalization hang after every case was terminal, so the
-  runner was interrupted and did not emit `TEST EXECUTE SUCCEEDED` or finalize
-  the result bundle.
+  all 16 passes across both scheme executions. That historical invocation did
+  not finalize its result bundle; the finalized 2026-09-08 full Stability
+  macOS result above supersedes it with 327 passed and zero failures.
 - `git diff --check` and the credential/private-value scan were rerun after the
   final repairs. No live API request, File Provider mutation, or remote cleanup
   was performed.
@@ -267,14 +300,14 @@ set -o pipefail
 env -u INFOMANIAK_TOKEN -u ASC_ISSUER_ID -u ASC_KEY_ID -u ASC_KEY_NAME -u ASC_KEY_PATH -u ASC_TEAM_ID xcodebuild test-without-building -quiet -project potassiumProvider.xcodeproj -scheme potassiumProvider-Stability -configuration Stability -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro' -derivedDataPath /tmp/potassium-final-vision COMPILER_INDEX_STORE_ENABLE=NO -only-testing:potassiumProviderTests 2>&1 | rg --line-buffered "(Test case .* (passed|failed)|Test Suite|Testing started|error:|TEST EXECUTE|BUILD INTERRUPTED)"
 ```
 
-On macOS, iOS Simulator, and visionOS Simulator, the unit-test process exited
-after emitting only passing terminal cases and no failure/error line. Xcode
-17.5 then remained blocked in its result-log/coverage finalization path, so each
-`xcodebuild` wrapper was interrupted and returned 130 without a final `TEST
-EXECUTE SUCCEEDED` marker. This is the sole validation limitation. Existing
-non-fatal Swift Testing/Sendable warnings remain outside this stability-loop
-change. No live credential was consumed, no Finder scenario ran, and no local
-or remote File Provider mutation was performed.
+At the time, the macOS, iOS Simulator, and visionOS Simulator unit-test process
+emitted only passing terminal cases and no failure/error line, but their result
+bundles did not finalize. The 2026-09-08 finalized macOS profile results above
+supersede that incomplete macOS observation; iOS and visionOS have not been
+rerun as part of this macOS reliability repair. Existing non-fatal Swift
+Testing/Sendable warnings remain outside this stability-loop change. No live
+credential was consumed, no Finder scenario ran, and no local or remote File
+Provider mutation was performed.
 
 A final scan of every added line in `codex/stability-loop-plan...HEAD` found one
 credential-shaped literal in a newly added in-memory test fixture. It was
@@ -282,9 +315,10 @@ replaced with a per-execution UUID canary; the related Finder-command and Lab
 remote-coordinator fixtures now contain no committed credential value, and the
 injected remotes discard the canary without logging or persistence. The signed
 macOS test graph rebuilt successfully and all 23 affected cases reported passed
-in both scheme executions (46/46) before the same Xcode finalization hang. The
-reviewer returned PASS, and the repeated branch-range added-literal scan found
-no nonempty credential or authorization-header fixture.
+in both scheme executions (46/46) before that historical result-finalization
+issue. The finalized 2026-09-08 macOS profile results above are the current
+macOS evidence. The reviewer returned PASS, and the repeated branch-range
+added-literal scan found no nonempty credential or authorization-header fixture.
 
 ## API Decision Ledger
 

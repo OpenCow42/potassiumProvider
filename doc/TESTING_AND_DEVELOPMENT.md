@@ -22,6 +22,18 @@ unit test bundle so a diagnostic-store test never drives Finder or consumes a
 live credential. The File Provider Stability scheme has no Test action because
 the unit target imports the shared core, not the extension executable.
 
+Both shared app Test actions set `codeCoverageEnabled="NO"`. This repository
+has no coverage-upload or reporting consumer, and explicitly disabling coverage
+keeps coverage collection out of macOS Test actions. It does not disable any
+test bundle or live-safety gate.
+
+The unit suite is compile-time profile separated. `FinderStabilityCommandTests`
+is compiled only for macOS `STABILITY`; ordinary-domain registration, reload,
+error-path, and concurrent-add expectations are compiled only for the standard
+profile. The Stability profile instead verifies that the ordinary `addDomain`
+path fails closed without registration or persisted domain state. Neither
+profile's Test action runs a live Finder scenario.
+
 Do not use Tuist or root-level SwiftPM commands for validation unless the
 project is intentionally migrated.
 
@@ -298,6 +310,23 @@ xcodebuild test \
   -scheme potassiumProvider \
   -destination 'platform=macOS'
 ```
+
+Run the isolated Stability unit suite on the same Mac destination:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -configuration Stability \
+  -destination 'platform=macOS,arch=arm64'
+```
+
+Do not add credentials to either command. Accept a run only when its
+`.xcresult` summary reports `result: Passed`, zero failed tests, and zero
+cancelled tests. The standard scheme includes its UI action; its completion is
+separate from the ordinary and Stability unit-profile acceptance checks. See
+[`STABILITY_LOOP_AUDIT.md`](STABILITY_LOOP_AUDIT.md) for the dated macOS result
+bundle evidence and any current local-host limitation.
 
 Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
 Xcode requires a more specific macOS variant.

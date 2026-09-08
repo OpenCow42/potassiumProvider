@@ -10,7 +10,7 @@
          </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
-   <TestAction buildConfiguration="Stability" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES" shouldAutocreateTestPlan="YES">
+   <TestAction buildConfiguration="Stability" codeCoverageEnabled="NO" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES" shouldAutocreateTestPlan="YES">
       <MacroExpansion>
          <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="C09842852FF847AD00CB8B7E" BuildableName="potassiumProvider.app" BlueprintName="potassiumProvider" ReferencedContainer="container:potassiumProvider.xcodeproj"/>
       </MacroExpansion>

@@ -75,9 +75,10 @@ Local success does not close EV-014.
 - macOS: `xcodebuild build-for-testing -destination 'platform=macOS'` succeeded
   with signing and indexing disabled. Direct execution then passed 33 focused
   tests: all journal, provisioning/maintenance, cryptography, and domain-format
-  suites. The normal local macOS test host ran the activation-model assertions
-  but hung while finalizing its Xcode result bundle, so this evidence does not
-  claim a clean full-host exit.
+  suites. The 2026-09-08 profile-reliability run later produced a finalized
+  standard macOS unit result with 319 passed and zero failures, superseding the
+  earlier incomplete local-host observation. Its exact commands and result
+  bundle evidence are recorded in `STABILITY_LOOP_AUDIT.md`.
 - iOS Simulator: the complete `potassiumProviderTests` target passed on
   `platform=iOS Simulator,OS=26.5,name=iPhone 17` with signing and indexing
   disabled.
@@ -205,13 +206,11 @@ audited truth table takes precedence and the inconsistency must be corrected.
     Enumeration requires both item-listing and anchor/change terminal evidence,
     and checkpoint reasons are scenario-bound.
     Final sealing verifies all assertion/failure/checkpoint totals against the
-    immutable report. The current signed Stability test graph, including its
-    Stability-only Finder Automation entitlements, built successfully and all
-    33 focused Swift Testing cases reported passed in both scheme executions;
-    Xcode then stalled while finalizing its result log/coverage, so the runner
-    was terminated without a final `TEST EXECUTE SUCCEEDED` marker. The iPhone
-    17 iOS 26.5 Simulator and generic visionOS Stability app/extension graphs
-    also built successfully.
+    immutable report. The historical 2026-09-01 focused Finder evidence run
+    reported all 33 cases passed before its Xcode result-log finalization issue.
+    It is superseded for macOS by the 2026-09-08 finalized full Stability unit
+    result: 327 passed with zero failures. The iPhone 17 iOS 26.5 Simulator and
+    generic visionOS Stability app/extension graphs also built successfully.
     No live credential, Finder action, or remote mutation was used.
     `CR-013` stays open for the product callback.
   - 2026-09-01 API-evidence validation pinned the complete provider/context
@@ -220,22 +219,23 @@ audited truth table takes precedence and the inconsistency must be corrected.
     `STABILITY_LOOP_AUDIT.md`. Adapter fixtures cover inherited and unknown
     share access, explicit-null expiration clearing, explicit duplicate names,
     the one-billion-byte direct-upload boundary, and retry-safe 408/429
-    classification. A signed Stability test graph built successfully; all 17
-    selected cases passed in both scheme executions (34/34), after which Xcode
-    stalled only in its known result-log/coverage finalization path. After the
-    pre-buffer repair, the final eight-case API slice reported 16/16 passes
-    across both scheme executions before the same finalization hang. No live
-    credential, network request, or remote mutation was used. `CR-017` through
-    `CR-020` record the corrected/mitigated discrepancies; `CR-021` remains open
-    because share mutations expose no documented conditional version token.
+    classification. A signed Stability test graph built successfully; the
+    historical selected API slices reported 34/34 and then 16/16 passes. The
+    2026-09-08 finalized full Stability macOS unit result (327 passed, zero
+    failures) supersedes the earlier incomplete macOS result-log evidence. No
+    live credential, network request, or remote mutation was used. `CR-017`
+    through `CR-020` record the corrected/mitigated discrepancies; `CR-021`
+    remains open because share mutations expose no documented conditional
+    version token.
   - 2026-09-01 completion validation built the signed Stability test graph and
     ran the full unit-test target on macOS, iPhone 17 iOS 26.5 Simulator, and
     Apple Vision Pro visionOS 26.5 Simulator; it also built the generic visionOS
-    graph with signing disabled. Every emitted terminal test case passed with no
-    failure/error line. Xcode 17.5 stalled only after test execution while
-    finalizing result logs/coverage, so the wrappers were interrupted without a
-    final success marker. Exact commands and the limitation are recorded in
-    `STABILITY_LOOP_AUDIT.md`; no live or remote mutation check ran. A final
+    graph with signing disabled. That historical cross-platform run emitted only
+    passing terminal cases, but its incomplete result logs are not current
+    macOS acceptance evidence. The 2026-09-08 finalized macOS profile results
+    report 319 standard and 327 Stability passes, each with zero failures; exact
+    commands and the current local-host limitation are in
+    `STABILITY_LOOP_AUDIT.md`. No live or remote mutation check ran. A final
     added-line privacy scan also replaced the last credential-shaped test
     literal with a runtime-only UUID canary; both affected suites then reported
     46/46 passes and the reviewer returned PASS.
