@@ -2120,6 +2120,7 @@ struct PotassiumProviderCoreTests {
         #expect(model.drives(for: account.accountIdentifier) == [drive])
     }
 
+    #if !STABILITY
     @MainActor
     @Test func appModelKeepsMultipleAccountsAndLogsOutIndependently() async throws {
         let directory = temporaryDirectory()
@@ -2384,6 +2385,7 @@ struct PotassiumProviderCoreTests {
         #expect(failure.recoverySuggestion?.contains("My Mac") == true)
         #expect(failure.diagnosticSummary?.contains("usable File Provider extension") == true)
     }
+    #endif
 
     @MainActor
     @Test func appModelRevealsAndSignalsOneConfiguredDrive() async throws {

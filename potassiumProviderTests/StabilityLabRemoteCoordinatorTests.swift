@@ -91,6 +91,7 @@ struct StabilityLabRemoteCoordinatorTests {
         #expect(snapshot.permanentlyDeletedFileIDs.isEmpty)
     }
 
+    #if STABILITY
     @MainActor
     @Test func appProvisionRechecksStoredDomainsImmediatelyBeforeRegistration() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -169,6 +170,7 @@ struct StabilityLabRemoteCoordinatorTests {
         #expect(await domainStore.hasInjectedOrdinaryConfiguration())
         #expect(model.errorMessage != nil)
     }
+    #endif
 
     @Test func provisionRejectsExternalDriveBeforeRemoteMutation() async {
         let remote = StabilityLabRemoteFake(

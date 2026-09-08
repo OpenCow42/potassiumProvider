@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) && STABILITY
 import FileProvider
 import Foundation
 import PotassiumProviderCore
