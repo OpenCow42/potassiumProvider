@@ -735,7 +735,9 @@ public actor StabilityRunCoordinator {
                 let released = ticket.map { SecurePOSIXFile.isRegularFile(handle.directoryURL.appendingPathComponent("conflict-" + $0.attemptID.uuidString.lowercased() + "-release")) } ?? false
                 try profile.validate(report: report, ticket: ticket,
                     reached: ticket.map { StabilityConflictBarrier.reached($0, run: handle) } ?? false,
-                    released: released, diagnostics: timeline)
+                    released: released,
+                    competingMutationVerified: ticket.map { StabilityConflictBarrier.competingMutationVerified($0, run: handle) } ?? false,
+                    diagnostics: timeline)
                 if let mode = profile.extensionLaunchMode, report.stepSummary.passed > 0 {
                     let launch = try decoder.decode(StabilityExtensionLaunchEvidence.self,
                         from: SecurePOSIXFile.read(handle.directoryURL.appendingPathComponent("extension-launch.json"), maximumBytes: 4096))
@@ -744,6 +746,14 @@ public actor StabilityRunCoordinator {
                 }
             } else if report.stepResults.contains(where: { $0.outcome == .skipped(.notSelectedForConflictProfile) }) {
                 throw StabilityLiveEvidenceError.missingConflict
+            }
+            if report.schemaVersion >= StabilityFinderRunReport.liveSchemaVersion,
+               report.stepResults.contains(where: { $0.scenario == .concurrentRemotePreserveBoth && $0.outcome == .passed }) {
+                let ticket = try JSONDecoder().decode(StabilityConflictBarrier.Ticket.self,
+                    from: SecurePOSIXFile.read(handle.directoryURL.appendingPathComponent("conflict-request.json"), maximumBytes: 4096))
+                guard StabilityConflictBarrier.competingMutationVerified(ticket, run: handle) else {
+                    throw StabilityLiveEvidenceError.missingConflict
+                }
             }
             let launchRequestURL = handle.directoryURL.appendingPathComponent("extension-launch-request.json")
             if SecurePOSIXFile.isRegularFile(launchRequestURL) {

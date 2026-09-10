@@ -11,8 +11,17 @@ enum FinderRestoreObservation {
 
     static func observeVisibleDestination(parent: URL, name: String,
                                           readVisible: () async throws -> URL) async throws -> URL? {
+        try await observeVisibleDestination(name: name, readVisible: readVisible) {
+            FinderUIURLIdentity.matches($0, parent)
+        }
+    }
+
+    static func observeVisibleDestination(name: String, readVisible: () async throws -> URL,
+                                          matchesParent: (URL) async throws -> Bool) async throws -> URL? {
         let candidate = try await readVisible()
-        return matchesVisibleDestination(candidate, parent: parent, name: name) ? candidate : nil
+        guard candidate.lastPathComponent.precomposedStringWithCanonicalMapping == name.precomposedStringWithCanonicalMapping,
+              try await matchesParent(candidate.deletingLastPathComponent()) else { return nil }
+        return candidate
     }
 
     /// A completed UI-originated callback gates verification. Active-item 404

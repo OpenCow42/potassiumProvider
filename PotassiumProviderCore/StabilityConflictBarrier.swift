@@ -46,6 +46,35 @@ public enum StabilityConflictBarrier {
         public let point: StabilityConflictSchedulingPoint
     }
 
+    private struct CompetingMutation: Codable {
+        let schemaVersion: UInt16
+        let ticket: Ticket
+        let metadataAlias: UUID
+    }
+
+    /// Records independent server read-back while this exact attempt is held.
+    /// An accepted asynchronous mutation response alone is not this evidence.
+    public static func recordVerifiedCompetingMutation(_ ticket: Ticket, run: StabilityRunHandle,
+                                                       itemIdentifier: String, metadataAlias: UUID) throws {
+        try recordVerifiedCompetingMutation(ticket, run: run, itemIdentifier: itemIdentifier,
+            metadataAlias: metadataAlias, activeRunID: StabilityDiagnosticIdentity.activeRun()?.runID)
+    }
+    static func recordVerifiedCompetingMutation(_ ticket: Ticket, run: StabilityRunHandle,
+                                                itemIdentifier: String, metadataAlias: UUID, activeRunID: UUID?) throws {
+        guard activeRunID == run.runID, try request(run) == ticket, reached(ticket, run: run),
+              !settled(ticket, run: run), ticket.subject == StabilityDiagnosticIdentity.alias(for: itemIdentifier, runID: run.runID)
+        else { throw CancellationError() }
+        let evidence = CompetingMutation(schemaVersion: 1, ticket: ticket, metadataAlias: metadataAlias)
+        try SecurePOSIXFile.createExclusively(JSONEncoder().encode(evidence),
+            at: path(ticket, "competitor-verified.json", run), permissions: 0o400)
+    }
+    public static func competingMutationVerified(_ ticket: Ticket, run: StabilityRunHandle) -> Bool {
+        guard ticket.runID == run.runID, !SecurePOSIXFile.isRegularFile(path(ticket, "cancelled", run)),
+              let data = try? SecurePOSIXFile.read(path(ticket, "competitor-verified.json", run), maximumBytes: 4096),
+              let evidence = try? JSONDecoder().decode(CompetingMutation.self, from: data) else { return false }
+        return evidence.schemaVersion == 1 && evidence.ticket == ticket
+    }
+
     @discardableResult
     public static func arm(run: StabilityRunHandle, itemIdentifier: String, correlationID: UUID,
                            caseID: StabilityLiveConflictCase = .contentAfterPreflight) throws -> Ticket {

@@ -48,6 +48,34 @@ A completed server mutation alone cannot prove Finder has applied the returned
 parent. `FinderRestoreObservationTests.delayedMoveLocationCannotPassUntilParentAndNameBothMatch`
 rejects stale paths and wrong names and preserves cancellation. Run-specific
 reproduction and supporting successful backend spans are in the local audit.
+The bounded live rerun still timed out with a mismatching local parent; extending
+the observation did not resolve it. Successful plaintext modify terminals now
+include the existing run-salted metadata fingerprint to distinguish returned
+callback metadata from server state, without recording names or identifiers.
+`FileProviderOperationLifecycleTests.successfulCallbackRecordsReturnedMetadataOnce`
+checks that only the first successful terminal retains that fingerprint. The
+original preserve-both scenario shares the independent conflict path's cancellable
+gate scheduling and byte-checked reopening. No resolution policy changed.
+
+Instrumented live edit/move confirmed a returned-metadata mismatch, but an
+experimental post-upload metadata lookup did not resolve it and was removed.
+The typed move API returns a cancellable operation response. The harness now
+verifies the competing mutation's metadata and bytes before releasing the held
+local callback; request acceptance alone never establishes commit ordering.
+Attempt-scoped read-back evidence is required by conflict profile version 3 and
+newly sealed original preserve-both results. Barrier/profile regressions reject
+missing, unrelated, cancelled, late, and stale-attempt proof. Historical bundles
+remain readable but do not establish this stronger ordering requirement.
+
+Subsequent settled-cache evidence matched the returned callback fingerprint. The
+earlier harness comparison used metadata obtained before waiting for upload bytes;
+it now refetches metadata after byte verification. Destination observation first
+opens the bound parent in Finder, then verifies the actual parent URL resolves to
+the expected stable item and domain, together with the exact filename. A different
+parent/domain remains pending; URL spelling alone does not define provider identity.
+`FinderRestoreObservationTests.providerParentIdentityHandlesURLAliasesAndRejectsStaleParents`
+covers alias spelling, wrong parent/domain, and wrong name. These are harness fixes;
+no production mutation policy changed.
 
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot

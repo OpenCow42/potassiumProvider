@@ -26,6 +26,7 @@ movement/removal. Failure injection covers offline, authentication, permissions,
 throttling, quota, and cancellation. Assertions inspect identities, parentage,
 versions, bytes, staged recovery contents, and subsequent reads.
 
+
 The production create router is also exercised with `.mayAlreadyExist`. Tests
 verify that existing bytes survive, file replay reuses the created identity under
 the service-token model, and repeated directory delivery produces two usable
@@ -103,7 +104,10 @@ TextEdit, and byte-checked. Gate files are scoped to run, case, salted item alia
 correlation, unique attempt, and scheduling point. An old release cannot satisfy a
 later case. Cancellation/expiry ends the held attempt; overlapping claims fail
 instead of bypassing the gate. Direct API calls perform the competing mutation and
-verification only.
+verification only. The competing metadata and bytes must be read back while
+the local attempt is held; an accepted asynchronous move response does not prove
+that ordering. The attempt-scoped competitor verification record is mandatory for
+new version 3 profile results and the original preserve-both scenario.
 
 `conflict-profile.json` declares the narrower selection. The ordinary immutable
 Finder report still has all 16 entries; unrelated scenarios are explicitly

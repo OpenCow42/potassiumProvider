@@ -150,6 +150,95 @@ expected failures. Navigation now clears its previous selection before opening G
 to Folder because the provider may already have moved that selected identity.
 The ordinary signed live build is being rerun with these changes.
 
+### Fresh profile rerun: persistent edit/move divergence
+
+The next complete fresh-extension profile again sealed five passes:
+`c278d5dc-206b-4515-ad0e-8434778ed15a` (content-before-preflight),
+`73c3dabc-abb5-469e-a273-5618f029c2c2` (content-after-preflight),
+`2ab03433-09f9-4167-bdb6-d5612a60cf0d` (rename-rename),
+`e11a5315-9f56-47e4-8b73-a92eca6a0a36` (move-move), and
+`45d8484d-0b46-4f89-95ce-134096f5bd03` (edit-rename).
+
+`704bbba7-b50f-4cc0-bc60-c2489a851859` (edit-move) failed and sealed.
+Expected: edited bytes on the same server identity under the remote destination,
+then the matching local destination and a successful Finder/TextEdit reopen.
+Observed: server metadata and bytes passed; `parentMatches=false nameMatches=true`
+persisted until the original 90-second deadline. Competing move
+`4DC78AA7-F823-47A0-AA61-EC3F80FC48B5`, replacement
+`7BA5059F-B37C-4C3A-961A-50363DCF6B71`, and modify callback
+`BD3B8BAF-3060-4EFB-A171-41252F6E0027` completed. The prior immediate
+assertion was too early, but waiting alone did not fix this failure. Classification
+remains provider/environment pending returned-metadata evidence; confidence low
+in the underlying cause. The report's harness/deadline classification describes
+the failing observation, not a proven root cause. All owned windows closed and
+earlier bundles remain intact. Reproduce with
+`--conflicts --case edit-move --extension-state fresh --yes-live`.
+
+Successful plaintext modify terminals now retain the existing sanitized metadata
+fingerprint so a targeted reproduction can compare returned callback metadata to
+the verified remote result. No mutation policy changed. Regression and live
+reproduction results follow below. The original sixteen-scenario preserve-both
+path now shares the independently selectable race's cancellable scheduling and
+reopening assertions instead of retaining the older sequential gate flow.
+
+Targeted diagnostic run `737ec849-789f-44b6-a58c-193a7c4ce023` sealed the
+same local-parent deadline failure. The held contents callback
+`FE5F48BF-2472-45E7-AD65-7C77DC10BBF8` returned metadata fingerprint
+`2996D4BC-A3F4-4127-89E9-4276E6A8C85D`, which differed from the independently
+verified remote result. The remote move `E4427365-6DBC-4EA6-B19C-E30A31DA609A`
+and upload `A162DA88-179A-458E-860A-C604660B3AAC` completed before that
+callback terminal. Classification: provider/API response reconciliation; high
+confidence in the returned-metadata mismatch, pending confirmation of which
+receipt field is stale. The upload adapter previously returned its receipt without
+a metadata refresh. An experimental correction performed one lookup after a confirmed
+upload and adopts metadata only when identity, drive, ETag, and size match that
+receipt. Read failures/newer content preserve the receipt and never replay the
+upload. `committedReplacementRefreshesOnlyMatchingContent` covers all three cases.
+The diagnostic-only Mac15 bundle finalized **23 passed**, zero failed/skipped.
+Finalized validation of the guarded metadata refresh: Stability macOS Mac17
+**426 passed**, standard macOS04 **383 passed**, iOS06 **367 passed**,
+visionOS Simulator05 **367 passed**, all with zero failures/skips/expected failures.
+The signed generic visionOS03 build succeeded. Mac16/iOS05/visionOS Simulator04
+each preserve one failure in the older recording-mock test, whose expected call
+sequence omitted the new post-upload item lookup; the expectation now includes
+that read. The new stateful post-upload regressions passed in those runs.
+Experimental rerun `580ca004-b95e-4f0b-8f00-d6286aff8aa4` again sealed the
+edit/move deadline failure with mismatching callback metadata and a stale local
+parent. The extra read did not resolve the issue and was removed, together with
+its experiment-specific tests. Its finalized validation is retained above as
+historical evidence, not the final implementation.
+
+Source inspection found that the typed move API returns `KDriveCancelResource`;
+the runner previously released the local callback after that accepted response
+without independently confirming the move. That did not prove the intended
+ordering. The harness now waits for the competing metadata and bytes, then records
+an immutable attempt-scoped verification while the gate is held, before releasing
+it. Profile version 3 and original preserve-both sealing require that proof.
+Barrier/profile tests reject proof before arrival, after release/cancellation,
+for another fixture or attempt, and missing verification. The live reproduction
+with this stronger ordering follows below. Earlier version 1/2 results remain
+readable but cannot establish the new ordering evidence requirement.
+
+`7ae44326-7d5b-4dc3-8942-51a77d76a898` verified competing server metadata
+and bytes before gate release, then again failed the local-parent deadline.
+Read-only cache inspection after settling found the returned fingerprint from
+contents callback `739EFC0D-2CBF-46A2-8DEE-920A700C1932` matched the final
+metadata under the expected destination. The generated file also existed under
+Sibling and was absent from its old folder after settling. This corrects the prior
+receipt diagnosis: the runner's comparison used a metadata snapshot obtained
+before waiting for edited bytes, so its size could still describe the base file.
+It now refetches metadata after byte verification. Confidence high in this harness
+comparison defect; no stale upload-receipt guarantee is inferred.
+
+The destination wait also preceded navigation into the destination, which could
+leave that folder unenumerated. The runner now opens the already bound parent
+first, then verifies the actual parent through stable item/domain identity and the
+exact filename before reopening. It records both identity and path comparisons;
+a mismatching identity never passes. Mac18 finalized **426 passed** for the ordering
+change; targeted Mac19 finalized **14 passed** for destination identity and gate
+proof. Both have zero failures/skips. The next ordinary signed live run includes
+destination-first navigation; its outcome is pending.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on

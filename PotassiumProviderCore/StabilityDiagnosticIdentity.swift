@@ -67,6 +67,15 @@ public enum StabilityDiagnosticIdentity {
         return alias(for: "metadata:" + encoded, runID: runID)
     }
 
+    public static func activeMetadataAlias(for item: KDriveRemoteItem?) -> UUID? {
+        #if STABILITY
+        guard let item, let run = try? activeRun() else { return nil }
+        return metadataAlias(for: item, runID: run.runID)
+        #else
+        return nil
+        #endif
+    }
+
     public static func activeRun() throws -> StabilityRunHandle? {
         guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: ProviderConstants.appGroupIdentifier) else {
             throw ProviderDiagnosticStoreError.missingAppGroupContainer(ProviderConstants.appGroupIdentifier)

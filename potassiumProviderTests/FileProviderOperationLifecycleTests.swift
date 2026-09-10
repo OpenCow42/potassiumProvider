@@ -111,6 +111,19 @@ struct FileProviderOperationLifecycleTests {
         #expect(events.last?.fieldShape == [.contents, .filename])
     }
 
+    @Test func successfulCallbackRecordsReturnedMetadataOnce() async throws {
+        let sink = LifecycleDiagnosticSink()
+        let lifecycle = FileProviderOperationLifecycle(progress: Progress(totalUnitCount: 1),
+            diagnosticOperation: .modifyItem, diagnosticRecorder: sink) {}
+        let alias = UUID()
+        await lifecycle.finish(markProgressComplete: true, diagnosticItemMetadataAlias: alias) {}
+        await lifecycle.finish(markProgressComplete: true, diagnosticItemMetadataAlias: UUID()) {}
+        let events = try await sink.waitForEvents(count: 2)
+        #expect(events.map(\.phase) == [.started, .completed])
+        #expect(events.first?.itemMetadataAlias == nil)
+        #expect(events.last?.itemMetadataAlias == alias)
+    }
+
     @Test func cancellationWhileDiagnosticStartIsSuspendedNeverLaunchesWork() async {
         let completion = CompletionRecorder()
         let sink = SuspendingLifecycleDiagnosticSink()

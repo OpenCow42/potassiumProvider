@@ -677,7 +677,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     summary: result.trashed ? "Applied pending item changes and moved the item to trash." : "Modified item.")
                 await self.invalidateCachedSnapshotsAndSignal(runtime: loadedRuntime, containerIdentifiers: containers)
                 await signalRecoverableProviderErrorsResolved(for: self.domain)
-                await lifecycle.finish(markProgressComplete: true) {
+                await lifecycle.finish(markProgressComplete: true,
+                    diagnosticItemMetadataAlias: StabilityDiagnosticIdentity.activeMetadataAlias(for: result.item)) {
                     completionHandler(result.item.map { FileProviderItem(remoteItem: $0, rootFileID: loadedRuntime.configuration.rootFileID) },
                         result.remainingFields, false, nil)
                 }

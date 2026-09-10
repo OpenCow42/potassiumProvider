@@ -141,6 +141,11 @@ retains monitoring through operator pauses and waits for outstanding spans to se
 Local screenshots live separately under `visual-evidence`; they are cropped to
 positively identified generated content and are excluded from ordinary exports.
 
+Successful plaintext modify callbacks also attach their returned item's
+`itemMetadataAlias` to the terminal event, allowing comparison with independently
+verified remote state. This reuses the optional version 3 field; historical
+events without it remain readable. The value contains no raw item metadata.
+
 Version 3 diagnostics optionally include `itemMetadataAlias`, a run-salted
 commitment to item identity, name, parent, and size. No raw metadata values are
 exported. The live report's optional `expectedWorkingSetMetadataAlias` becomes
@@ -275,3 +280,10 @@ initialization or invalidation during the run. Missing or mixed process evidence
 prevents certification; a historical profile without this requirement remains a
 targeted result without cold/warm certification. No PID, path, account, or raw
 item identifier is exported by this record.
+
+Conflict profile version 3 requires a version 1
+`conflict-<attempt>-competitor-verified.json` record. It carries the exact ticket
+and a salted metadata fingerprint, written only after independent metadata/byte
+verification while that attempt is held. Cancellation invalidates it. The original
+preserve-both scenario requires the same record at sealing. Historical profile
+versions 1/2 remain readable; their results do not certify this stronger ordering.

@@ -11,13 +11,14 @@ public struct StabilityConflictProfile: Codable, Equatable, Sendable {
     public let extensionLaunchMode: StabilityExtensionLaunchMode?
 
     public init(runID: UUID, selectedCase: StabilityLiveConflictCase, extensionLaunchMode: StabilityExtensionLaunchMode? = nil) {
-        schemaVersion = 2; self.runID = runID; self.selectedCase = selectedCase
+        schemaVersion = 3; self.runID = runID; self.selectedCase = selectedCase
         self.extensionLaunchMode = extensionLaunchMode
     }
 
     public func validate(report: StabilityFinderRunReport, ticket: StabilityConflictBarrier.Ticket?,
-                         reached: Bool, released: Bool, diagnostics: [ProviderDiagnosticEvent]) throws {
-        guard [1, 2].contains(schemaVersion) else { throw StabilityLiveEvidenceError.missingConflict }
+                         reached: Bool, released: Bool, competingMutationVerified: Bool = false,
+                         diagnostics: [ProviderDiagnosticEvent]) throws {
+        guard [1, 2, 3].contains(schemaVersion) else { throw StabilityLiveEvidenceError.missingConflict }
         for step in report.stepResults where step.scenario != selectedCase.scenario {
             guard step.outcome == .skipped(.notSelectedForConflictProfile) ||
                     step.outcome == .skipped(.preflightFailure) || step.outcome == .skipped(.preflightCheckpoint) else {
@@ -28,6 +29,7 @@ public struct StabilityConflictProfile: Codable, Equatable, Sendable {
             throw StabilityLiveEvidenceError.missingConflict
         }
         guard step.outcome == .passed else { return }
+        guard schemaVersion < 3 || competingMutationVerified else { throw StabilityLiveEvidenceError.missingConflict }
         guard report.preflightResults.allSatisfy({ $0.outcome == .passed }),
               let ticket, reached, released, ticket.runID == runID, ticket.caseID == selectedCase,
               ticket.point == selectedCase.schedulingPoint, ticket.correlationID == step.correlationID,

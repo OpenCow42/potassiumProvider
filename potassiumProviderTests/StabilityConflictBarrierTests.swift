@@ -29,6 +29,48 @@ struct StabilityConflictBarrierTests {
         try StabilityConflictBarrier.release(next, run: run, activeRunID: run.runID)
     }
 
+    @Test(arguments: [false, true])
+    func competingMutationProofRequiresTheHeldAttempt(cancel: Bool) async throws {
+        let run = try makeRun(), correlation = UUID()
+        defer { try? FileManager.default.removeItem(at: run.directoryURL) }
+        let ticket = try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation,
+            activeRunID: run.runID)
+        #expect(!StabilityConflictBarrier.competingMutationVerified(ticket, run: run))
+        #expect(throws: CancellationError.self) {
+            try StabilityConflictBarrier.recordVerifiedCompetingMutation(ticket, run: run,
+                itemIdentifier: "fixture", metadataAlias: UUID(), activeRunID: run.runID)
+        }
+        let task = Task { try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: "fixture",
+            correlationID: correlation, activeRun: { run }) }
+        defer { task.cancel() }
+        let end = ContinuousClock.now.advanced(by: .seconds(2))
+        while !StabilityConflictBarrier.reached(ticket, run: run), ContinuousClock.now < end {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(throws: CancellationError.self) {
+            try StabilityConflictBarrier.recordVerifiedCompetingMutation(ticket, run: run,
+                itemIdentifier: "unrelated", metadataAlias: UUID(), activeRunID: run.runID)
+        }
+        try StabilityConflictBarrier.recordVerifiedCompetingMutation(ticket, run: run,
+            itemIdentifier: "fixture", metadataAlias: UUID(), activeRunID: run.runID)
+        #expect(StabilityConflictBarrier.competingMutationVerified(ticket, run: run))
+        if cancel {
+            task.cancel()
+            await #expect(throws: CancellationError.self) { try await task.value }
+            #expect(!StabilityConflictBarrier.competingMutationVerified(ticket, run: run))
+        } else {
+            try StabilityConflictBarrier.release(ticket, run: run, activeRunID: run.runID)
+            try await task.value
+            #expect(throws: CancellationError.self) {
+                try StabilityConflictBarrier.recordVerifiedCompetingMutation(ticket, run: run,
+                    itemIdentifier: "fixture", metadataAlias: UUID(), activeRunID: run.runID)
+            }
+            let next = try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation,
+                activeRunID: run.runID)
+            #expect(!StabilityConflictBarrier.competingMutationVerified(next, run: run))
+        }
+    }
+
     @Test func expiredAttemptDoesNotBlockTheNextCase() async throws {
         let run = try makeRun(), correlation = UUID()
         defer { try? FileManager.default.removeItem(at: run.directoryURL) }

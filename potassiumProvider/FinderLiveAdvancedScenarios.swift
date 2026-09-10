@@ -11,19 +11,33 @@ extension FinderLiveRunSession {
     func waitVisibleDestination(_ item: KDriveRemoteItem) async throws -> URL {
         let parent = try require(owned[item.parentID])
         let parentURL = try await visible(parent)
+        // Open the verified destination before waiting for its child. Waiting
+        // in the old folder can leave the destination unenumerated in Finder.
+        try await ui.navigate(to: parentURL)
         var result: URL?
         var lastObservation: String?
         try await poll {
-            result = try await FinderRestoreObservation.observeVisibleDestination(parent: parentURL, name: item.name) {
+            result = try await FinderRestoreObservation.observeVisibleDestination(name: item.name) {
                 let candidate = try await self.visible(item)
-                let parentMatches = FinderUIURLIdentity.matches(candidate.deletingLastPathComponent(), parentURL)
-                let nameMatches = candidate.lastPathComponent.precomposedStringWithCanonicalMapping == item.name.precomposedStringWithCanonicalMapping
-                let observation = "parentMatches=\(parentMatches) nameMatches=\(nameMatches)"
-                if (!parentMatches || !nameMatches), lastObservation != observation {
-                    print("finder stability: local destination pending; " + observation)
+                return candidate
+            } matchesParent: { candidateParent in
+                let binding = try await StabilityCallbackWaiter<(String, String)>().wait(timeout: self.deadline.remaining()) { completion in
+                    NSFileProviderManager.getIdentifierForUserVisibleFile(at: candidateParent) { identifier, domain, error in
+                        if let error { completion(.failure(error)) }
+                        else if let identifier, let domain { completion(.success((identifier.rawValue, domain.rawValue))) }
+                        else { completion(.failure(FinderLiveError.unsafeTarget)) }
+                    }
+                }
+                let parentMatches = FinderStabilityTargetBinding.matches(expectedFileID: parent.id,
+                    expectedDomainIdentifier: self.context.domain.domainIdentifier,
+                    actualItemIdentifier: binding.0, actualDomainIdentifier: binding.1)
+                let pathMatches = FinderUIURLIdentity.matches(candidateParent, parentURL)
+                let observation = "parentIdentityMatches=\(parentMatches) parentPathMatches=\(pathMatches)"
+                if lastObservation != observation {
+                    print("finder stability: local destination observation; " + observation)
                     lastObservation = observation
                 }
-                return candidate
+                return parentMatches
             }
             return result != nil
         }
@@ -83,40 +97,9 @@ extension FinderLiveRunSession {
     }
 
     func preserveBoth() async throws {
-        let base = Data("conflict base\n".utf8), local = Data("conflict local\n".utf8), other = Data("conflict remote\n".utf8)
-        let item = try await upload(name: "conflict.txt", parent: require(root), data: base)
-        try await signal(NSFileProviderItemIdentifier(String(item.parentID)))
-        let url = try await visible(item)
-        try await ui.edit(url, contents: nil)
-        let fresh = try await context.remote.item(driveID: context.domain.driveID, fileID: item.id)
-        guard let etag = fresh.etag else { throw FinderLiveError.assertionFailed }
-        try StabilityConflictBarrier.arm(run: run, itemIdentifier: String(item.id), correlationID: correlationID)
-        defer { try? StabilityConflictBarrier.release(run: run) }
-        try await ui.edit(url, contents: String(decoding: local, as: UTF8.self))
-        try await poll { StabilityConflictBarrier.reached(run: self.run) }
-        conflictReached = true
-        do {
-            _ = try await context.remote.replaceFile(driveID: context.domain.driveID, fileID: item.id, expectedETag: etag,
-                clientToken: KDriveMutationIdentity.clientToken([run.runID.uuidString, "remote-conflict"]),
-                contentHash: KDriveMutationIdentity.contentHash(other), contents: other, lastModifiedAt: Date())
-        } catch {
-            try? StabilityConflictBarrier.release(run: run)
-            throw error
-        }
-        try StabilityConflictBarrier.release(run: run)
-        var localItem: KDriveRemoteItem?, remoteItem: KDriveRemoteItem?
-        try await poll {
-            for candidate in try await self.list(self.require(self.root)) where candidate.name.contains("conflict") && !candidate.isDirectory {
-                let data = try await self.context.remote.downloadFile(driveID: self.context.domain.driveID, fileID: candidate.id)
-                if data == local { localItem = candidate }
-                if data == other { remoteItem = candidate }
-            }
-            return localItem != nil && remoteItem != nil && localItem?.id != remoteItem?.id
-        }
-        for item in [try require(localItem), try require(remoteItem)] {
-            remember(item)
-            try await ui.select(visible(item))
-        }
+        // Share the independently selectable race's cancellable scheduling,
+        // exact version/identity checks, and reopening of both byte streams.
+        try await executeConflict(.contentAfterPreflight)
     }
 
     func cancelTransfer() async throws {

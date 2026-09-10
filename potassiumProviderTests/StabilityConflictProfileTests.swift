@@ -29,22 +29,25 @@ struct StabilityConflictProfileTests {
             preflightResults: StabilityFinderPreflightCheck.allCases.map { .init(check: $0, outcome: .passed, recordedAt: time) }, stepResults: steps)
         let callback = ProviderDiagnosticEvent(subjectAlias: ticket.subject, correlationID: correlation,
             source: .fileProviderExtension, operation: .modifyItem, phase: .completed)
-        try profile.validate(report: report, ticket: ticket, reached: true, released: true, diagnostics: [callback])
+        try profile.validate(report: report, ticket: ticket, reached: true, released: true, competingMutationVerified: true, diagnostics: [callback])
+        #expect(throws: StabilityLiveEvidenceError.missingConflict) {
+            try profile.validate(report: report, ticket: ticket, reached: true, released: true, diagnostics: [callback])
+        }
         #expect(report.stepSummary.passed == 1 && report.stepSummary.skipped == 15)
         for (reached, released) in [(false, true), (true, false), (false, false)] {
             #expect(throws: StabilityLiveEvidenceError.missingConflict) {
-                try profile.validate(report: report, ticket: ticket, reached: reached, released: released, diagnostics: [callback])
+                try profile.validate(report: report, ticket: ticket, reached: reached, released: released, competingMutationVerified: true, diagnostics: [callback])
             }
         }
         #expect(throws: StabilityLiveEvidenceError.missingConflict) {
-            try profile.validate(report: report, ticket: nil, reached: true, released: true, diagnostics: [callback])
+            try profile.validate(report: report, ticket: nil, reached: true, released: true, competingMutationVerified: true, diagnostics: [callback])
         }
         #expect(throws: StabilityLiveEvidenceError.missingConflict) {
-            try profile.validate(report: report, ticket: ticket, reached: true, released: true, diagnostics: [])
+            try profile.validate(report: report, ticket: ticket, reached: true, released: true, competingMutationVerified: true, diagnostics: [])
         }
         let wrongRun = StabilityConflictProfile(runID: UUID(), selectedCase: selected)
         #expect(throws: StabilityLiveEvidenceError.missingConflict) {
-            try wrongRun.validate(report: report, ticket: ticket, reached: true, released: true, diagnostics: [callback])
+            try wrongRun.validate(report: report, ticket: ticket, reached: true, released: true, competingMutationVerified: true, diagnostics: [callback])
         }
     }
 }

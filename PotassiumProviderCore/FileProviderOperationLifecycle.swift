@@ -80,6 +80,7 @@ public actor FileProviderOperationLifecycle {
     public func finish(
         markProgressComplete: Bool,
         diagnosticError: (any Error)? = nil,
+        diagnosticItemMetadataAlias: UUID? = nil,
         _ completion: @escaping @Sendable () -> Void
     ) async -> Bool {
         if progress.isCancelled {
@@ -99,7 +100,7 @@ public actor FileProviderOperationLifecycle {
             if let diagnosticError {
                 await diagnosticSpan.fail(error: diagnosticError)
             } else {
-                await diagnosticSpan.complete(statusClass: .success)
+                await diagnosticSpan.complete(statusClass: .success, itemMetadataAlias: diagnosticItemMetadataAlias)
             }
         }
         completion()

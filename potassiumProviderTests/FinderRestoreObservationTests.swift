@@ -32,6 +32,26 @@ struct FinderRestoreObservationTests {
         }
     }
 
+    @Test func providerParentIdentityHandlesURLAliasesAndRejectsStaleParents() async throws {
+        let candidate = URL(filePath: "/synthetic/mounted-alias/Sibling/conflict.txt")
+        var checked: URL?
+        let ready = try await FinderRestoreObservation.observeVisibleDestination(name: "conflict.txt", readVisible: { candidate }) { parent in
+            checked = parent
+            return FinderStabilityTargetBinding.matches(expectedFileID: 42, expectedDomainIdentifier: "synthetic-domain",
+                actualItemIdentifier: "42", actualDomainIdentifier: "synthetic-domain")
+        }
+        #expect(ready == candidate && checked == candidate.deletingLastPathComponent())
+        for (identifier, domain) in [("41", "synthetic-domain"), ("42", "different-domain")] {
+            let pending = try await FinderRestoreObservation.observeVisibleDestination(name: "conflict.txt", readVisible: { candidate }) { _ in
+                FinderStabilityTargetBinding.matches(expectedFileID: 42, expectedDomainIdentifier: "synthetic-domain",
+                    actualItemIdentifier: identifier, actualDomainIdentifier: domain)
+            }
+            #expect(pending == nil)
+        }
+        let wrongName = try await FinderRestoreObservation.observeVisibleDestination(name: "different.txt", readVisible: { candidate }) { _ in true }
+        #expect(wrongName == nil)
+    }
+
     private func item(id: Int = 42, drive: Int = 7, parent: Int = 3) -> KDriveRemoteItem {
         KDriveRemoteItem(id: id, name: "Synthetic.txt", type: "file", status: "ok", driveID: drive,
             parentID: parent, path: nil, size: 4, mimeType: "text/plain", createdAt: nil,

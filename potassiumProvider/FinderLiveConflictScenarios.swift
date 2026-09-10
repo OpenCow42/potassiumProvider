@@ -40,18 +40,30 @@ extension FinderLiveRunSession {
             }
             conflictReached = true
             try await verifyOwned(original)
+            let competing: KDriveRemoteItem
             switch conflict {
             case .contentBeforePreflight, .contentAfterPreflight:
                 _ = try await context.remote.replaceFile(driveID: context.domain.driveID, fileID: original.id,
                     expectedETag: etag, clientToken: KDriveMutationIdentity.clientToken([run.runID.uuidString, "competitor"]),
                     contentHash: KDriveMutationIdentity.contentHash(remoteBytes), contents: remoteBytes, lastModifiedAt: Date())
+                competing = try await waitMetadata(original) { $0.id == original.id && $0.parentID == parent.id &&
+                    $0.name == original.name && $0.contentVersion != base.contentVersion }
+                try await waitBytes(competing, expected: remoteBytes)
             case .renameRename, .editRename:
                 try await context.remote.renameItem(driveID: context.domain.driveID, fileID: original.id, name: "Remote.txt")
+                competing = try await waitMetadata(original) { $0.id == original.id && $0.parentID == parent.id && $0.name == "Remote.txt" }
+                try await waitBytes(competing, expected: baseBytes)
             case .moveMove, .editMove:
                 try await verifyOwned(remoteDestination)
                 try await context.remote.moveItem(driveID: context.domain.driveID, fileID: original.id,
                     destinationParentID: remoteDestination.id, name: nil)
+                competing = try await waitMetadata(original) { $0.id == original.id &&
+                    $0.parentID == remoteDestination.id && $0.name == original.name }
+                try await waitBytes(competing, expected: baseBytes)
             }
+            try StabilityConflictBarrier.recordVerifiedCompetingMutation(ticket, run: run,
+                itemIdentifier: String(competing.id), metadataAlias: StabilityDiagnosticIdentity.metadataAlias(for: competing, runID: run.runID))
+            print("finder conflict: competing server state verified before gate release")
             try StabilityConflictBarrier.release(ticket, run: run)
             try await localTask.value
             if conflict == .contentBeforePreflight || conflict == .contentAfterPreflight {
@@ -75,9 +87,20 @@ extension FinderLiveRunSession {
             } else {
                 let expectedParent = conflict == .moveMove ? localDestination.id : conflict == .editMove ? remoteDestination.id : parent.id
                 let expectedName = conflict == .renameRename ? "Local.txt" : conflict == .editRename ? "Remote.txt" : original.name
-                let current = try await waitMetadata(original) { $0.id == original.id && $0.parentID == expectedParent && $0.name == expectedName }
+                var current = try await waitMetadata(original) { $0.id == original.id && $0.parentID == expectedParent && $0.name == expectedName }
                 let expectedBytes = conflict == .renameRename || conflict == .moveMove ? baseBytes : localBytes
                 try await waitBytes(current, expected: expectedBytes)
+                // TextEdit save can return before upload completion. Refresh the
+                // metadata after byte verification so its size/version is current.
+                current = try await waitMetadata(original) { $0.id == original.id && $0.parentID == expectedParent &&
+                    $0.name == expectedName && $0.size == expectedBytes.count }
+                let subject = StabilityDiagnosticIdentity.alias(for: String(original.id), runID: run.runID)
+                let returned = try diagnostics().last { $0.operation == .modifyItem && $0.phase == .completed &&
+                    $0.subjectAlias == subject && $0.correlationID == correlationID && $0.itemMetadataAlias != nil }
+                if let returned {
+                    let matches = returned.itemMetadataAlias == StabilityDiagnosticIdentity.metadataAlias(for: current, runID: run.runID)
+                    print("finder conflict: callback metadata matches verified remote result=\(matches)")
+                }
                 try await showAndReopen(current, expected: expectedBytes, capture: 303)
             }
         } catch {
