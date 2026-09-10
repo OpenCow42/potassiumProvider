@@ -230,6 +230,11 @@ permanent deletion expects `deleteItem`. Restore and deletion require an exactly
 identified provider-managed trashed fixture. Deletion additionally pauses for
 confirmation of that generated fixture, then rebinds it. Empty Trash is never used.
 Unavailable UI or inaccessible trash identity is incomplete coverage, never a pass.
+Metadata lookup checks the active endpoint first, then the typed Trash endpoint
+only after HTTP 404. The resolved drive/item identity must match exactly. Only
+absence from both endpoints becomes `noSuchItem`; the handled active 404 remains
+in diagnostics and needs successful correlated recovery evidence. This metadata
+fallback does not allow content or mutation preflight to operate on trashed items.
 
 The Stability-only conflict barrier holds the exact local mutation after its real
 version preflight while the runner performs a competing typed remote replacement.

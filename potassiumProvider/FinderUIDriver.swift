@@ -134,11 +134,22 @@ final class SystemFinderUIDriver: FinderUIDriving {
         if !FinderUIURLIdentity.matches(currentURL, parent) { try await navigate(to: parent) }
         selectionURL = nil
         try await activateFinder()
-        // `select file` can reveal it in another Finder window. Assign the
-        // selection of the already verified front window without revealing.
-        _ = try script("set selection to {POSIX file \(quote(url.path)) as alias}")
-        selectionURL = url
-        try await wait { try self.verifySelection(url) }
+        try await FinderSelectionSequence.execute(waitUntilVisible: {
+            print("finder stability UI: waiting for generated selection row")
+            try await self.wait { try await self.contains(url) }
+        }, assignSelection: {
+            guard let windowID = self.windowID, try self.verifyWindow(parent),
+                  try self.script("get id of front Finder window").int32Value == windowID else {
+                throw FinderUIError.windowMismatch
+            }
+            // `select file` can reveal it in another Finder window. Assign the
+            // selection of the already verified front window without revealing.
+            print("finder stability UI: generated row visible; assigning selection")
+            _ = try self.script("set selection to {POSIX file \(self.quote(url.path)) as alias}")
+            self.selectionURL = url
+        }, waitUntilSelected: {
+            try await self.wait { try self.verifySelection(url) }
+        })
         actionCount += 1
     }
 

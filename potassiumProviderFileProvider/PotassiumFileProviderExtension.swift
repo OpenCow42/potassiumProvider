@@ -183,11 +183,27 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     throw NSFileProviderError(.noSuchItem)
                 }
 
-                let item = try await loadedRuntime.remote.item(driveID: loadedRuntime.configuration.driveID, fileID: fileID)
+                let metadata: KDriveItemMetadataLookup.Result
+                do {
+                    metadata = try await KDriveItemMetadataLookup.resolve(
+                        driveID: loadedRuntime.configuration.driveID, fileID: fileID,
+                        active: {
+                            try await loadedRuntime.remote.item(driveID: loadedRuntime.configuration.driveID, fileID: fileID)
+                        }, trashed: {
+                            guard let actions = loadedRuntime.remote as? any KDriveContextActionProviding else {
+                                throw KDriveItemMetadataLookupError.trashLookupUnavailable
+                            }
+                            return try await actions.trashedItem(driveID: loadedRuntime.configuration.driveID, fileID: fileID)
+                        })
+                } catch KDriveItemMetadataLookupError.notFound {
+                    throw NSFileProviderError(.noSuchItem)
+                }
+                let item = metadata.item
                 FileProviderLog.replicatedExtension.debug("resolved item identifier(\(identifier.rawValue, privacy: .public)) kDriveFileID(\(fileID, privacy: .public)) type(\(item.type ?? "unknown", privacy: .public))")
                 await signalRecoverableProviderErrorsResolved(for: self.domain)
                 await lifecycle.finish(markProgressComplete: true) {
-                    completionHandler(FileProviderItem(remoteItem: item, rootFileID: loadedRuntime.configuration.rootFileID), nil)
+                    completionHandler(FileProviderItem(remoteItem: item, rootFileID: loadedRuntime.configuration.rootFileID,
+                        isTrashed: metadata.isTrashed), nil)
                 }
             } catch is CancellationError {
                 await lifecycle.cancel()

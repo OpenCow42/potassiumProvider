@@ -8,7 +8,9 @@ validation. Current live execution and acceptance are recorded separately here.
 
 ## 2026-09-10 — Live Finder implementation in progress
 
-Base: PR #22 at `49ac27a`; implementation branch `codex/live-finder-integration`.
+PR #22 now targets `main`; all stability work continues on
+`codex/file-provider-stability-loop`. The original plan and implementation through
+`49ac27a`, plus the live suite at `d8718c2`, are included in that single PR.
 The operator authorized the saved lab account and Keychain login. Authentication,
 remote ownership, registration, and domain binding have passed real preflight.
 The lab is a new child of the verified server-created `Private` folder. Neither
@@ -31,12 +33,49 @@ same item. The legacy global active-step pointer is not sufficient evidence.
 
 Current continuation evidence:
 
+- **Current finalized unit validation:** macOS Stability
+  `potassium-live-stability-mac-11.xcresult`: 387 passed; standard macOS
+  `potassium-live-standard-mac-03.xcresult`: 361 passed; iPhone 17/iOS 26.5
+  `potassium-live-ios-07.xcresult`: 345 passed; Apple Vision Pro/visionOS 26.5
+  `potassium-live-vision-sim-05.xcresult`: 345 passed. All have zero failures or
+  skips. The signed generic visionOS build `potassium-live-vision-build-05.log`
+  exited successfully. Simulator tests are kept separate from live Finder runs
+  to avoid competing UI activation. A signed live rerun of the new row wait is
+  in progress; full cold/warm acceptance remains open.
+
+- **Navigation follow-up:** runs `730c6781-b416-4783-9a5d-4212762a80f5`
+  and `4b2c1ec5-a8d9-45bf-8db5-c366295dd265` stopped at the first generated
+  folder selection before any navigation capture. Both retained two completed UI
+  actions (lab/root navigation), zero selected-row captures, and a selection timeout;
+  their dedicated Finder windows closed and reports finalized. During the second
+  run, a read-only Finder snapshot confirmed the expected generated root and zero
+  selected items. An isolated selection of the first run's already rendered folder
+  succeeded. Probable cause: assigning selection before Finder renders the new
+  folder's rows. The driver now waits for the exact displayed row and revalidates
+  its own front-window identity before assignment; regression tests reject missing
+  rows and ignored selections. Live rerun is pending. These runs did not reach Restore.
+
+- **Metadata-fix validation:** `potassium-live-stability-mac-10.xcresult`
+  finalized with 385 passed and no failed/skipped tests. The iPhone 17/iOS 26.5
+  result `potassium-live-ios-07.xcresult` finalized with 345 passed. The signed
+  generic visionOS build `potassium-live-vision-build-05.log` exited successfully.
+  Navigation selector changes made afterward require their own Mac/live rerun.
+
+- **Restore metadata fix, live validation pending:** the metadata callback now uses
+  `KDriveItemMetadataLookup` to consult typed Trash metadata only after active-item
+  HTTP 404. It verifies drive/item identity, preserves operational errors, and
+  reports `.noSuchItem` only after both endpoints return 404. It does not broaden
+  mutation/content preflight. New regression tests cover successful fallback,
+  authoritative absence, identity mismatch, operational failure, and cancellation.
+  Evidence validation accepts a handled nested 404 only with matching successful
+  Trash and enclosing metadata spans; this never replaces the Restore callback.
+
 - **Commit-time validation:** `/private/tmp/potassium-live-stability-mac-09.xcresult`
   finalized with 375 passed, zero failed/skipped, including the added navigation
   milestone failure test. This validates the source being committed; it does
   not replace the outstanding live rerun of those additional captures.
 
-- **Latest live result:** `0c8fea91-5123-4c8f-87d7-54b7e451a9fc` passed the
+- **Farthest live result:** `0c8fea91-5123-4c8f-87d7-54b7e451a9fc` passed the
   first ten scenarios, including verified TextEdit editing/upload, rename, move,
   and the provider's `modifyItem` Trash transition. Restore failed before its
   UI action: active-item metadata returned HTTP 404 in span
@@ -44,8 +83,8 @@ Current continuation evidence:
   `.cannotSynchronize` (-2005) in parent span
   `3DAFD9B8-B676-43F3-A495-52BBFE75B915`. Source inspection confirms that
   `item(for:request:)` consults only active-item metadata, without a Trash lookup
-  fallback. This is the next focused diagnosis/fix; no fallback has been
-  implemented or validated yet. The run finalized with 10 passed, 1 failed,
+  fallback in that build. The focused correction above is awaiting validation.
+  The run finalized with 10 passed, 1 failed,
   5 skipped, and its Finder window closed. Its fixtures and evidence remain.
   Scenarios 11–16 and both complete cold/warm acceptance runs remain open.
 - Navigation now captures generated rows at the root, nested levels, Back,

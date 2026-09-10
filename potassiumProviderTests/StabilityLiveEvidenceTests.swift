@@ -23,15 +23,18 @@ struct StabilityLiveEvidenceTests {
     private func span(_ operation: ProviderDiagnosticOperation, terminal: ProviderDiagnosticPhase = .completed,
                       subject override: UUID? = nil, offset: TimeInterval = 0, parent: UUID? = nil, progress: Bool = false,
                       source: ProviderDiagnosticSource = .fileProviderExtension, fields: [ProviderDiagnosticField] = [],
-                      metadata: UUID? = nil) -> [ProviderDiagnosticEvent] {
+                      metadata: UUID? = nil, terminalOffset: TimeInterval? = nil,
+                      failureClass: ProviderDiagnosticErrorClass? = nil, failureCode: Int? = nil) -> [ProviderDiagnosticEvent] {
         let id = UUID()
         let phases: [ProviderDiagnosticPhase] = progress ? [.started, .progress, terminal] : [.started, terminal]
         return phases.enumerated().map { index, phase in
-            ProviderDiagnosticEvent(occurredAt: time.addingTimeInterval(offset + Double(index)), spanID: id,
+            ProviderDiagnosticEvent(occurredAt: time.addingTimeInterval(offset + (phase == terminal ? terminalOffset ?? Double(index) : Double(index))), spanID: id,
                 parentSpanID: parent, subjectAlias: override ?? subject, itemMetadataAlias: phase == .completed ? metadata : nil,
                 processInstanceID: process, processCodeHash: hash,
+                errorCode: phase == .failed ? failureCode : nil,
                 correlationID: correlation, source: source, operation: operation, phase: phase, fieldShape: fields,
-                errorClass: phase == .cancelled ? .cancellation : nil, progressPercentBucket: phase == .progress ? 10 : nil)
+                errorClass: phase == .cancelled ? .cancellation : phase == .failed ? failureClass : nil,
+                progressPercentBucket: phase == .progress ? 10 : nil)
         }
     }
 
@@ -81,6 +84,33 @@ struct StabilityLiveEvidenceTests {
     @Test func untriggeredConflictCannotPass() {
         #expect(throws: StabilityLiveEvidenceError.missingConflict) {
             try StabilityLiveEvidenceValidator.validate(step: step(.concurrentRemotePreserveBoth), diagnostics: span(.modifyItem) + span(.uploadFile))
+        }
+    }
+
+    @Test func handledActive404RequiresMatchingSuccessfulTrashAndParentSpans() throws {
+        let parent = span(.itemLookup, terminalOffset: 4)
+        let parentID = parent.first!.spanID!
+        let failed = span(.itemLookup, terminal: .failed, parent: parentID, failureClass: .notFound, failureCode: 404)
+        let trash = span(.trashedItem, offset: 2, parent: parentID)
+        let restore = span(.restoreTrashedItem, offset: 5)
+        try StabilityLiveEvidenceValidator.validate(step: step(.restore), diagnostics: parent + failed + trash + restore)
+        // Recovery metadata never substitutes for the actual Restore action.
+        #expect(throws: StabilityLiveEvidenceError.missingCallback) {
+            try StabilityLiveEvidenceValidator.validate(step: step(.restore), diagnostics: parent + failed + trash)
+        }
+        for incomplete in [
+            parent + failed,
+            failed + trash,
+            parent + failed + span(.trashedItem, offset: 2, parent: UUID()),
+            parent + failed + span(.trashedItem, subject: UUID(), offset: 2, parent: parentID),
+            parent + failed + span(.trashedItem, parent: parentID, terminalOffset: 0),
+            parent + failed + span(.trashedItem, terminal: .failed, offset: 2, parent: parentID),
+            parent + trash + span(.itemLookup, terminal: .failed, parent: parentID, failureClass: .notFound, failureCode: 403),
+            trash + span(.itemLookup, terminal: .failed, failureClass: .notFound, failureCode: 404)
+        ] {
+            #expect(throws: StabilityLiveEvidenceError.unexpectedFailure) {
+                try StabilityLiveEvidenceValidator.validate(step: step(.restore), diagnostics: incomplete + restore)
+            }
         }
     }
 

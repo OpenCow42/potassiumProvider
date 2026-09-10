@@ -51,6 +51,19 @@ enum FinderNameEditorObservation {
     }
 }
 @MainActor
+enum FinderSelectionSequence {
+    static func execute(waitUntilVisible: () async throws -> Void,
+                        assignSelection: () throws -> Void,
+                        waitUntilSelected: () async throws -> Void) async throws {
+        // Finder may acknowledge a new window target before its rows exist.
+        // An early selection assignment is silently ignored and is not replayed.
+        try await waitUntilVisible()
+        try assignSelection()
+        try await waitUntilSelected()
+    }
+}
+
+@MainActor
 enum FinderNavigationSequence {
     static func execute(using ui: any FinderUINavigating, root: URL, nested: URL, deep: URL, sibling: URL,
                         observe: ((Int, URL) async throws -> Void)? = nil) async throws {

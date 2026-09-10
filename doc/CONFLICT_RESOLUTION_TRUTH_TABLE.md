@@ -17,10 +17,16 @@ below are independently normative for their respective domain type.
 
 The latest live run passed ten scenarios through Trash, then failed Restore
 because the metadata callback queried the active-item endpoint for a trashed
-identity (HTTP 404 mapped to `.cannotSynchronize`). A Trash-aware metadata
-lookup remains unimplemented and unvalidated. The failure spans and preserved
-bundle are recorded in `STABILITY_LOOP_AUDIT.md`. No restore/permanent-delete
-acceptance or change to the open CR-013 server guarantee is claimed.
+identity (HTTP 404 mapped to `.cannotSynchronize`). Metadata lookup now falls
+back to the typed Trash endpoint only after active-item HTTP 404, validating the
+same drive and item identity before returning a Trash parent. Only HTTP 404 from
+both identity endpoints becomes `.noSuchItem`; permissions, transport failures,
+cancellation, unavailable fallback, and mismatched identities fail closed.
+Content and mutation preflights continue to require active metadata. The
+`KDriveItemMetadataLookupTests` regressions cover these decisions; live validation
+is pending. The failure spans and preserved bundle are recorded in
+`STABILITY_LOOP_AUDIT.md`. No restore/permanent-delete acceptance or change to
+the open CR-013 server guarantee is claimed.
 
 Immediate materialization notifications, working-set enumeration, and the timer
 can request overlapping polls; `minimumInterval: 0` is not an in-flight lock.

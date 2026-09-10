@@ -117,6 +117,13 @@ selected-item deletion uses `deleteItem`. Root enumeration cannot substitute for
 an actual working-set member event. Missing starts/terminals or contradictory
 terminals reject certification. Checkpoints are incomplete coverage.
 
+The timeline retains active-item HTTP 404 during Trash-aware metadata lookup.
+It is a handled intermediate failure only when the same subject, process/build,
+and enclosing metadata span have a subsequent successful `trashedItem` request
+and successful metadata callback. Missing or mismatched recovery, another status,
+or a failed enclosing callback remains a failure. This exception cannot satisfy
+the required Restore mutation evidence.
+
 `live-status.json` is a replaceable closed status snapshot for the read-only watch
 command. Watch shows scenario transitions, errors, cancellations, retry checkpoints,
 and extension lifecycle events; routine request successes stay in the timeline.

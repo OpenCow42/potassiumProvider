@@ -59,6 +59,22 @@ struct FinderNavigationTests {
         #expect(!FinderUIURLIdentity.matches(URL(string: "file://different-host/synthetic/caf%C3%A9.txt"), expected))
         #expect(!FinderUIURLIdentity.matches(nil, expected))
     }
+
+    @Test func unavailableRowCannotTriggerSelection() async {
+        var assigned = false
+        await #expect(throws: FinderUIError.timedOut) {
+            try await FinderSelectionSequence.execute(waitUntilVisible: { throw FinderUIError.timedOut },
+                assignSelection: { assigned = true }, waitUntilSelected: {})
+        }
+        #expect(!assigned)
+    }
+
+    @Test func ignoredSelectionCannotCompleteTheSelectionSequence() async {
+        await #expect(throws: FinderUIError.selectionMismatch) {
+            try await FinderSelectionSequence.execute(waitUntilVisible: {}, assignSelection: {},
+                waitUntilSelected: { throw FinderUIError.selectionMismatch })
+        }
+    }
     @Test func hiddenExtensionUsesExactDisplayedNameAndRejectsAmbiguousRows() {
         #expect(FinderUINameObservation.hasUniqueMatch(displayedName: "remote-change", rowNames: ["remote-change"]))
         #expect(!FinderUINameObservation.hasUniqueMatch(displayedName: "remote-change.txt", rowNames: ["remote-change"]))

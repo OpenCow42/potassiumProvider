@@ -83,7 +83,10 @@ public enum StabilityLiveEvidenceValidator {
             for terminal in terminals where terminal.phase != .completed {
                 let expectedCancellation = step.scenario == .cancellationAndProgress && terminal.phase == .cancelled && [.fetchContents, .downloadFile].contains(terminal.operation)
                 let expectedConflict = step.scenario == .concurrentRemotePreserveBoth && terminal.errorClass == .conflict
-                guard expectedCancellation || expectedConflict else { throw StabilityLiveEvidenceError.unexpectedFailure }
+                let recoveredTrashLookup = isRecoveredTrashLookup(terminal, events: events)
+                guard expectedCancellation || expectedConflict || recoveredTrashLookup else {
+                    throw StabilityLiveEvidenceError.unexpectedFailure
+                }
             }
         }
         func completed(_ groups: [Set<ProviderDiagnosticOperation>]) throws {
@@ -154,6 +157,23 @@ public enum StabilityLiveEvidenceValidator {
             }
             try completed([[.favoriteItem], [.duplicateItem], [.createShareLink], [.updateShareLink], [.deleteShareLink], [.restoreFileVersion]])
         }
+    }
+
+    /// A handled active-item 404 remains in the timeline. It is expected only
+    /// when the same callback resolves that exact subject from Trash successfully.
+    private static func isRecoveredTrashLookup(_ failure: ProviderDiagnosticEvent,
+                                               events: [ProviderDiagnosticEvent]) -> Bool {
+        guard failure.source == .fileProviderExtension, failure.operation == .itemLookup,
+              failure.phase == .failed, failure.errorClass == .notFound, failure.errorCode == 404,
+              let parent = failure.parentSpanID else { return false }
+        func matches(_ event: ProviderDiagnosticEvent) -> Bool {
+            event.source == failure.source && event.subjectAlias == failure.subjectAlias &&
+                event.processInstanceID == failure.processInstanceID &&
+                event.processCodeHash == failure.processCodeHash && event.phase == .completed &&
+                event.occurredAt >= failure.occurredAt
+        }
+        return events.contains { matches($0) && $0.spanID == parent && $0.operation == .itemLookup } &&
+            events.contains { matches($0) && $0.parentSpanID == parent && $0.operation == .trashedItem }
     }
 
     private static let callbackOperations: Set<ProviderDiagnosticOperation> = [
