@@ -327,3 +327,12 @@ working-set refresh records one `cancelled` terminal, separately from the succes
 instance-invalidation span. Object invalidation still does not imply process exit.
 A missing background terminal after observed process disappearance prevents sealing;
 never synthesize a terminal from process absence.
+
+
+Warm-launch preparation requests a working-set enumeration after verifying the lab
+and existing process. Its acknowledgement is not callback evidence. Failures before
+scenario execution retain `launch-preparation-failed.json` version 1, with a closed
+stage/reason, safe error class and numeric code, and `eligibleForAcceptance: false`.
+This diagnostic does not replace a Finder report or summary. Missing initial process,
+process replacement, and callback deadline failures remain distinct; payloads, error
+domains, URLs, and localized descriptions are excluded.

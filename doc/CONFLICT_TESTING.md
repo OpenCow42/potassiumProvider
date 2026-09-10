@@ -91,6 +91,13 @@ or the system File Provider daemon. The running profile requires the existing
 process to survive from before preflight until sealing; it does not start a process
 and call that a warm run. Failed lifecycle evidence cannot certify a case.
 
+Warm preparation explicitly signals the verified domain’s working-set enumerator.
+Cached root resolution may produce no extension callback, so passive waiting cannot
+establish readiness. Signal acknowledgement alone is insufficient: the same signed
+process must produce completed diagnostic evidence within the existing 90-second
+budget. Preflight failures retain a non-accepting, versioned
+`launch-preparation-failed.json` with closed stage/reason and numeric error data.
+
 Launch proof version 2 distinguishes a process from the replicated-provider objects
 it hosts. Apple permits discarding and recreating those objects within one process.
 Their initialization/invalidation spans must be complete and successful; they remain

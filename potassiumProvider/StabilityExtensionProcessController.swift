@@ -26,16 +26,25 @@ final class StabilityExtensionProcessController {
               let hash = StabilityDiagnosticIdentity.codeHash(at: extensionURL) else { throw FinderLiveError.unverifiedBuild }
         self.executable = executable; expectedCodeHash = hash
         initial = try Self.observe(executable: executable, codeHash: hash)
-        if mode == .running, initial == nil { throw FinderLiveError.unverifiedBuild }
+        if mode == .running, initial == nil { throw StabilityLaunchPreparationError.initialProcessAbsent }
     }
 
-    func prepare(verifySafety: @MainActor () async throws -> Void) async throws {
+    func prepare(verifySafety: @MainActor () async throws -> Void,
+                 requestObservation: @MainActor (Duration) async throws -> Void) async throws {
         try await verifySafety()
         if mode == .running {
             let end = ContinuousClock.now.advanced(by: .seconds(90))
+            // Resolving an already-known root can be answered by the daemon's
+            // cache. Explicitly request a callback instead of waiting for an
+            // incidental poll while an idle extension may be discarded.
+            try await StabilityWarmLaunchObservation.request(
+                verifyProcess: {
+                    guard try self.observe() == self.initial else { throw StabilityLaunchPreparationError.initialProcessChanged }
+                },
+                signalWorkingSet: { try await requestObservation(ContinuousClock.now.duration(to: end)) })
             while true {
                 try Task.checkCancellation()
-                guard try observe() == initial else { throw FinderLiveError.unverifiedBuild }
+                guard try observe() == initial else { throw StabilityLaunchPreparationError.initialProcessChanged }
                 guard ContinuousClock.now < end else { throw StabilityDeadlineError.expired }
                 let boundary = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
                 let events = try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL)

@@ -149,7 +149,12 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             } else if let extensionLaunchMode {
                 try await runCoordinator.requireExtensionLaunch(extensionLaunchMode, ownedRun: ownedRun)
             }
-            launchController = try extensionLaunchMode.map { try StabilityExtensionProcessController(mode: $0, run: ownedRun.run) }
+            do {
+                launchController = try extensionLaunchMode.map { try StabilityExtensionProcessController(mode: $0, run: ownedRun.run) }
+            } catch {
+                StabilityLaunchPreparationFailure.record(stage: .initialProcessObservation, error: error, run: ownedRun.run)
+                throw error
+            }
         } catch {
             print("finder conflict: extension launch preparation could not establish the requested initial state")
             return .failed
@@ -159,6 +164,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             preflightContext = try await contextLoader.loadPreflight()
         } catch {
             try? statusWriter(StabilityLiveStatus(state: .failed), ownedRun.run)
+            StabilityLaunchPreparationFailure.record(stage: .labPreflight, error: error, run: ownedRun.run)
             // Preserve preflight diagnostics and the unsealed owned run for
             // explicit stale-owner recovery; missing context cannot certify it.
             return .rejected
@@ -187,17 +193,21 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             } catch { preflightCommandResult = .rejected; break }
         }
         let context: FinderStabilityLiveContext
+        var preparationStage = StabilityLaunchPreparationFailure.Stage.launchPreparation
         do {
             // Reconstruct after the run starts so typed network spans bind to
             // this run's active JSONL recorder instead of a cached nil sink.
             if preflightCommandResult == .ready {
-                try await launchController?.prepare(verifySafety: preflightContext.verifySafety)
+                try await launchController?.prepare(verifySafety: preflightContext.verifySafety,
+                    requestObservation: preflightContext.requestWorkingSetRefresh)
             }
+            preparationStage = .liveContext
             context = try await contextLoader.load(
                 ownedRun: ownedRun,
                 runCoordinator: runCoordinator
             )
         } catch {
+            StabilityLaunchPreparationFailure.record(stage: preparationStage, error: error, run: ownedRun.run)
             // Never seal a run without its required Finder report. The active
             // owner marker and partial bundle remain intact for explicit stale
             // owner recovery after this process exits.
@@ -424,6 +434,7 @@ struct FinderStabilityLiveContext {
 struct FinderStabilityPreflightContext {
     let hasVerifiedFileProviderConsent: Bool
     let verifySafety: @MainActor () async throws -> Void
+    let requestWorkingSetRefresh: @MainActor (Duration) async throws -> Void
 }
 
 struct FinderStabilityContextLoader {
@@ -488,7 +499,17 @@ struct FinderStabilityContextLoader {
         let base = try await loadBase()
         return FinderStabilityPreflightContext(
             hasVerifiedFileProviderConsent: base.hasVerifiedFileProviderConsent,
-            verifySafety: base.verifySafety
+            verifySafety: base.verifySafety,
+            requestWorkingSetRefresh: { timeout in
+                let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(rawValue: base.domain.domainIdentifier),
+                    displayName: base.domain.displayName)
+                guard let manager = NSFileProviderManager(for: domain) else { throw FinderStabilityContextError.fileProviderNotRegistered }
+                try await StabilityCallbackWaiter<Void>().wait(timeout: timeout) { completion in
+                    manager.signalEnumerator(for: .workingSet) { error in
+                        if let error { completion(.failure(error)) } else { completion(.success(())) }
+                    }
+                }
+            }
         )
     }
 

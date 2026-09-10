@@ -1355,3 +1355,48 @@ all have zero failed/skipped/expected failures. The signed generic visionOS11 bu
 succeeded. Complete fresh and already-running conflict profiles will be rerun on
 the ordinary signed build because the provider runtime changed. Earlier accepted
 bundles remain baseline evidence; CR-024 awaits live verification.
+
+
+### Lifecycle correction: fresh conflict rerun and warm preflight gap
+
+All six fresh conflict cases sealed as passes on `3a5eb52`:
+
+| Case | Run |
+| --- | --- |
+| Content before preflight | `1ccd7913-4c94-426d-ab21-4b6b830141a1` |
+| Content after preflight | `12c43c08-9739-4dd0-a366-9fc1924e8c53` |
+| Rename/rename | `9e6d0be0-6a8d-4e52-ac01-73ccafcaf4f7` |
+| Move/move | `d5fbf055-58ac-4457-b706-f7a1c9522ec4` |
+| Edit/rename | `10172d8c-beea-420f-9ebd-8b4280b44cc7` |
+| Edit/move | `2105c8c9-f9db-4860-b2bb-8f02b44ec8d3` |
+
+The corresponding warm invocation `8bd78e81-4ff6-4394-94b5-6c17c76a1df2`
+stopped before any Finder scenario. Its 23 diagnostic events contain only completed
+runner API requests and progress, with no extension-source event. The initial
+process observation succeeded, but the installed provider was absent on subsequent
+inspection. The old catch did not distinguish a process-change guard from the
+callback deadline; the exact guard and process-exit cause remain unconfirmed. Its
+exited owner was explicitly recovered, preserving the unsealed bundle and fixtures.
+No warm pass is inferred. Fresh cancellations observed so far belong to periodic
+polls, not the formerly untracked materialization child; CR-024 stays open.
+
+Source inspection found warm preparation passively awaited an extension callback,
+although cached visible-root resolution need not invoke the extension. It now asks
+the verified domain's working-set enumerator for refresh, checks the same process
+before and after acknowledgement, then retains the existing completed-callback,
+signing, continuity, and 90-second assertions. Apple's installed
+`NSFileProviderManager.h` specifies working-set signaling for replicated providers,
+including when no UI enumerator is open; the corresponding
+[Apple method documentation](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/signalenumerator(for:completionhandler:))
+is the API contract. Classification: harness preflight; high confidence for the
+missing request, no claim that it explains the provider's exit. Reproduce by running
+the warm profile immediately after the final fresh case closes its owned windows.
+
+Preflight failures now retain a version-1, non-accepting closed diagnostic containing
+stage, reason, safe error class, and numeric code. Tests cover the signal's ordering,
+process replacement on either side, request failure, and exclusion of private error
+payloads. Existing launch-proof tests still reject missing callback evidence.
+Mac37 finalized **457 passed**, zero failed/skipped/expected failures. This correction
+is confined to the macOS Stability harness; the latest shared-runtime standard macOS,
+iOS/visionOS Simulator, and generic visionOS results above remain applicable.
+The corrected complete live profiles are next.
