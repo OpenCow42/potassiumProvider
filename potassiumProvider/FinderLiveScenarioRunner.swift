@@ -162,13 +162,14 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
             try await ui.select(changedURL)
         case .hydrate:
             let item = try s.require(s.seed), url = try await s.visible(item)
-            try await ui.edit(url, contents: nil)
-            try await s.waitBytes(item, expected: s.bytes)
-            guard try Data(contentsOf: url) == s.bytes else { throw FinderLiveError.assertionFailed }
+            try await FinderHydrationSequence.execute(using: ui, url: url) {
+                try await s.waitBytes(item, expected: s.bytes)
+                guard try Data(contentsOf: url) == s.bytes else { throw FinderLiveError.assertionFailed }
+            }
         case .evict:
-            // Wait for both disk and provider changes to be acknowledged. This
-            // is the system's testing barrier, not an API eviction substitute.
-            try await s.stabilize()
+            // Hydration already verified this item's bytes and fetch completion,
+            // and closed its editor. Unrelated domain work is not a prerequisite
+            // for invoking this exact item's Finder action.
             let url = try await s.visible(s.require(s.seed))
             try await ui.contextAction("Remove Download", on: url)
             // The menu state is inspected without opening or reading the evicted item.

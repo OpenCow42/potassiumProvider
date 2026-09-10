@@ -13,7 +13,13 @@ protocol FinderUINavigating: AnyObject {
 }
 
 @MainActor
-protocol FinderUIDriving: FinderUINavigating {
+protocol FinderDocumentUIDriving: AnyObject {
+    func edit(_ url: URL, contents: String?) async throws
+    func closeOwnedEditorDocuments() async throws
+}
+
+@MainActor
+protocol FinderUIDriving: FinderUINavigating, FinderDocumentUIDriving {
     var actionCount: Int { get }
     func useDeadline(_ remaining: @escaping @MainActor () -> Duration)
     func expectActionPanel(for alias: UUID)
@@ -27,7 +33,6 @@ protocol FinderUIDriving: FinderUINavigating {
     func contextAction(_ title: String, on url: URL) async throws
     func hasContextAction(_ title: String, on url: URL) async throws -> Bool
     func trash(_ url: URL) async throws
-    func edit(_ url: URL, contents: String?) async throws
     func cancelDownload(_ url: URL) async throws
     func confirmPermanentDeletion(_ url: URL, fixtureAlias: UUID) async throws
     func panelAction(_ action: FinderPanelAction) async throws
@@ -80,7 +85,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
         if let failure { throw failure }
     }
 
-    private func closeOwnedEditorDocuments() async throws {
+    func closeOwnedEditorDocuments() async throws {
         for (url, owner) in ownedEditorDocuments {
             guard processIdentity(pid: owner.pid) == owner,
                   let editor = NSRunningApplication(processIdentifier: owner.pid),

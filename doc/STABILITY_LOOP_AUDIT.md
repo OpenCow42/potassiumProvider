@@ -398,6 +398,70 @@ stricter validation remain covered. New complete fresh/warm runs are required on
 the ordinary signed build with the corrected proof; Live19 remains the preserved
 passing milestone for its earlier build and version-1 evidence.
 
+Complete profiles Live21 and Live22 finalized **six fresh plus six already-running
+cases passed** on implementation `05e8e5f`. Both commands exited successfully.
+Independent inspection verified all twelve immutable reports and summaries, the
+complete case sets, conflict profile version 3, launch proof version 2, competing
+commit records, screenshots, correlated timelines, and exactly one start/terminal
+per diagnostic span. Every selected case passed; the other fifteen entries in each
+report remain explicitly unselected. No failed assertions, checkpoints, unhealthy
+writer markers, or SQLite errors were present.
+
+| Case | Fresh run | Already-running run |
+| --- | --- | --- |
+| Content before preflight | `d4bce3b3-7157-4ad6-ade6-b4074b1dd547` | `d9cef2b7-fdf4-473b-9c0d-02d2b289435d` |
+| Content after preflight | `a3f16534-e021-461d-92f6-8bcb79489468` | `eeca8ece-8258-4aa5-821b-21baea6a38b6` |
+| Rename/rename | `3493a91e-3791-438a-b264-78ce3474aaae` | `7447ac50-a5a0-40fd-b22c-a35214a8cfc2` |
+| Move/move | `b05c3362-9881-4c3b-8f38-e474ac38f85d` | `b14719f2-e4b1-4c6a-94dd-5a43c9a8c2a3` |
+| Edit/rename | `dfbd93dd-68c5-4866-b49c-f6e25f0e61ad` | `65284fb1-138e-40ab-a113-9bc2f651b70a` |
+| Edit/move | `b94b1c58-090e-41f6-b91c-bb9a9fa39934` | `1d516fca-5420-4696-901e-068e7c5e57e1` |
+
+All twelve proofs identify one signed build. The six fresh cases used six distinct
+processes; all already-running cases reused the final fresh process and attested
+birth before recording. The first warm case included one completed object
+invalidation and one completed initialization in that same process, directly
+verifying the lifecycle correction that the old proof rejected. Earlier failed
+and rejected bundles remain unchanged. The isolated not-found local lookup from
+Live17 did not recur; its exact cause remains unconfirmed. All owned Finder and
+TextEdit windows were closed and all generated fixtures remain preserved.
+
+**Conflict profile acceptance is complete for this build.** The original
+sixteen-scenario contract remains independent and is now being rerun from the same
+ordinary signed app. No sixteen-scenario pass or permanent-delete guarantee is
+inferred from the conflict profiles; CR-013 remains open.
+
+### Original suite: eviction prerequisite timeout
+
+Original full run `30e2b9a1-dc02-49da-950b-cc52ed482338` on `05e8e5f`
+sealed **two passed, one failed, thirteen skipped**. Navigation and fresh hydration
+passed. Eviction expected a real Remove Download action and non-hydrating state
+verification; observed zero UI actions and a harness deadline while awaiting
+`NSFileProviderManager.waitForStabilization`. Its scenario correlation was
+`EC29A776-0F48-4A04-BEC5-9A47B8AE6140`, with no supporting mutation spans.
+No provider diagnostic span failed. The first divergence is therefore the
+pre-action harness barrier, not an observed Finder eviction rejection. Confidence
+is high for that location; the particular pending domain work is unobserved.
+The failed report, screenshots, diagnostics, and fixtures remain preserved; owned
+Finder/TextEdit windows closed and the owner lease released. The conditional warm
+invocation did not run after the fresh failure.
+
+Apple's `NSFileProviderManager.h` describes stabilization as waiting for filesystem
+and provider changes up to the call, across the domain. That is broader than this
+scenario's already-verified item prerequisite. Hydration now closes its generated
+TextEdit presenter after byte verification, addressing the previously observed
+resource-busy hazard without closing unrelated documents. Eviction proceeds with
+fresh exact-item/domain binding, the real Finder action, and its existing
+non-hydrating state assertion. No deadline or evidence requirement was relaxed;
+end-of-run diagnostic settling remains required. `FinderHydrationSequenceTests`
+checks open/verify/close ordering and that a failed presenter close prevents
+completion and leaves eviction blocked. Reproduce using the original
+`--run --extension-state fresh --yes-live` command. Live rerun is pending.
+
+Mac33 finalized **447 passed**, zero failed/skipped/expected failures, including
+both presenter-sequence regressions. This follow-up changes only the macOS
+Stability UI harness; standard macOS11, iOS15, visionOS Simulator14, and the generic
+visionOS10 build above remain the finalized validation for unchanged shared code.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on

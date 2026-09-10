@@ -253,15 +253,6 @@ final class FinderLiveRunSession {
         }
     }
 
-    func stabilize() async throws {
-        let manager = context.fileProviderManager
-        try await StabilityCallbackWaiter<Void>().wait(timeout: deadline.remaining()) { completion in
-            manager.waitForStabilization { error in
-                if let error { completion(.failure(error)) } else { completion(.success(())) }
-            }
-        }
-    }
-
     func poll(seconds: Int = 90, _ predicate: () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: min(.seconds(seconds), self.deadline.remaining()))
         var delay = 2

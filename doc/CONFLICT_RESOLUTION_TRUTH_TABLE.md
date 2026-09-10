@@ -93,7 +93,9 @@ Empty journals retain normal polling and expired anchors remain errors.
 `WorkingSetMutationDeliveryTests` and `WorkingSetSyncTests` cover persistence,
 competing writers, stale-poll rollback, watermark preservation, immediate delivery,
 supersession during remote reads, and expired anchors. This changes notification
-latency, not remote mutation or conflict policy; complete live acceptance is pending.
+latency, not remote mutation or conflict policy. The complete fresh and already-running
+conflict profiles pass on `05e8e5f`; the original sixteen-scenario acceptance remains
+separate and in progress.
 
 Live evidence settling now uses a local one-second quiet interval after exactly
 one start and terminal per span, checked every 500 ms. Server Retry-After/backoff
@@ -117,9 +119,21 @@ initial database query can wait for transient cleanup/recovery contention.
 `SnapshotInitializationContentionTests` opens the production store under a real
 exclusive WAL lock, releases the lock, and checks retained data plus subsequent
 snapshot use. The regression failed on the previous order and passed after the
-correction on both macOS profiles and the iOS/visionOS simulators. Live reruns are
-pending. No transaction guard, schema, conflict policy, or remote
+correction on both macOS profiles and the iOS/visionOS simulators. All six fresh and
+six already-running conflict cases subsequently passed without a recurring SQLite
+failure. No transaction guard, schema, conflict policy, or remote
 mutation retry is changed. The precise lock owner in the live run is unobserved.
+
+The original Finder suite subsequently passed navigation and hydration but timed
+out before invoking eviction. Its domain-wide stabilization prerequisite completed
+no UI actions for that scenario. Hydration now closes its generated TextEdit
+document after byte verification; a failed close cannot complete the step.
+Eviction then uses fresh item/domain binding and the real Finder action without
+waiting for unrelated domain work. Non-hydrating download-state verification and
+final diagnostic settling are unchanged. `FinderHydrationSequenceTests` covers
+presenter release and failure gating. This is a macOS Stability harness correction,
+not a provider eviction or conflict-policy change; live rerun evidence is recorded
+in the audit and no new sixteen-scenario pass is inferred.
 
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot
@@ -628,8 +642,8 @@ pending and are never falsely acknowledged.
 | `CR-019` | Medium | Duplicate-in-place sent an empty options body and depended on undocumented server-selected naming. | The coordinator refetches the source, derives an explicit extension-preserving copy name, sends it, and refetches the result. | **Resolved** |
 | `CR-020` | Medium | HTTP 408/429 were treated as nonretryable synchronization failures and Retry-After recovery metadata was dropped. | They now map to `.serverUnreachable`; only parsed delta seconds survive. Provider-owned retry cadence remains absent. | **Mitigated** |
 | `CR-021` | Medium | Share update/delete have no documented ETag or conditional version and can race another editor. | Request bodies and response access now fail closed, but accepted share mutations remain last-writer-wins until the API exposes a conditional primitive. | **Open** |
-| `CR-022` | Medium | Working-set change delivery waited behind long materialized-folder crawls despite confirmed local mutation results. | Live callbacks exceeded 90 seconds. Confirmed results now enter the journal with per-item comparison; poll-anchor comparison prevents an older crawl from overwriting them. Available deltas are delivered before polling. Deterministic regressions pass; live verification remains required. | **Mitigated** |
-| `CR-023` | Medium | Live current-sync-anchor callbacks fail immediately on SQLite `BUSY` while opening the snapshot store. | Bounded cause inspection identified primary code 5 in two fresh content races. A real-lock production-store regression failed with the old initialization order and passed after installing the existing timeout before WAL setup. Both macOS profiles and iOS/visionOS regression targets pass; live reruns remain required. The precise live lock owner is unobserved. Failed bundles remain evidence. | **Mitigated** |
+| `CR-022` | Medium | Working-set change delivery waited behind long materialized-folder crawls despite confirmed local mutation results. | Live callbacks exceeded 90 seconds. Confirmed results now enter the journal with per-item comparison; poll-anchor comparison prevents an older crawl from overwriting them. Available deltas are delivered before polling. Deterministic regressions and complete fresh/already-running conflict profiles pass within the existing deadlines. | **Mitigated** |
+| `CR-023` | Medium | Live current-sync-anchor callbacks failed immediately on SQLite `BUSY` while opening the snapshot store. | Bounded cause inspection identified primary code 5 in two fresh content races. A real-lock production-store regression failed with the old initialization order and passed after installing the existing timeout before WAL setup. Both macOS profiles and iOS/visionOS targets pass, followed by all six fresh and six already-running conflict cases without recurrence. The precise live lock owner is unobserved. Failed bundles remain evidence. | **Mitigated** |
 
 ## Legacy Plaintext User-Recovery Matrix
 

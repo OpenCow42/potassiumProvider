@@ -229,6 +229,11 @@ cannot advance to navigation. The first report interval retains both phases and
 their diagnostics, so its total duration can exceed one scenario budget.
 File creation uses Finder copy/paste; editing opens Finder's selection in TextEdit
 and saves only the verified document.
+Hydration verifies the downloaded bytes, then closes the generated TextEdit
+document before eviction. Failure to release that presenter fails hydration.
+Eviction freshly binds the exact item and invokes Remove Download without a
+domain-wide stabilization prerequisite; it verifies the resulting menu/download
+state without reading the evicted file. Final diagnostic settling remains required.
 
 For independent two-client conflict testing, use `--conflicts --yes-live`, optionally
 with `--case content-after-preflight` (or another case listed in

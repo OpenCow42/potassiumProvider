@@ -132,6 +132,13 @@ never silently discarded. An unavailable cleanup control leaves incomplete evide
 
 ## Acceptance and remaining limitations
 
+The complete six-case fresh and already-running profiles passed on implementation
+`05e8e5f`, with twelve sealed evidence bundles. All warm cases reused the final
+fresh process; version-2 proofs also verified complete object recreation inside
+that process. The audit records run IDs, failing predecessors, focused corrections,
+and finalized platform results. This does not certify the separate sixteen-scenario
+suite, whose complete reruns remain in progress.
+
 Live acceptance requires finalized evidence for all selected cases with a freshly
 launched and an already-running extension. Missing initialization telemetry cannot
 prove a cold run. The original sixteen-scenario suite and its acceptance gate are
