@@ -331,6 +331,73 @@ built successfully. The earlier red result is preserved as regression evidence.
 CR-023 is mitigated by the tested initialization correction; live acceptance is
 still pending. The original transaction guards and remote policies remain unchanged.
 
+Focused fresh edit/move Live18 (`7b199e30-30d0-4b26-a2f5-9e621c8cf0d2`)
+sealed **passed** on `27e008d`: verified competing commit, matching returned metadata,
+correct destination identity, and reopened edited bytes. Its cropped screenshot
+contains only the generated selected row. No failed provider spans were recorded.
+This is a single selected-case pass, not a full six-case profile or sixteen-scenario
+acceptance. The preceding transient local lookup error did not reproduce; its exact
+cause remains unconfirmed. Complete fresh and already-running conflict profiles
+are now being rerun serially on this same ordinary signed build.
+
+Complete fresh profile Live19 finalized **six of six selected cases passed** on
+`27e008d`. Every case has an immutable Finder report, summary, version-3 conflict
+profile, attempt-specific competing-commit proof, launch attestation, correlated
+timeline, and local screenshots. The existing sixteen-entry report explicitly
+marks the fifteen unrelated scenarios unselected for each case; this is conflict
+profile acceptance, not sixteen-scenario acceptance.
+
+| Fresh case | Preserved run |
+| --- | --- |
+| Content before preflight | `611e4e0a-863d-4691-aa20-bb075b57fc19` |
+| Content after preflight | `6df7a894-00a4-423b-beb9-3e860d70c97f` |
+| Rename/rename | `96a7939d-52d3-4941-9ecb-c0e927477941` |
+| Move/move | `721f60fb-d3ab-4f42-9412-0c72e057312c` |
+| Edit/rename | `419dcd83-40c3-43bc-a151-38ddab987733` |
+| Edit/move | `ae77c1fe-3477-4d95-86ec-f0ab9626d191` |
+
+The content-after-preflight case recorded the expected conditional HTTP 412 before
+preserving and reopening both versions. No SQLite failures recurred. Edit/move
+initially observed the old local parent, then verified the correct destination and
+reopened the edited bytes within its unchanged deadline. The earlier not-found
+lookup failure did not recur and remains unconfirmed. The standalone read-only
+watch command also reported the active scenario, initialization, and settling.
+Live20 started the complete already-running profile immediately after Live19, with
+no rebuild, test execution, or extension replacement between them; it is still
+running at this checkpoint. No generated fixtures were removed.
+
+Live20's first already-running case (`aba975fb-0e39-4444-95f0-0d0ce9bce447`)
+completed its UI/server/reopen checks but retained a non-accepting candidate with
+`wrongExtensionBuild`. No callback failed, and every diagnostic span had exactly
+one start and terminal. The signed code hash and process identity matched the final
+fresh case throughout; the process controller also verified unchanged kernel birth
+time. The observed events were replicated-object invalidation at 19:35:40 UTC,
+initialization at 19:35:43, and final invalidation at 19:39:50, all in the same process.
+The exited owner was recovered without altering the retained candidate or fixtures.
+
+Classification: harness/assertion; high confidence. The launch validator treated
+any object initialization/invalidation as process replacement. Apple's installed
+`NSFileProviderReplicatedExtension.h` (lines 256–264) explicitly permits multiple
+replicated instances in one process, including discarding and recreating an instance.
+The forthcoming version-2 proof distinguishes those lifecycle events from process
+restart, requires their complete successful spans, and retains signed process/birth
+continuity checks. Version-1 bundles retain their original validation semantics;
+the rejected warm candidate will not be retroactively certified. Mac30's narrow
+Xcode selector executed zero tests and is not accepted as regression evidence; the
+whole lifecycle group is being run to demonstrate the old false rejection.
+
+Mac31 finalized **five passed and one failed**: the new balanced-object-lifecycle
+regression reproduced `wrongExtensionBuild` on the old validator. With version 2,
+Mac32 finalized **445 passed**, standard macOS11 **392 passed**, iOS15 **376 passed**,
+and visionOS Simulator14 **376 passed**. Every corrected result has zero failed,
+skipped, or expected failures; generic visionOS10 built successfully. New negative
+coverage rejects process identity changes before/after preparation, failed or
+cancelled instance callbacks, absent/duplicate terminals or starts, and misordered
+or mixed lifecycle operations. Historical version-1 decoding and its original
+stricter validation remain covered. New complete fresh/warm runs are required on
+the ordinary signed build with the corrected proof; Live19 remains the preserved
+passing milestone for its earlier build and version-1 evidence.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on

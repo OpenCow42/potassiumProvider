@@ -98,10 +98,17 @@ latency, not remote mutation or conflict policy; complete live acceptance is pen
 Live evidence settling now uses a local one-second quiet interval after exactly
 one start and terminal per span, checked every 500 ms. Server Retry-After/backoff
 is unchanged. `StabilityDiagnosticSettlementTests` rejects pending work, missing
-starts, duplicate terminals, and premature quiet periods after new events. Lifecycle
-validation still rejects an invalidated/restarted or mismatched extension during
-the monitored run. Rejected candidates remain ineligible for acceptance; CR-013
-stays open.
+starts, duplicate terminals, and premature quiet periods after new events.
+Version-2 launch evidence certifies extension **process** continuity using kernel
+birth, signing, and diagnostic identity. Apple's replicated-provider contract
+permits object invalidation/recreation inside one process; those events require
+complete successful spans and remain in the timeline. A process replacement,
+missing identity, mismatched build, failed lifecycle callback, or incomplete
+lifecycle telemetry still rejects acceptance. Version-1 proofs retain their original
+stricter object-lifetime interpretation and remain readable. The live warm false
+rejection has a failing old-code regression in `StabilityExtensionLaunchEvidenceTests`;
+corrected validation/reruns are recorded in the audit. Rejected candidates remain
+ineligible for acceptance; CR-013 stays open.
 
 Fresh live content races subsequently identified SQLite `BUSY` (primary code 5)
 while opening the snapshot store for `currentSyncAnchor`. Snapshot connections now

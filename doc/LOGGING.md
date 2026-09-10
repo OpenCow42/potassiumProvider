@@ -260,8 +260,8 @@ log and cannot be used to recover omitted secrets or private URLs.
 
 ### Targeted conflict profile evidence
 
-`conflict-profile.json` schema 2 declares the run ID, selected closed conflict
-case, and optional required extension launch mode. Historical schema 1 is readable. `conflict-request.json` carries only run/case/correlation identifiers, a salted
+`conflict-profile.json` schema 3 declares the run ID, selected closed conflict
+case, and optional required extension launch mode. Historical schemas 1/2 are readable. `conflict-request.json` carries only run/case/correlation identifiers, a salted
 subject alias, scheduling point, and unique attempt UUID. Attempt-specific arrival,
 release, and cancellation files prevent an earlier release from satisfying a later
 case. Report sealing verifies the selected case and gate against its actual
@@ -272,12 +272,16 @@ the existing privacy and immutability boundaries.
 Both `--run` and `--conflicts` may require `--extension-state fresh|running`.
 The original runner declares this in `extension-launch-request.json` schema 1;
 conflict runs declare it in their profile. Missing requested evidence cannot pass. The immutable
-`extension-launch.json` (schema 1) records microsecond integer timestamps (preserving kernel birth ordering), the signed
+`extension-launch.json` (schema 2) records microsecond integer timestamps (preserving kernel birth ordering), the signed
 build hash, diagnostic process UUID, and preparation fence. Fresh evidence requires
 an initialization terminal before the tested mutation in a newly born process.
-Running evidence requires an earlier callback, an unchanged kernel process, and no
-initialization or invalidation during the run. Missing or mixed process evidence
-prevents certification; a historical profile without this requirement remains a
+Running evidence requires an earlier callback and an unchanged kernel process.
+Complete successful initialization/invalidation spans may describe replicated
+objects being recreated inside that process, as Apple's contract permits. Their
+events remain in the correlated timeline. Missing, duplicated, failed, cancelled,
+or misordered lifecycle spans prevent certification, as do missing or mixed process
+identities/build hashes. Version-1 proofs retain their original object-lifetime
+restrictions; rejected candidates are not recertified in place. A historical profile without this requirement remains a
 targeted result without cold/warm certification. No PID, path, account, or raw
 item identifier is exported by this record.
 

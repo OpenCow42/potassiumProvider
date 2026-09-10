@@ -25,6 +25,7 @@ public struct StabilityExtensionLaunchRequest: Codable, Equatable, Sendable {
 
 /// Kernel birth time, signed build and diagnostic process identity jointly
 /// distinguish a new extension process from one that remained alive throughout.
+/// Replicated-provider objects may be recreated inside that same process.
 public struct StabilityExtensionLaunchEvidence: Codable, Equatable, Sendable {
     public let schemaVersion: UInt16
     public let runID: UUID
@@ -40,7 +41,7 @@ public struct StabilityExtensionLaunchEvidence: Codable, Equatable, Sendable {
 
     public init(runID: UUID, mode: StabilityExtensionLaunchMode, recordingStartedAt: Date, preparedAt: Date,
                 processStartedAt: Date, processInstanceID: UUID, expectedCodeHash: String) {
-        schemaVersion = 1; self.runID = runID; self.mode = mode
+        schemaVersion = 2; self.runID = runID; self.mode = mode
         recordingStartedAtMicroseconds = Int64(recordingStartedAt.timeIntervalSince1970 * 1_000_000)
         preparedAtMicroseconds = Int64(preparedAt.timeIntervalSince1970 * 1_000_000)
         processStartedAtMicroseconds = Int64(processStartedAt.timeIntervalSince1970 * 1_000_000)
@@ -49,16 +50,27 @@ public struct StabilityExtensionLaunchEvidence: Codable, Equatable, Sendable {
 
     public func validate(runID: UUID, report: StabilityFinderRunReport,
                          diagnostics: [ProviderDiagnosticEvent]) throws {
-        guard schemaVersion == 1, self.runID == runID, !expectedCodeHash.isEmpty,
+        guard [1, 2].contains(schemaVersion), self.runID == runID, !expectedCodeHash.isEmpty,
               floor(recordingStartedAt.timeIntervalSince1970) == floor(report.startedAt.timeIntervalSince1970),
               preparedAt >= recordingStartedAt, preparedAt < report.finishedAt else {
             throw StabilityLiveEvidenceError.wrongExtensionBuild
         }
-        let observed = diagnostics.filter { $0.source == .fileProviderExtension && $0.occurredAt >= preparedAt }
+        let observed = diagnostics.filter {
+            $0.source == .fileProviderExtension &&
+                (schemaVersion == 2 && mode == .running || $0.occurredAt >= preparedAt)
+        }
         guard !observed.isEmpty, observed.allSatisfy({ $0.processInstanceID == processInstanceID &&
-            $0.processCodeHash == expectedCodeHash }),
-              !observed.contains(where: { $0.operation == .runtimeInvalidate }) else {
+            $0.processCodeHash == expectedCodeHash }) else {
             throw StabilityLiveEvidenceError.wrongExtensionBuild
+        }
+        if schemaVersion == 1 {
+            // Historical proofs keep their original, stricter object-lifetime
+            // interpretation. A rejected old bundle is never upgraded in place.
+            guard !observed.contains(where: { $0.operation == .runtimeInvalidate }) else {
+                throw StabilityLiveEvidenceError.wrongExtensionBuild
+            }
+        } else {
+            try validateReplicatedInstanceEvents(observed)
         }
         switch mode {
         case .fresh:
@@ -70,10 +82,30 @@ public struct StabilityExtensionLaunchEvidence: Codable, Equatable, Sendable {
             }
         case .running:
             guard processStartedAt < recordingStartedAt,
-                  !diagnostics.contains(where: { $0.source == .fileProviderExtension && $0.operation == .runtimeInitialize }),
+                  (schemaVersion == 2 || !diagnostics.contains(where: {
+                      $0.source == .fileProviderExtension && $0.operation == .runtimeInitialize
+                  })),
                   diagnostics.contains(where: { $0.source == .fileProviderExtension && $0.occurredAt < preparedAt &&
                       $0.phase == .completed && $0.processInstanceID == processInstanceID && $0.processCodeHash == expectedCodeHash }) else {
                 throw StabilityLiveEvidenceError.wrongExtensionBuild
+            }
+        }
+    }
+
+    private func validateReplicatedInstanceEvents(_ events: [ProviderDiagnosticEvent]) throws {
+        let lifecycle = events.filter { [.runtimeInitialize, .runtimeInvalidate].contains($0.operation) }
+        guard lifecycle.allSatisfy({ $0.spanID != nil }) else { throw StabilityLiveEvidenceError.pendingOperations }
+        let spans = Dictionary(grouping: lifecycle, by: { $0.spanID! })
+        for span in spans.values {
+            guard !span.contains(where: { [.failed, .cancelled].contains($0.phase) }) else {
+                throw StabilityLiveEvidenceError.unexpectedFailure
+            }
+            let starts = span.filter { $0.phase == .started }
+            let ends = span.filter { $0.phase == .completed }
+            guard starts.count == 1, ends.count == 1,
+                  starts[0].operation == ends[0].operation,
+                  starts[0].occurredAt <= ends[0].occurredAt else {
+                throw StabilityLiveEvidenceError.pendingOperations
             }
         }
     }

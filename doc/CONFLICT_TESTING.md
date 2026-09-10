@@ -91,6 +91,14 @@ or the system File Provider daemon. The running profile requires the existing
 process to survive from before preflight until sealing; it does not start a process
 and call that a warm run. Failed lifecycle evidence cannot certify a case.
 
+Launch proof version 2 distinguishes a process from the replicated-provider objects
+it hosts. Apple permits discarding and recreating those objects within one process.
+Their initialization/invalidation spans must be complete and successful; they remain
+visible in the timeline. Kernel birth, signing, and diagnostic process identity must
+still match throughout. Missing/duplicated lifecycle telemetry and actual process
+replacement reject acceptance. Historical version-1 proofs keep their original
+stricter interpretation; failed old candidates are not upgraded into passes.
+
 Use `--build` to explicitly rebuild/install. Consent handling and `--watch` are
 shared with the Finder runner. Credentials remain in Keychain; the lab is the
 existing authorized plaintext root under `Private`. No encrypted vault is provisioned.
