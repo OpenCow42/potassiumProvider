@@ -287,3 +287,17 @@ and a salted metadata fingerprint, written only after independent metadata/byte
 verification while that attempt is held. Cancellation invalidates it. The original
 preserve-both scenario requires the same record at sealing. Historical profile
 versions 1/2 remain readable; their results do not certify this stronger ordering.
+
+Confirmed plaintext mutation results can enter the existing working-set SQLite
+journal without waiting for a remote crawl. This is not itself working-set
+membership telemetry: item-specific `workingSetRefresh` events still arise only
+when a real enumeration delivers the item. Journal publication preserves poll
+watermarks; poll commits validate their original working-set anchor. No database
+schema migration or diagnostic schema change is needed for this delivery path.
+When a newer journal supersedes an in-flight poll, the poll stops between
+folder/activity requests, discards its prepared container changes, and preserves
+its previous successful watermark. Enumeration awaits that work before delivering
+the newer journal; it creates no detached refresh worker. Only actual emitted
+working-set members carry membership metadata.
+
+Live step validation selects callbacks by run-local subject, step correlation, and start time, then retains their complete spans through monitored settling. Missing starts or terminals and contradictory late terminals still reject acceptance. A sealing rejection retains `finder-evidence-rejected.json` (schema 1, `eligibleForAcceptance: false`) with the candidate report, observations, and a closed error reason; this file never substitutes for the immutable final report and summary. External error descriptions are excluded.

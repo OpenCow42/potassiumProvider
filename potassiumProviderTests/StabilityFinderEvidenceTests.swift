@@ -182,6 +182,28 @@ struct StabilityFinderEvidenceTests {
         )
     }
 
+    @Test func rejectedCandidateRetainsEvidenceWithoutCreatingAcceptanceMarkers() async throws {
+        let root = try temporaryDirectory()
+        let coordinator = StabilityRunCoordinator(rootDirectoryURL: root)
+        let owner = try await coordinator.startOwnedRun(buildRevision: "synthetic")
+        let report = try passingReport()
+        let rejection = StabilityFinderEvidenceRejection(report: report,
+            observations: passingObservations(for: report), error: StabilityLiveEvidenceError.pendingOperations)
+        try await coordinator.recordFinderEvidenceRejection(rejection, ownedRun: owner)
+        let url = owner.run.directoryURL.appendingPathComponent("finder-evidence-rejected.json")
+        let decoded = try JSONDecoder.stability.decode(StabilityFinderEvidenceRejection.self, from: Data(contentsOf: url))
+        #expect(decoded.schemaVersion == 1)
+        #expect(!decoded.eligibleForAcceptance)
+        #expect(decoded.evidenceError == .pendingOperations)
+        #expect(decoded.report == report)
+        #expect(!FileManager.default.fileExists(atPath: owner.run.finderReportURL.path))
+        #expect(!FileManager.default.fileExists(atPath: owner.run.summaryURL.path))
+        await #expect(throws: (any Error).self) {
+            try await coordinator.recordFinderEvidenceRejection(rejection, ownedRun: owner)
+        }
+        #expect(try JSONDecoder.stability.decode(StabilityFinderEvidenceRejection.self, from: Data(contentsOf: url)).report == report)
+    }
+
     @Test func coordinatorWritesClosedImmutableFinderEvidence() async throws {
         let root = try temporaryDirectory()
         let coordinator = StabilityRunCoordinator(rootDirectoryURL: root)

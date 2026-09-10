@@ -80,9 +80,15 @@ final class FinderLiveRunSession {
         try await signal(.rootContainer)
         // Resolving placeholders and verifying their provider identities is
         // preparation; navigation starts after these read-only bindings finish.
-        navigationURLs = (root: try await visible(item), nested: try await visible(require(nested)),
-            deep: try await visible(require(deep)), sibling: try await visible(require(sibling)),
-            seed: try await visible(require(seed)))
+        navigationURLs = try await FinderFixtureNavigation.resolve(using: ui) { target in
+            switch target {
+            case .root: try await self.visible(item)
+            case .nested: try await self.visible(self.require(self.nested))
+            case .deep: try await self.visible(self.require(self.deep))
+            case .sibling: try await self.visible(self.require(self.sibling))
+            case .seed: try await self.visible(self.require(self.seed))
+            }
+        }
     }
 
     func createDirectory(name: String, parent: KDriveRemoteItem) async throws -> KDriveRemoteItem {

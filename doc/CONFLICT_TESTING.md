@@ -113,7 +113,7 @@ new version 3 profile results and the original preserve-both scenario.
 Finder report still has all 16 entries; unrelated scenarios are explicitly
 `notSelectedForConflictProfile`. Sealing validates the selected case's exact gate
 and callback evidence. One targeted success never becomes a 16-scenario pass.
-Failed fixtures, screenshots, and diagnostics remain available. Finder and TextEdit
+Failed fixtures, screenshots, and diagnostics remain available. A sealing rejection retains a non-accepting `finder-evidence-rejected.json` candidate with a closed reason; it never replaces the required final report and summary. Complete correlated spans include their terminals during monitored settling. Finder and TextEdit
 cleanup addresses only owned windows/documents; dirty generated documents are saved,
 never silently discarded. An unavailable cleanup control leaves incomplete evidence.
 

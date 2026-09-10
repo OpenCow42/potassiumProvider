@@ -88,12 +88,17 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
+                let knownBefore = try await loadedRuntime.workingSetStateStore.workingSetSnapshot(
+                    domainIdentifier: loadedRuntime.configuration.domainIdentifier)?.items.first { $0.id == fileID }
                 let execution = try await KDriveContextActionCoordinator(
                     driveID: loadedRuntime.configuration.driveID,
                     rootFileID: loadedRuntime.configuration.rootFileID,
                     remote: loadedRuntime.remote,
                     actions: loadedRuntime.actions
                 ).perform(action, fileID: fileID)
+
+                await self.publishKnownWorkingSetItem(execution.activityItem,
+                    replacing: execution.activityItem.id == fileID ? knownBefore : nil, runtime: loadedRuntime)
 
                 let recordedIdentifier = action == .duplicate
                     ? ProviderEventRecorder.itemIdentifier(for: execution.activityItem)

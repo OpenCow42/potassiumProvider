@@ -43,10 +43,10 @@ public struct StabilityLiveStepEvidence: Codable, Equatable, Sendable {
     }
 }
 
-public enum StabilityLiveEvidenceError: Error, Equatable {
+public enum StabilityLiveEvidenceError: String, Error, Codable, Sendable {
     case missingUIEvidence, missingSubject, missingCallback, wrongExtensionBuild
     case contradictoryTerminal, missingConflict, missingCancellation, missingWorkingSet
-    case pendingOperations, missingSpanStart, unexpectedFailure
+    case pendingOperations, missingSpanStart, unexpectedFailure, incompleteRun
 }
 
 public enum StabilityLiveEvidenceValidator {
@@ -56,9 +56,24 @@ public enum StabilityLiveEvidenceValidator {
             throw StabilityLiveEvidenceError.missingUIEvidence
         }
         guard !proof.subjects.isEmpty else { throw StabilityLiveEvidenceError.missingSubject }
-        let events = diagnostics.filter {
-            $0.correlationID == step.correlationID && $0.occurredAt.timeIntervalSince1970 >= floor(step.startedAt.timeIntervalSince1970) &&
-            $0.occurredAt.timeIntervalSince1970 <= ceil(step.finishedAt.timeIntervalSince1970) && $0.subjectAlias.map(proof.subjects.contains) == true
+        let scoped = diagnostics.filter {
+            $0.correlationID == step.correlationID && $0.subjectAlias.map(proof.subjects.contains) == true
+        }
+        func withinStep(_ event: ProviderDiagnosticEvent) -> Bool {
+            // JSONL dates historically have whole-second precision. Correlation
+            // and subject identity remain mandatory at this rounded boundary.
+            event.occurredAt.timeIntervalSince1970 >= floor(step.startedAt.timeIntervalSince1970) &&
+                event.occurredAt.timeIntervalSince1970 <= ceil(step.finishedAt.timeIntervalSince1970)
+        }
+        let starts = scoped.filter { $0.phase == .started }
+        let allStartedIDs = Set(starts.compactMap(\.spanID))
+        let selectedIDs = Set(starts.filter(withinStep).compactMap(\.spanID))
+        let events = scoped.filter { event in
+            guard let spanID = event.spanID else { return withinStep(event) }
+            // Keep the entire selected span, including terminals during run
+            // settling and contradictory late terminals. An orphan in the step
+            // still fails, and a callback started before it cannot prove it.
+            return selectedIDs.contains(spanID) || (!allStartedIDs.contains(spanID) && withinStep(event))
         }
         let callbacks = events.filter { $0.source == .fileProviderExtension && Self.callbackOperations.contains($0.operation) }
         guard !callbacks.isEmpty else { throw StabilityLiveEvidenceError.missingCallback }

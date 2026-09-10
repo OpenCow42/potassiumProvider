@@ -648,6 +648,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 let executor = KDriveModificationExecutor(coordinator: coordinator) { identifier in
                     try await loadedRuntime.remote.item(driveID: loadedRuntime.configuration.driveID, fileID: identifier)
                 }
+                let knownBefore = try await loadedRuntime.workingSetStateStore.workingSetSnapshot(
+                    domainIdentifier: loadedRuntime.configuration.domainIdentifier)?.items.first { $0.id == fileID }
                 let result = try await executor.execute(fileID: fileID, filename: item.filename, baseVersion: baseVersion,
                     fields: changedFields, destinationParentID: parentID, requestsTrash: requestsTrash,
                     modificationDate: item.contentModificationDate ?? nil, hasContents: newContents != nil) {
@@ -668,6 +670,11 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                             throw error
                         }
                     }
+                if let updated = result.item,
+                   !changedFields.intersection([.contents, .filename, .parentItemIdentifier, .contentModificationDate]).isEmpty {
+                    await self.publishKnownWorkingSetItem(updated,
+                        replacing: updated.id == fileID ? knownBefore : nil, runtime: loadedRuntime)
+                }
                 var containers = self.containerIdentifiers(forFileIDs: result.affectedParentIDs.map(Optional.some),
                     rootFileID: loadedRuntime.configuration.rootFileID)
                 if result.trashed { containers.append(.trashContainer) }

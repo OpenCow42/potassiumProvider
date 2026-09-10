@@ -90,6 +90,11 @@ public struct KDriveWorkingSetChanges: Equatable, Sendable {
     }
 }
 
+public enum KDriveWorkingSetCommitCondition: Sendable {
+    case unconditional
+    case matchingAnchor(String?)
+}
+
 public protocol KDriveWorkingSetStateStoring: Sendable {
     func snapshot(domainIdentifier: String, containerIdentifier: String) async throws -> KDriveSnapshot?
     func replaceMaterializedItems(
@@ -113,8 +118,37 @@ public protocol KDriveWorkingSetStateStoring: Sendable {
         containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate],
         items: [KDriveRemoteItem],
         changes: KDriveSnapshotChangeSet,
-        completedAt: Date
+        completedAt: Date,
+        condition: KDriveWorkingSetCommitCondition
     ) async throws -> KDriveWorkingSetSnapshot
+    func publishKnownWorkingSetItem(_ item: KDriveRemoteItem, replacing expectedItem: KDriveRemoteItem?,
+                                   domainIdentifier: String, recordedAt: Date) async throws -> Bool
+}
+
+public extension KDriveWorkingSetStateStoring {
+    func commitWorkingSetPoll(domainIdentifier: String, containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate],
+                              items: [KDriveRemoteItem], changes: KDriveSnapshotChangeSet,
+                              completedAt: Date) async throws -> KDriveWorkingSetSnapshot {
+        try await commitWorkingSetPoll(domainIdentifier: domainIdentifier, containerSnapshotUpdates: containerSnapshotUpdates,
+            items: items, changes: changes, completedAt: completedAt, condition: .unconditional)
+    }
+}
+
+/// Deliver committed journal entries before waiting for another remote crawl.
+/// Empty journals still refresh normally; an expired anchor stays expired.
+public enum KDriveWorkingSetChangeDelivery {
+    public static func changes(domainIdentifier: String, from anchor: String,
+                               store: any KDriveWorkingSetStateStoring,
+                               refresh: @escaping @Sendable () async throws -> Void) async throws -> KDriveWorkingSetChanges? {
+        try Task.checkCancellation()
+        if let cached = try await store.workingSetChanges(domainIdentifier: domainIdentifier, from: anchor),
+           !cached.changes.isEmpty { return cached }
+        // Keep the refresh inside the callback lifetime. Polling cooperatively
+        // stops when a newer journal supersedes its starting snapshot.
+        try await refresh()
+        try Task.checkCancellation()
+        return try await store.workingSetChanges(domainIdentifier: domainIdentifier, from: anchor)
+    }
 }
 
 public struct KDriveWorkingSetPollOutcome: Equatable, Sendable {
@@ -196,6 +230,17 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         for attempt in 0...2 {
             try Task.checkCancellation()
             do { return try await pollClaimed(now: now) }
+            catch WorkingSetPollSuperseded.newerJournal {
+                return KDriveWorkingSetPollOutcome(didPoll: false,
+                    changes: KDriveSnapshotChangeSet(updatedItems: [], deletedItemIDs: []),
+                    snapshot: try await stateStore.workingSetSnapshot(domainIdentifier: domainIdentifier))
+            }
+            catch let error as KDriveSnapshotStoreError where error == .staleSnapshot(
+                domainIdentifier: domainIdentifier, containerIdentifier: "working-set") {
+                return KDriveWorkingSetPollOutcome(didPoll: false,
+                    changes: KDriveSnapshotChangeSet(updatedItems: [], deletedItemIDs: []),
+                    snapshot: try await stateStore.workingSetSnapshot(domainIdentifier: domainIdentifier))
+            }
             catch KDriveSnapshotStoreError.staleSnapshot where attempt < 2 {
                 await onSnapshotRetry()
                 try await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
@@ -220,6 +265,7 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         var containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate] = []
 
         for folderID in materializedContainerIDs.sorted() {
+            try await requireWorkingSetAnchor(oldWorkingSet?.anchor)
             let result = try await pollMaterializedContainer(folderID: folderID)
             relevantItems.append(contentsOf: result.snapshot.items)
             changedItems.append(contentsOf: result.changes.updatedItems)
@@ -232,6 +278,7 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         let relevantFileIDs = Set(relevantItems.map(\.id)).union(materializedFileIDs)
         let partialSince = lastSuccessfulPoll ?? Date(timeIntervalSince1970: 0)
         for fileIDBatch in relevantFileIDs.sorted().chunked(maximumCount: Self.partialActivityBatchSize) {
+            try await requireWorkingSetAnchor(oldWorkingSet?.anchor)
             let activities = try await workingSetRemote.listPartialActivities(
                 driveID: driveID,
                 fileIDs: fileIDBatch,
@@ -273,14 +320,25 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
             updatedItems: updates,
             deletedItemIDs: deletedItemIDs.sorted()
         )
+        try await requireWorkingSetAnchor(oldWorkingSet?.anchor)
         let snapshot = try await stateStore.commitWorkingSetPoll(
             domainIdentifier: domainIdentifier,
             containerSnapshotUpdates: containerSnapshotUpdates,
             items: currentItems,
             changes: changes,
-            completedAt: now
+            completedAt: now,
+            condition: .matchingAnchor(oldWorkingSet?.anchor)
         )
         return KDriveWorkingSetPollOutcome(didPoll: true, changes: changes, snapshot: snapshot)
+    }
+
+    private func requireWorkingSetAnchor(_ expected: String?) async throws {
+        try Task.checkCancellation()
+        if try await stateStore.workingSetSnapshot(domainIdentifier: domainIdentifier)?.anchor != expected {
+            // Discard prepared container updates. The new journal is already
+            // durable; this poll must not overwrite it or advance watermarks.
+            throw WorkingSetPollSuperseded.newerJournal
+        }
     }
 
     private func currentItem(
@@ -454,6 +512,8 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         return lhs.id < rhs.id
     }
 }
+
+private enum WorkingSetPollSuperseded: Error { case newerJournal }
 
 /// Materialization notifications request an immediate poll while enumeration
 /// and the timer can also poll. The persisted interval is a throttle, not an

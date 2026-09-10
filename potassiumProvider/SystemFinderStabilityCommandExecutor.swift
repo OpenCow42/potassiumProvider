@@ -219,7 +219,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             )
         }
 
-        guard execution.canSeal else { return .failed }
+        var candidateReport: StabilityFinderRunReport?
         do {
             let report = try StabilityFinderRunReport(
                 schemaVersion: StabilityFinderRunReport.liveSchemaVersion,
@@ -229,6 +229,8 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
                 preflightResults: preflight,
                 stepResults: execution.stepResults
             )
+            candidateReport = report
+            guard execution.canSeal else { throw StabilityLiveEvidenceError.incompleteRun }
             if report.stepSummary.passed > 0, let launchController {
                 let launch = try launchController.evidence(report: report)
                 try await runCoordinator.recordExtensionLaunch(launch, ownedRun: ownedRun)
@@ -269,6 +271,14 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             // A report is the commit marker for the two evidence JSONL files.
             // Do not create summary.json after any assembly/finalization
             // failure, because that would seal a partial bundle.
+            print("finder stability: evidence sealing rejected; reason \((error as? StabilityLiveEvidenceError)?.rawValue ?? "assemblyFailure")")
+            if let candidateReport {
+                do {
+                    try await runCoordinator.recordFinderEvidenceRejection(
+                        StabilityFinderEvidenceRejection(report: candidateReport, observations: execution.observations, error: error),
+                        ownedRun: ownedRun)
+                } catch { print("finder stability: rejected candidate could not be retained") }
+            }
             return .failed
         }
     }

@@ -83,4 +83,27 @@ enum FinderNavigationSequence {
         try await observe?(6, sibling)
     }
 }
+
+@MainActor
+enum FinderFixtureNavigation {
+    enum Target { case root, nested, deep, sibling, seed }
+
+    /// Open each verified parent before asking File Provider to materialize its
+    /// children. Resolving the entire unopened hierarchy can wait for separate
+    /// working-set crawls at every level.
+    static func resolve(using ui: any FinderUINavigating,
+                        bind: (Target) async throws -> URL) async throws
+        -> (root: URL, nested: URL, deep: URL, sibling: URL, seed: URL) {
+        let root = try await bind(.root)
+        try await ui.navigate(to: root)
+        let nested = try await bind(.nested)
+        try await ui.navigate(to: nested)
+        let deep = try await bind(.deep)
+        try await ui.navigate(to: deep)
+        let seed = try await bind(.seed)
+        try await ui.navigate(to: root)
+        let sibling = try await bind(.sibling)
+        return (root, nested, deep, sibling, seed)
+    }
+}
 #endif

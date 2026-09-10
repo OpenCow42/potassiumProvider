@@ -82,7 +82,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                 if pointerActive { try? await context.endStep(correlationID) }
                 let origin: StabilityFailureOrigin = (error as? FinderUIError) == .evictionResourceBusy ? .environment :
                     (error as? StabilityLiveEvidenceError) == .unexpectedFailure ? .provider : error is FinderUIError ? .automation :
-                    (error is FinderLiveError || error is StabilityLiveEvidenceError || error is StabilityRunConfinementError ? .harness : .api)
+                    (error is FinderLiveError || error is StabilityLiveEvidenceError || error is StabilityRunConfinementError || error is StabilityDeadlineError ? .harness : .api)
                 let reason = failureReason(error)
                 let proof = session?.evidence(actions: ui.actionCount - actionStart, failure: origin, reason: reason)
                 steps.append(step(index, scenario, correlationID, startedAt, .failed(.operationFailed), proof: proof))

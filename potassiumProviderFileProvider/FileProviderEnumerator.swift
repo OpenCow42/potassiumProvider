@@ -750,11 +750,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         guard let requestedAnchor else {
             throw NSFileProviderError(.syncAnchorExpired)
         }
-        _ = try await workingSetCoordinator(runtime: runtime).poll()
-        guard let result = try await runtime.workingSetStateStore.workingSetChanges(
-            domainIdentifier: runtime.configuration.domainIdentifier,
-            from: requestedAnchor
-        ) else {
+        let coordinator = workingSetCoordinator(runtime: runtime)
+        guard let result = try await KDriveWorkingSetChangeDelivery.changes(
+            domainIdentifier: runtime.configuration.domainIdentifier, from: requestedAnchor,
+            store: runtime.workingSetStateStore,
+            refresh: {
+                _ = try await coordinator.poll()
+            }) else {
             throw NSFileProviderError(.syncAnchorExpired)
         }
         emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)

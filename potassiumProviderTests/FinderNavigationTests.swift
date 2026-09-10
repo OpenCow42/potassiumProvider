@@ -96,6 +96,37 @@ struct FinderNavigationTests {
         }
         #expect(ui.calls.count == 4)
     }
+    @Test func fixtureChildrenResolveOnlyAfterTheirVerifiedParentIsOpened() async throws {
+        let ui = NavigationFake()
+        let root = URL(filePath: "/synthetic"), nested = URL(filePath: "/synthetic/a")
+        let deep = URL(filePath: "/synthetic/a/b"), sibling = URL(filePath: "/synthetic/c")
+        let seed = deep.appendingPathComponent("seed.txt")
+        let result = try await FinderFixtureNavigation.resolve(using: ui) { target in
+            let parent: URL?, result: URL
+            switch target {
+            case .root: (parent, result) = (nil, root)
+            case .nested: (parent, result) = (root, nested)
+            case .deep: (parent, result) = (nested, deep)
+            case .sibling: (parent, result) = (root, sibling)
+            case .seed: (parent, result) = (deep, seed)
+            }
+            if let parent, ui.calls.last != .navigate(parent) { throw FinderUIError.timedOut }
+            return result
+        }
+        #expect(result.root == root && result.nested == nested && result.deep == deep && result.sibling == sibling && result.seed == seed)
+    }
+    @Test func failedFixtureBindingCannotNavigateOrResolveDescendants() async {
+        let ui = NavigationFake(), root = URL(filePath: "/synthetic")
+        var attempts = 0
+        await #expect(throws: FinderUIError.selectionMismatch) {
+            try await FinderFixtureNavigation.resolve(using: ui) { target in
+                attempts += 1
+                if target == .nested { throw FinderUIError.selectionMismatch }
+                return root
+            }
+        }
+        #expect(attempts == 2 && ui.calls == [.navigate(root)])
+    }
     @Test func missingMilestoneEvidenceStopsBeforeFurtherNavigation() async {
         let ui = NavigationFake(), root = URL(filePath: "/synthetic")
         var observed: [Int] = []

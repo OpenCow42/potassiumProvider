@@ -4,6 +4,37 @@ import PotassiumProviderCore
 
 @Suite(.serialized)
 struct WorkingSetSyncTests {
+    @Test(arguments: [false, true])
+    func newerMutationStopsObsoletePollBeforeMoreRequestsOrCursorWrites(duringFolder: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let base = makeWorkingSetItem(id: 30, name: "Base.txt", updatedAt: 1_000)
+        let edited = makeWorkingSetItem(id: 30, name: "Edited.txt", updatedAt: 1_001)
+        let previousTime = Date(timeIntervalSince1970: 1_000)
+        let initial = try await store.commitWorkingSetPoll(domainIdentifier: "domain-1", containerSnapshotUpdates: [],
+            items: [base], changes: KDriveSnapshotChangeSet(updatedItems: [base], deletedItemIDs: []), completedAt: previousTime)
+        try await store.replaceMaterializedItems([.init(fileID: 10, isContainer: true), .init(fileID: 20, isContainer: true)], domainIdentifier: "domain-1")
+        let publish: @Sendable () async throws -> Void = {
+            let published = try await store.publishKnownWorkingSetItem(edited, replacing: base,
+                domainIdentifier: "domain-1", recordedAt: previousTime.addingTimeInterval(1))
+            #expect(published)
+        }
+        let remote = WorkingSetRemoteMock(relevantItems: [], advancedResponses: [
+            "<initial>": KDriveAdvancedItemPage(items: [base], actions: [], actionItems: [], nextCursor: "obsolete", hasMore: false)
+        ], itemByID: [:], partialResults: [], beforeRelevantReturn: duringFolder ? nil : publish,
+            beforeAdvancedReturn: duringFolder ? publish : nil)
+        let coordinator = makeCoordinator(remote: remote, store: store)
+        let delivery = try await KDriveWorkingSetChangeDelivery.changes(domainIdentifier: "domain-1", from: initial.anchor, store: store) {
+            let outcome = try await coordinator.poll(now: previousTime.addingTimeInterval(100))
+            #expect(!outcome.didPoll && outcome.snapshot?.items == [edited])
+        }
+        #expect(delivery?.changes.updatedItems == [edited])
+        #expect(await remote.advancedRequestCount() == (duringFolder ? 1 : 0))
+        #expect(await remote.requestedPartialFileIDs().isEmpty)
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "10") == nil)
+        #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == previousTime)
+    }
     @Test func immediateMaterializationPollsCannotOverlapEachOther() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -428,6 +459,9 @@ struct WorkingSetSyncTests {
 
 private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteProviding {
     private let beforePartial: (@Sendable () async throws -> Void)?
+    private let beforeRelevantReturn: (@Sendable () async throws -> Void)?
+    private let beforeAdvancedReturn: (@Sendable () async throws -> Void)?
+    private var advancedCalls = 0
     private let relevantItems: [KDriveRemoteItem]
     private let advancedResponses: [String: KDriveAdvancedItemPage]
     private let itemByID: [Int: KDriveRemoteItem]
@@ -447,7 +481,9 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
         partialResults: [KDrivePartialActivityResult],
         failsPartialListing: Bool = false,
         beforePartial: (@Sendable () async throws -> Void)? = nil,
-        relevantDelay: Duration = .zero
+        relevantDelay: Duration = .zero,
+        beforeRelevantReturn: (@Sendable () async throws -> Void)? = nil,
+        beforeAdvancedReturn: (@Sendable () async throws -> Void)? = nil
     ) {
         self.relevantItems = relevantItems
         self.advancedResponses = advancedResponses
@@ -456,6 +492,8 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
         self.failsPartialListing = failsPartialListing
         self.beforePartial = beforePartial
         self.relevantDelay = relevantDelay
+        self.beforeRelevantReturn = beforeRelevantReturn
+        self.beforeAdvancedReturn = beforeAdvancedReturn
     }
 
     func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
@@ -464,6 +502,7 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
         peakRelevantCalls = max(peakRelevantCalls, activeRelevantCalls)
         defer { activeRelevantCalls -= 1 }
         if relevantDelay > .zero { try await Task.sleep(for: relevantDelay) }
+        try await beforeRelevantReturn?()
         return relevantItems
     }
 
@@ -479,6 +518,7 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     func requestedPartialSince() -> Date? { partialSince }
     func relevantRequestCount() -> Int { relevantCalls }
     func peakConcurrentRelevantRequests() -> Int { peakRelevantCalls }
+    func advancedRequestCount() -> Int { advancedCalls }
 
     func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
         guard let item = itemByID[fileID] else { throw WorkingSetRemoteMockError.unimplemented }
@@ -486,6 +526,8 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     }
 
     func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage {
+        advancedCalls += 1
+        try await beforeAdvancedReturn?()
         guard let page = advancedResponses[cursor ?? "<initial>"] else {
             throw WorkingSetRemoteMockError.unimplemented
         }

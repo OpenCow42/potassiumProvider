@@ -525,10 +525,15 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate],
         items: [KDriveRemoteItem],
         changes: KDriveSnapshotChangeSet,
-        completedAt: Date
+        completedAt: Date,
+        condition: KDriveWorkingSetCommitCondition = .unconditional
     ) throws -> KDriveWorkingSetSnapshot {
         var committedSnapshot: KDriveWorkingSetSnapshot?
         try database.transaction {
+            if case .matchingAnchor(let expected) = condition,
+               try workingSetSnapshot(domainIdentifier: domainIdentifier)?.anchor != expected {
+                throw KDriveSnapshotStoreError.staleSnapshot(domainIdentifier: domainIdentifier, containerIdentifier: "working-set")
+            }
             for update in containerSnapshotUpdates {
                 if let current = try snapshot(domainIdentifier: domainIdentifier, containerIdentifier: update.containerIdentifier),
                    !update.condition.accepts(current),
@@ -573,6 +578,42 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
             committedSnapshot = KDriveWorkingSetSnapshot(anchor: newAnchor, items: items)
         }
         return committedSnapshot!
+    }
+
+    /// Merge a confirmed mutation without advancing remote cursors or poll time.
+    /// If another writer changed this item since the caller read it, retain that
+    /// state and let normal reconciliation resolve ordering; never overwrite it.
+    public func publishKnownWorkingSetItem(_ item: KDriveRemoteItem, replacing expectedItem: KDriveRemoteItem?,
+                                          domainIdentifier: String, recordedAt: Date) throws -> Bool {
+        var published = false
+        try database.transaction {
+            let query = WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
+            let row = try database.pluck(query)
+            let previous = try workingSetSnapshot(domainIdentifier: domainIdentifier)
+            let current = previous?.items.first { $0.id == item.id }
+            guard current != item else { published = true; return }
+            guard current == expectedItem else { return }
+            let oldAnchor = previous?.anchor ?? UUID().uuidString, newAnchor = UUID().uuidString
+            let items = ((previous?.items ?? []).filter { $0.id != item.id } + [item]).sorted { $0.id < $1.id }
+            try database.run(WorkingSetSchema.changeBatches.insert(
+                WorkingSetSchema.domainIdentifier <- domainIdentifier,
+                WorkingSetSchema.anchorBefore <- oldAnchor,
+                WorkingSetSchema.anchorAfter <- newAnchor,
+                WorkingSetSchema.updatedItemsJSON <- try Self.encode([item]),
+                WorkingSetSchema.deletedItemIDsJSON <- try Self.encode([Int]()),
+                WorkingSetSchema.changeCompletedAt <- recordedAt.timeIntervalSince1970
+            ))
+            try database.run(WorkingSetSchema.pollState.insert(or: .replace,
+                WorkingSetSchema.domainIdentifier <- domainIdentifier,
+                WorkingSetSchema.workingSetAnchor <- newAnchor,
+                WorkingSetSchema.workingSetItemsJSON <- try Self.encode(items),
+                WorkingSetSchema.lastPollAttemptAt <- row?[WorkingSetSchema.lastPollAttemptAt],
+                WorkingSetSchema.lastSuccessfulPollAt <- row?[WorkingSetSchema.lastSuccessfulPollAt]
+            ))
+            try trimWorkingSetChangeBatches(domainIdentifier: domainIdentifier, retaining: 32)
+            published = true
+        }
+        return published
     }
 
     private func saveSnapshot(

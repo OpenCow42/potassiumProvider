@@ -60,6 +60,32 @@ struct StabilityLiveEvidenceTests {
         }
     }
 
+    @Test func settlingRetainsCompleteSpansWithoutBorrowingOtherCallbacks() throws {
+        let events = span(.fetchContents, offset: 9, terminalOffset: 4)
+        try StabilityLiveEvidenceValidator.validate(step: step(.hydrate), diagnostics: events)
+        #expect(throws: StabilityLiveEvidenceError.pendingOperations) {
+            try StabilityLiveEvidenceValidator.validate(step: step(.hydrate), diagnostics: [events[0]])
+        }
+        #expect(throws: StabilityLiveEvidenceError.pendingOperations) {
+            try StabilityLiveEvidenceValidator.validate(step: step(.hydrate),
+                diagnostics: [events[0]] + span(.fetchContents, subject: UUID(), offset: 9, terminalOffset: 4))
+        }
+        #expect(throws: StabilityLiveEvidenceError.contradictoryTerminal) {
+            try StabilityLiveEvidenceValidator.validate(step: step(.hydrate), diagnostics: events + [events[1]])
+        }
+        #expect(throws: StabilityLiveEvidenceError.unexpectedFailure) {
+            try StabilityLiveEvidenceValidator.validate(step: step(.hydrate),
+                diagnostics: span(.fetchContents, terminal: .failed, offset: 9, terminalOffset: 4))
+        }
+        // A cached earlier fetch or a later unrelated fetch cannot satisfy this step.
+        for unrelated in [span(.fetchContents, offset: -2, terminalOffset: 4),
+                          span(.fetchContents, offset: 12)] {
+            #expect(throws: StabilityLiveEvidenceError.missingCallback) {
+                try StabilityLiveEvidenceValidator.validate(step: step(.hydrate), diagnostics: unrelated)
+            }
+        }
+    }
+
     @Test func requiredMappingsDistinguishTrashFromDeletion() throws {
         try StabilityLiveEvidenceValidator.validate(step: step(.trash), diagnostics: span(.modifyItem, fields: [.parent, .trash]))
         #expect(throws: StabilityLiveEvidenceError.missingCallback) {

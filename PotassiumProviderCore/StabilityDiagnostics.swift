@@ -692,6 +692,21 @@ public actor StabilityRunCoordinator {
     }
     #endif
 
+    /// Retains a rejected candidate without authorizing finalization or changing
+    /// the accepted report. Error descriptions and external payloads are omitted.
+    public func recordFinderEvidenceRejection(
+        _ rejection: StabilityFinderEvidenceRejection, ownedRun: StabilityOwnedRunHandle
+    ) throws {
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard try Self.matchesOwnership(ownedRun, decoder: decoder),
+                  SecurePOSIXFile.pathKind(ownedRun.run.summaryURL) == .missing else {
+                throw ProviderDiagnosticStoreError.runNotFound(ownedRun.run.runID)
+            }
+            try SecurePOSIXFile.createExclusively(encoder.encode(rejection),
+                at: ownedRun.run.directoryURL.appendingPathComponent("finder-evidence-rejected.json"), permissions: 0o400)
+        }
+    }
+
     /// Assembles closed Finder assertion and API-observation evidence. Each
     /// file replacement is atomic; the immutable report is the commit marker
     /// and can be written only once. Run summary sealing remains a separate

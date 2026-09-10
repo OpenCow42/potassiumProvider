@@ -237,7 +237,49 @@ exact filename before reopening. It records both identity and path comparisons;
 a mismatching identity never passes. Mac18 finalized **426 passed** for the ordering
 change; targeted Mac19 finalized **14 passed** for destination identity and gate
 proof. Both have zero failures/skips. The next ordinary signed live run includes
-destination-first navigation; its outcome is pending.
+destination-first navigation; its outcome follows below.
+
+`f5a8daed-2657-4ae4-b617-ad8726d92728` verified ordering and matching
+callback metadata, then timed out with both actual parent identity and path still
+mismatching. Its window cleanup completed and the failed bundle sealed. The
+provider's working-set callbacks took 90,946 and 106,390 ms (spans
+`173E1CF3-09AA-4DC2-BA8A-4D3C9FEE4A48` and
+`31397A22-3C3E-4469-88B7-C1685EBF3647`); change enumeration
+`E08A0CB2-D3DE-4BAC-872C-0A00ADEF4008` took 101,691 ms. Over 1,400
+directory-list starts occurred while 249 materialized items were retained. The
+change-enumeration path waited for a serialized full poll before consulting its
+journal. Classification: provider notification latency; high confidence in the
+measured blocking path, pending end-to-end confirmation of the correction.
+
+Confirmed mutation results now publish into that journal with a per-item comparison;
+poll commits compare their starting anchor before writing any container cursor.
+Already available changes bypass another crawl, while normal empty-journal polling
+continues. No additional remote concurrency, fixture removal, or longer scenario
+deadline was introduced. Mac20 finalized **430 passed**, zero failures/skips;
+`WorkingSetMutationDeliveryTests` covers durable delivery, stale writers/polls,
+unchanged poll watermarks, and expired anchors. The configured-root exclusion also
+built in the subsequent ordinary signed app. Targeted run
+`45502949-1161-4ef0-ae31-26bf59dd6c21` still failed and sealed. Its item
+was published in a one-item journal batch at the same time as contents callback
+`A7F219F1-1BF2-4A2A-96D4-22ABA21CF645` completed (17:27:54 UTC), but an
+enumeration that entered earlier was already awaiting the long poll. An entry-only
+journal check therefore did not fix the in-flight case.
+
+Delivery now rechecks the local journal during that wait. The refresh has a strong
+owner and a diagnostic span created before launch; returning a newly published
+change leaves the refresh running to its real terminal. The runner continues to
+monitor it and cannot seal while it is pending. This adds no remote polling
+concurrency or API retries. A regression holds refresh open, publishes an item,
+verifies delivery completes before refresh release, then releases and settles the
+worker. Mac21 finalized **431 passed**, standard macOS05 **386 passed**, iOS07
+**370 passed**, and visionOS Simulator06 **370 passed**; each has zero failures,
+skips, or expected failures. The signed generic visionOS04 build succeeded.
+Targeted run `2ac425d8-7de5-4a00-89b0-2982e3e60f93` completed the UI/server edit-move checks, matched the actual destination identity, and reopened the edited bytes. Final sealing rejected the bundle, so it is **not a pass**. Its exited owner was safely recovered; fixtures and evidence remain. The prior validator truncated callbacks at the UI step finish, excluding later terminals during monitored settling. Span selection now requires an in-step start and retains the complete correlated subject span. Regressions reject missing, unrelated, earlier, later, failed, and contradictory terminals. Rejected candidates now retain a closed reason and can never serve as acceptance markers. The next sealed live rerun remains required. Working-set latency is registered as CR-022; the existing share-access CR-018 is unchanged.
+
+After the sealing regressions, Mac22 finalized **433 passed**, standard macOS06 **388 passed**, iOS08 **372 passed**, and visionOS Simulator07 **372 passed**, all with zero failed/skipped/expected failures. Signed generic visionOS05 succeeded. These are finalized Xcode results; parameterized argument executions are additional to the function counts. The ordinary signed app was rerun with the same code.
+
+Run `b85d63d0-ef4c-4dd0-9671-00c5d1c1c079` failed during fixture preparation before the race: server creates/upload completed in six seconds, but resolving unopened ancestors waited behind 44,168 ms and 41,345 ms working-set enumerations. Preparation now navigates each bound parent before resolving its children; regression coverage rejects unbound descent.
+The extension later exited with background materialization-refresh span `5FA2F8D9-4DC8-4130-8EF4-B692E5421582` and request `E3014F5E-B790-41A6-B67B-99E9EA6CED19` unfinished. This is incomplete lifecycle evidence, not proof of a crash cause. The SDK recommends promptly acknowledging materialization changes and doing subsequent work as a timed task, so that acknowledgement remains unchanged. The experimental detached change-delivery refresh was also removed: polls now check for a superseding journal between remote requests and discard uncommitted work before returning within enumeration. New tests publish during relevant-item/folder requests and verify prompt delivery without later requests, cursor writes, or watermark advancement. Failed cleanup/settling now also retains a non-accepting candidate. Mac23/iOS09/visionOS08 stopped at a throwing Swift Testing macro expression in the new test closure; no test execution was accepted from those builds. After separating the awaited value from the assertion, Mac24 finalized **435 passed**, standard macOS07 **388 passed**, iOS10 **372 passed**, and visionOS Simulator09 **372 passed**, with zero failed/skipped/expected failures. Generic visionOS06 built successfully. Live14 remained unsealed after its bounded settling deadline and its exited owner was recovered without changing fixtures. The next live run remains required.
 
 ## 2026-09-10 — Live Finder implementation in progress
 

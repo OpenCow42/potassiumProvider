@@ -77,6 +77,23 @@ parent/domain remains pending; URL spelling alone does not define provider ident
 covers alias spelling, wrong parent/domain, and wrong name. These are harness fixes;
 no production mutation policy changed.
 
+Working-set delivery now publishes confirmed plaintext modify/direct-action results
+to the existing SQLite change journal before signaling. The merge requires that
+the journal's item still matches the caller's pre-mutation observation (or already
+equals the result); a competing writer is never overwritten. Publication neither
+advances remote cursors nor changes poll timestamps, and failure cannot replay an
+already committed remote mutation. Configured roots are not published as ordinary
+children. Poll commits compare their starting working-set anchor transactionally
+so an older in-flight crawl cannot overwrite the publication. Enumeration delivers
+available journal changes before starting another crawl and rechecks for newly
+published changes while a crawl is in flight. A separately owned, monitored refresh
+continues to its real terminal after earlier journal delivery; it cannot disappear
+from run-settling evidence. Empty journals retain normal polling and expired anchors
+remain errors. `WorkingSetMutationDeliveryTests`
+covers persistence, competing writers, stale-poll rollback, watermark preservation,
+immediate delivery, and expired anchors. This changes notification latency, not
+remote mutation or conflict policy; live verification is pending.
+
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot
 certify the original sixteen-scenario suite. Current validation and preserved live
@@ -584,6 +601,7 @@ pending and are never falsely acknowledged.
 | `CR-019` | Medium | Duplicate-in-place sent an empty options body and depended on undocumented server-selected naming. | The coordinator refetches the source, derives an explicit extension-preserving copy name, sends it, and refetches the result. | **Resolved** |
 | `CR-020` | Medium | HTTP 408/429 were treated as nonretryable synchronization failures and Retry-After recovery metadata was dropped. | They now map to `.serverUnreachable`; only parsed delta seconds survive. Provider-owned retry cadence remains absent. | **Mitigated** |
 | `CR-021` | Medium | Share update/delete have no documented ETag or conditional version and can race another editor. | Request bodies and response access now fail closed, but accepted share mutations remain last-writer-wins until the API exposes a conditional primitive. | **Open** |
+| `CR-022` | Medium | Working-set change delivery waited behind long materialized-folder crawls despite confirmed local mutation results. | Live callbacks exceeded 90 seconds. Confirmed results now enter the journal with per-item comparison; poll-anchor comparison prevents an older crawl from overwriting them. Available deltas are delivered before polling. Deterministic regressions pass; live verification remains required. | **Mitigated** |
 
 ## Legacy Plaintext User-Recovery Matrix
 
