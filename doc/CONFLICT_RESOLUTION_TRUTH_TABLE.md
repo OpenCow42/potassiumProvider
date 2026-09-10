@@ -611,6 +611,7 @@ pending and are never falsely acknowledged.
 | `CR-020` | Medium | HTTP 408/429 were treated as nonretryable synchronization failures and Retry-After recovery metadata was dropped. | They now map to `.serverUnreachable`; only parsed delta seconds survive. Provider-owned retry cadence remains absent. | **Mitigated** |
 | `CR-021` | Medium | Share update/delete have no documented ETag or conditional version and can race another editor. | Request bodies and response access now fail closed, but accepted share mutations remain last-writer-wins until the API exposes a conditional primitive. | **Open** |
 | `CR-022` | Medium | Working-set change delivery waited behind long materialized-folder crawls despite confirmed local mutation results. | Live callbacks exceeded 90 seconds. Confirmed results now enter the journal with per-item comparison; poll-anchor comparison prevents an older crawl from overwriting them. Available deltas are delivered before polling. Deterministic regressions pass; live verification remains required. | **Mitigated** |
+| `CR-023` | Medium | A live current-sync-anchor callback failed with an opaque fallback error wrapper. | Original cause is unconfirmed. Bounded cause inspection now retains known SQLite numeric codes and closed storage/validation categories without private error text; the failed bundle remains evidence and no storage fix is claimed. | **Open** |
 
 ## Legacy Plaintext User-Recovery Matrix
 

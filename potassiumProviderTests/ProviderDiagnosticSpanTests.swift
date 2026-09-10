@@ -4,9 +4,24 @@ import Foundation
 import PotassiumChannelCore
 import PotassiumProviderCore
 import Testing
+@preconcurrency import SQLite
 
 @Suite("Provider diagnostic spans")
 struct ProviderDiagnosticSpanTests {
+    @Test(arguments: [false, true])
+    func mappedSQLiteFailuresRetainOnlySafeCodeAndCategory(extended: Bool) async throws {
+        let sink = InMemoryDiagnosticSink(), canary = UUID().uuidString
+        let code: Int32 = extended ? 517 : 5
+        let original: SQLite.Result = extended ? .extendedError(message: canary, extendedCode: code, statement: nil) :
+            .error(message: canary, code: code, statement: nil)
+        let mapped = providerErrorMapping(original).mappedError
+        let span = await ProviderDiagnosticSpan.start(source: .fileProviderExtension, operation: .currentSyncAnchor, recorder: sink)
+        await span.fail(error: mapped)
+        let events = await sink.snapshot()
+        #expect(events.last?.errorClass == .storage)
+        #expect(events.last?.errorCode == Int(code))
+        #expect(!String(decoding: try JSONEncoder().encode(events), as: UTF8.self).contains(canary))
+    }
     @Test func snapshotRaceClassificationOmitsPrivateIdentifiers() async throws {
         let sink = InMemoryDiagnosticSink()
         let span = await ProviderDiagnosticSpan.start(source: .fileProviderExtension, operation: .workingSetRefresh, recorder: sink)

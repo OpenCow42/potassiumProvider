@@ -1,6 +1,7 @@
 import Darwin
 import FileProvider
 import Foundation
+@preconcurrency import SQLite
 
 /// Propagates a privacy-safe correlation identifier through structured tasks.
 ///
@@ -24,9 +25,16 @@ public enum ProviderDiagnosticCorrelationContext {
 /// user-info values are never copied into a diagnostic event.
 public enum ProviderDiagnosticErrorClassifier {
     public static func classify(_ error: any Error) -> ProviderDiagnosticErrorClass {
+        classifyOriginal(originalError(error))
+    }
+
+    private static func classifyOriginal(_ error: any Error) -> ProviderDiagnosticErrorClass {
         if error is CancellationError {
             return .cancellation
         }
+
+        if sqliteCode(error) != nil || error is DomainConfigurationStoreError { return .storage }
+        if error is DecodingError { return .validation }
 
         if let snapshotError = error as? KDriveSnapshotStoreError {
             switch snapshotError {
@@ -72,6 +80,27 @@ public enum ProviderDiagnosticErrorClassifier {
             return classifyPOSIXCode(cocoaError.code)
         default:
             return .unknown
+        }
+    }
+
+    /// Our fallback mapping wraps an otherwise unknown error as XPC reply
+    /// invalid. Inspect only that bounded cause chain; never retain user-info.
+    fileprivate static func originalError(_ error: any Error) -> any Error {
+        var result = error
+        for _ in 0..<4 {
+            let value = result as NSError
+            guard value.domain == NSCocoaErrorDomain, value.code == NSXPCConnectionReplyInvalid,
+                  let underlying = value.userInfo[NSUnderlyingErrorKey] as? any Error else { break }
+            result = underlying
+        }
+        return result
+    }
+
+    fileprivate static func sqliteCode(_ error: any Error) -> Int? {
+        guard let result = error as? SQLite.Result else { return nil }
+        switch result {
+        case .error(_, let code, _): return Int(code)
+        case .extendedError(_, let code, _): return Int(code)
         }
     }
 
@@ -429,8 +458,10 @@ public actor ProviderDiagnosticSpan {
     }
 
     private static func safeCode(_ error: any Error) -> Int? {
-        if let rejection = KDriveRemoteErrorClassifier.apiRejection(from: error) { return rejection.statusCode }
-        let value = error as NSError
+        let original = ProviderDiagnosticErrorClassifier.originalError(error)
+        if let code = ProviderDiagnosticErrorClassifier.sqliteCode(original) { return code }
+        if let rejection = KDriveRemoteErrorClassifier.apiRejection(from: original) { return rejection.statusCode }
+        let value = original as NSError
         return [NSFileProviderErrorDomain, NSURLErrorDomain, NSCocoaErrorDomain, NSPOSIXErrorDomain].contains(value.domain) ? value.code : nil
     }
 
