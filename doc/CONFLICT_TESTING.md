@@ -151,33 +151,28 @@ never silently discarded. An unavailable cleanup control leaves incomplete evide
 ## Acceptance and remaining limitations
 
 The complete six-case fresh and already-running profiles passed on implementation
-`05e8e5f`, with twelve sealed evidence bundles. All warm cases reused the final
-fresh process; version-2 proofs also verified complete object recreation inside
-that process. The audit records run IDs, failing predecessors, focused corrections,
-and finalized platform results. This does not certify the separate sixteen-scenario
-suite, whose complete reruns remain in progress.
+`d4b5323`, with twelve sealed evidence bundles. Independent verification confirmed
+one signed build, six fresh processes, a continuous warm process, actual competing
+commits, reopened bytes, screenshots, complete diagnostic spans, and healthy final
+reports. The earlier accepted baseline `05e8e5f` and intervening failed bundles
+remain preserved. The audit records exact run IDs and the focused corrections.
 
-Live acceptance requires finalized evidence for all selected cases with a freshly
-launched and an already-running extension. Missing initialization telemetry cannot
-prove a cold run. The original sixteen-scenario suite and its acceptance gate are
-unchanged. Live results and platform validation are recorded in
-`STABILITY_LOOP_AUDIT.md`; implementation alone does not establish live acceptance.
+Latest finalized validation: 463 macOS Stability tests, 395 standard macOS tests,
+379 iOS Simulator tests, and 379 visionOS Simulator tests passed, with zero
+failed/skipped/expected failures. The generic visionOS build succeeded. The last
+changes are confined to macOS Stability; shared-runtime results cover the provider
+lifecycle correction. `FileProviderBackgroundWorkTests` verifies cancellation,
+replacement-instance independence, and late-registration rejection. A retained
+failed-preparation trace also verifies actual materialization-child cancellation
+during invalidation, mitigating CR-024 without converting that failure to a pass.
 
-Keep permanent-delete CR-013 open. These six live cases do not permanently delete
+These conflict profiles do not certify the separate sixteen-scenario suite. Its
+complete fresh and already-running acceptance remains open; earlier runs verified
+ten scenarios through Trash, and the strengthened Restore path and subsequent
+scenarios still need complete verification. Large materialized-set latency remains
+unresolved. Live results are in `STABILITY_LOOP_AUDIT.md`.
+
+Keep permanent-delete CR-013 open. The six conflict cases do not permanently delete
 fixtures. Permanent deletion in the original suite still requires exact generated
 item confirmation. Directory-create reconciliation, ambiguous replacement success,
 and server-dependent guarantees must not be inferred from the controlled service.
-
-
-`FileProviderBackgroundWorkTests` covers refresh lifetime across replicated-instance
-invalidation: cancellation prevents another request, a replacement instance continues
-independently, and late work cannot start in an invalidated scope. The live audit
-identified this separate lifecycle defect after the twelve accepted conflict runs.
-Those baseline bundles remain valid for their build; the subsequent provider lifetime
-change requires new platform and live validation before certifying the updated build.
-
-Mac38 finalized 462 Stability tests for the replicated-signaling and independent
-preparation correction. A retained failed-preparation trace separately verifies
-materialization-child cancellation during instance invalidation, so CR-024 is
-mitigated; the failure itself remains non-passing. Complete current-build conflict
-profiles are still required.

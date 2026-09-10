@@ -1495,3 +1495,37 @@ Mac39 finalized **463 passed**, zero failed/skipped/expected failures, including
 the production signaling-helper regression. Global settlement, callback mappings,
 expected conflict terminals, and negative unrelated-callback checks are unchanged.
 A new complete fresh/running profile is next.
+
+
+### Updated-build conflict acceptance completed
+
+Implementation `d4b5323` passed all six fresh-extension cases and all six
+already-running cases. Independent bundle verification confirmed the exact case
+sets, one signed build, six distinct fresh process identities, and all warm cases
+reusing the final fresh process. Every selected result has one pass and fifteen
+explicitly unselected scenarios, zero checkpoints/failures, schema-3 competing
+commit evidence, schema-2 launch proof, screenshots, timelines, final reports, and
+summaries. Every diagnostic span has exactly one start and terminal, with no
+writer-health or storage failure. Both commands completed and no owner lease remains.
+
+| Case | Fresh | Already running |
+| --- | --- | --- |
+| `content-before-preflight` | `bc8e0f08-f007-48f3-9b6a-449c334941c8` | `5f1c469d-5252-44c7-b241-ee939ee48365` |
+| `content-after-preflight` | `89a2eab6-23a5-4216-b546-fddc2575d40e` | `73008dac-19b1-4340-aa71-f83ff6da670b` |
+| `rename-rename` | `2a89e78c-d3b7-4471-8be0-f6fec7360397` | `35d92642-715d-475c-a950-da551d896f9f` |
+| `move-move` | `9e07afec-747a-4161-949b-456f5e32eb01` | `57cd7037-54a9-4600-8c68-43f5b5b6d36a` |
+| `edit-rename` | `cfb29081-cc2a-4a2c-955f-752da494edf0` | `ad8eecbe-f2aa-4bb4-89cb-376e794c4853` |
+| `edit-move` | `0cca0007-ad5c-4aeb-956b-86b3d67c5b5d` | `09b60947-427e-4cdc-ba84-503796034893` |
+
+This verifies the warm observation request, independent fixture preparation, and
+separation of native refresh targets from scenario subjects on the updated build.
+Global background work still settled before sealing; the 90-second operation
+budgets and all UI/API/callback assertions remained intact. Previous failures
+and abandoned preflights remain unchanged. No fixture was permanently deleted.
+
+Latest finalized platform validation remains Mac39 **463 passed**, standard macOS12
+**395 passed**, iOS16 **379 passed**, visionOS Simulator15 **379 passed**, and
+generic visionOS11 build succeeded, all accepted test bundles with zero
+failed/skipped/expected failures. The last corrections affect only macOS Stability.
+The separate original sixteen-scenario suite remains incomplete and is next.
+CR-013 remains open; CR-022 retains its large-materialized-set latency limitation.
