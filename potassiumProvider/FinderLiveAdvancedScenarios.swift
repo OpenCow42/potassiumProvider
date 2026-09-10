@@ -192,12 +192,14 @@ extension FinderLiveRunSession {
     /// Allow every run-related started callback to reach a terminal before sealing.
     /// An interrupted transfer never becomes an apparently complete evidence bundle.
     func drain() async throws {
-        try await poll(seconds: 600) {
-            let events = try self.diagnostics().filter { $0.spanID != nil }
-            return Dictionary(grouping: events, by: { $0.spanID! }).values.allSatisfy { span in
-                !span.contains { $0.phase == .started } || span.contains { [.completed, .cancelled, .failed].contains($0.phase) }
-            }
+        var settlement = StabilityDiagnosticSettlement()
+        while deadline.remaining() > .zero {
+            if settlement.observe(try diagnostics()) { return }
+            // This reads local telemetry only. The server backoff can reach ten
+            // seconds, longer than the idle extension's teardown interval.
+            try await Task.sleep(for: min(.milliseconds(500), deadline.remaining()))
         }
+        throw StabilityDeadlineError.expired
     }
 }
 #endif

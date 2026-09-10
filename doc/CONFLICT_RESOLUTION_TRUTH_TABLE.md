@@ -85,14 +85,23 @@ advances remote cursors nor changes poll timestamps, and failure cannot replay a
 already committed remote mutation. Configured roots are not published as ordinary
 children. Poll commits compare their starting working-set anchor transactionally
 so an older in-flight crawl cannot overwrite the publication. Enumeration delivers
-available journal changes before starting another crawl and rechecks for newly
-published changes while a crawl is in flight. A separately owned, monitored refresh
-continues to its real terminal after earlier journal delivery; it cannot disappear
-from run-settling evidence. Empty journals retain normal polling and expired anchors
-remain errors. `WorkingSetMutationDeliveryTests`
-covers persistence, competing writers, stale-poll rollback, watermark preservation,
-immediate delivery, and expired anchors. This changes notification latency, not
-remote mutation or conflict policy; live verification is pending.
+available journal changes before starting another crawl. An in-flight poll checks
+for a superseding journal between folder/activity requests, discards its prepared
+container changes, and returns without advancing its successful watermark. Refresh
+remains within enumeration; no detached delivery worker survives that callback.
+Empty journals retain normal polling and expired anchors remain errors.
+`WorkingSetMutationDeliveryTests` and `WorkingSetSyncTests` cover persistence,
+competing writers, stale-poll rollback, watermark preservation, immediate delivery,
+supersession during remote reads, and expired anchors. This changes notification
+latency, not remote mutation or conflict policy; complete live acceptance is pending.
+
+Live evidence settling now uses a local one-second quiet interval after exactly
+one start and terminal per span, checked every 500 ms. Server Retry-After/backoff
+is unchanged. `StabilityDiagnosticSettlementTests` rejects pending work, missing
+starts, duplicate terminals, and premature quiet periods after new events. Lifecycle
+validation still rejects an invalidated/restarted or mismatched extension during
+the monitored run. Rejected candidates remain ineligible for acceptance; CR-013
+stays open.
 
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot
