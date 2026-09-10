@@ -1456,3 +1456,42 @@ CR-024 is **Mitigated**: deterministic and live evidence verify the specific tas
 ownership/cancellation correction. The original process-exit cause remains
 unconfirmed, and this supporting trace does not turn the failed conflict case into
 a pass.
+
+
+### Native refresh target versus intended evidence subjects
+
+On `14165a1`, first case `6eebdc61-53b1-48c8-be14-612e0e73b42c` completed
+its controlled remote replacement, preserved both byte streams, captured both
+results, and reopened them through Finder/TextEdit. Content callback
+`F3C09A11-EE50-4B74-A47B-3A2154E942DE` completed at 22:41:27 UTC; the final
+reopen fetched the original's remote bytes at 22:41:47. The case nevertheless
+failed at 22:41:58 while awaiting diagnostics. Working-set enumerate-changes span
+`E3C9B9C5-F6A9-4872-AEAF-C96ABA876168` started at 22:41:27 and completed at
+22:42:27, after the scenario deadline. The failed bundle sealed and remains failed.
+
+The preceding signaling change had mistakenly added the native `.workingSet`
+refresh target to every scenario's intended subjects. That broadened an item-specific
+check to unrelated domain work. Classification: harness correlation; confidence
+high from the selected subject set, late span, and source. The correction records
+only the changed fixture containers while still signaling the native working set.
+The explicit working-set scenario may select that subject. Global recorder settling
+continues to require every span's terminal before sealing, so no background evidence
+is discarded. A production-helper regression distinguishes the native refresh
+target from recorded scenario subjects. Diagnostic waits now trace their closed
+reason on transitions. Neither the 90-second budget nor any callback/byte/identity
+assertion is relaxed. Validation and a complete corrected profile are pending.
+
+The second case, `576fd66c-0e6e-49a8-bcf8-c8541583cbea`, also exercised the
+real conditional HTTP 412 and completed its UI checks before failing during the
+diagnostic wait. Both failed bundles sealed. To avoid repeating the now-identified
+harness regression, the app was stopped at the next case’s preflight boundary
+(`ecaf392d-8d77-4c56-8511-baaa62e64ac9`), after rechecking that no Finder
+scenario had started. Its preflight had no pending diagnostic span. Explicit
+stale-owner recovery preserved that abandoned bundle; no fixture mutation or UI
+action occurred in it. This was an interrupted profile with two failures, not a
+complete six-case run; the conditional warm command did not run.
+
+Mac39 finalized **463 passed**, zero failed/skipped/expected failures, including
+the production signaling-helper regression. Global settlement, callback mappings,
+expected conflict terminals, and negative unrelated-callback checks are unchanged.
+A new complete fresh/running profile is next.

@@ -237,6 +237,7 @@ final class FinderLiveRunSession {
 
     func awaitDiagnostics(scenario: StabilityFinderScenario, startedAt: Date, actions: Int) async throws -> StabilityLiveStepEvidence {
         let proof = evidence(actions: actions)
+        var lastWaitReason: StabilityLiveEvidenceError?
         try await poll {
             let result = StabilityFinderStepResult(sequenceNumber: 1, scenario: scenario, correlationID: self.correlationID,
                 startedAt: startedAt, finishedAt: Date(), outcome: .passed, assertions: [], liveEvidence: proof)
@@ -244,6 +245,13 @@ final class FinderLiveRunSession {
             catch StabilityLiveEvidenceError.wrongExtensionBuild { throw FinderLiveError.unverifiedBuild }
             catch StabilityLiveEvidenceError.unexpectedFailure { throw StabilityLiveEvidenceError.unexpectedFailure }
             catch StabilityLiveEvidenceError.contradictoryTerminal { throw StabilityLiveEvidenceError.contradictoryTerminal }
+            catch let error as StabilityLiveEvidenceError {
+                if error != lastWaitReason {
+                    print("finder stability diagnostics pending: \(error.rawValue)")
+                    lastWaitReason = error
+                }
+                return false
+            }
             catch { return false }
         }
         return proof
@@ -262,10 +270,9 @@ final class FinderLiveRunSession {
     }
 
     private func signalChanges(in identifiers: [NSFileProviderItemIdentifier]) async throws {
-        for identifier in identifiers { subject(identifier.rawValue) }
-        subject(NSFileProviderItemIdentifier.workingSet.rawValue)
         let manager = context.fileProviderManager
-        try await FinderReplicatedRefresh.signal(changedContainers: identifiers) { identifier in
+        try await FinderReplicatedRefresh.signal(changedContainers: identifiers,
+            recordSubject: { self.subject($0.rawValue) }) { identifier in
             try await StabilityCallbackWaiter<Void>().wait(timeout: self.deadline.remaining()) { completion in
                 manager.signalEnumerator(for: identifier) { error in
                     if let error { completion(.failure(error)) } else { completion(.success(())) }

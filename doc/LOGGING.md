@@ -341,3 +341,9 @@ Fixture preparation traces only the fixed roles `root`, `nested`, `deep`, `sibli
 and `seed`, with resolving/resolved/failed states. They exclude paths, file names,
 and raw item identifiers. These traces locate a failed placeholder binding without
 changing its 90-second deadline or treating native signal acknowledgement as proof.
+
+The native working-set signal target is distinct from a scenario’s fixture subjects.
+Signaling records only the intended changed containers; the explicit working-set
+scenario selects `.workingSet` itself. All other callbacks stay in the global
+timeline and settlement checks. Diagnostic waits print closed reason transitions
+(such as `pendingOperations`), without raw errors or private subjects.

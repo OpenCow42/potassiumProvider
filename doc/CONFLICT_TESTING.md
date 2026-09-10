@@ -126,7 +126,9 @@ mutation target, and verifies its destinations. The original suite retains the
 full nested hierarchy, seed, and navigation assertions. Completed remote fixture
 batches request one `.workingSet` refresh; individual-folder native signals are
 ignored for replicated providers. Signal acknowledgement never satisfies UI,
-remote-state, or callback assertions.
+remote-state, or callback assertions. The native working-set refresh target does
+not expand the selected case’s subject set to all domain callbacks; complete global
+settling remains a separate requirement before sealing.
 
 Every result is selected in Finder, captured locally, reopened through Finder in
 TextEdit, and byte-checked. Gate files are scoped to run, case, salted item alias,
