@@ -26,12 +26,17 @@ struct VaultConflictReplayTests {
         for _ in 0..<12 { permutations.append(transactions.shuffled(using: &random)) }
         for order in permutations {
             let observed = try VaultJournalReducer.reduce(order)
-            if observed != expected {
-                let minimal = try minimize(order) { try VaultJournalReducer.reduce($0) != VaultJournalReducer.reduce($0.sorted { $0.id.uuidString < $1.id.uuidString }) }
+            if observed != expected || preservationViolation(observed, transactions: order) {
+                let minimal = try minimize(order) { input in
+                    let result = try VaultJournalReducer.reduce(input)
+                    return try result != VaultJournalReducer.reduce(input.sorted { $0.id.uuidString < $1.id.uuidString }) ||
+                        preservationViolation(result, transactions: input)
+                }
                 let file = try persistFailure(seed: seed, transactions: minimal)
-                Issue.record("Vault replay diverged; seed \(seed); synthetic reproducer: \(file.path)")
+                Issue.record("Vault replay or preservation failed; seed \(seed); synthetic reproducer: \(file.path)")
             }
             #expect(observed == expected)
+            #expect(!preservationViolation(observed, transactions: order))
             #expect(Set(observed.items.values.map(\.contentRevision)) == Set(contents.keys))
             #expect(observed.items.count == 6)
             #expect(observed.conflicts.filter { $0.kind == .content }.count == 5)
@@ -69,6 +74,9 @@ struct VaultConflictReplayTests {
             #expect(try VaultJournalReducer.reduce(order) == expected)
         }
         #expect(expected.items.count == 1)
+        #expect(expected.items[base.id]?.filename == "Second.txt")
+        #expect(expected.items[base.id]?.parentID == nil)
+        #expect(expected.items[base.id]?.metadataRevision == second.metadataRevision)
         #expect(expected.items[base.id]?.contentRevision == base.contentRevision)
         #expect(expected.conflicts.contains { $0.kind == .metadata })
     }
@@ -87,12 +95,20 @@ struct VaultConflictReplayTests {
         }
     }
 
-    @Test func duplicateJournalDeliveryFailsClosedWithoutChangingPersistentState() throws {
+    @Test func duplicateJournalDeliveryFailsClosedWithoutChangingPersistentState() async throws {
         let base = item(id: VaultItemIdentifier(), bytes: Data("base".utf8))
         let transaction = VaultTransaction(parents: VaultFrontier(), deviceID: UUID(), operation: .upsert(base))
-        #expect(throws: VaultJournalError.duplicateTransaction(transaction.id)) {
-            try VaultJournalReducer.reduce([transaction, transaction])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let key = VaultKeyMaterial(data: Data(repeating: 8, count: 32))!
+        let store = try VaultSQLiteStore(databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+            domainIdentifier: "synthetic", vaultID: VaultIdentifier(), rootKey: key)
+        let before = try VaultJournalReducer.reduce([transaction])
+        try await store.replace(with: before)
+        await #expect(throws: VaultJournalError.duplicateTransaction(transaction.id)) {
+            try await store.replace(with: VaultJournalReducer.reduce([transaction, transaction]))
         }
+        #expect(try await store.state().items == before.items)
     }
 
     @Test func reproducerReductionRetainsRequiredCausalAncestors() throws {
@@ -105,6 +121,22 @@ struct VaultConflictReplayTests {
             return input.contains { $0.id == leaf.id }
         }
         #expect(Set(reduced.map(\.id)) == [create.id, leaf.id])
+    }
+
+    /// Independent oracle for this family of concurrent writes. Subsequence
+    /// reduction recomputes expectations from remaining writers, so minimizing
+    /// cannot mistake an intentionally removed version for data loss.
+    private func preservationViolation(_ result: VaultReducedState, transactions: [VaultTransaction]) -> Bool {
+        let writes = transactions.filter { $0.baseItem != nil }.sorted { $0.id.uuidString < $1.id.uuidString }
+        let desired = writes.compactMap { transaction -> VaultItem? in
+            if case .upsert(let item) = transaction.operation { return item }
+            return nil
+        }
+        guard let winner = desired.first else { return false }
+        return Set(result.items.values.map(\.contentRevision)) != Set(desired.map(\.contentRevision)) ||
+            result.items.count != desired.count || result.conflicts.filter { $0.kind == .content }.count != desired.count - 1 ||
+            result.items[winner.id]?.contentRevision != winner.contentRevision ||
+            result.items.values.contains { $0.parentID != nil || $0.isTrashed }
     }
 
     private func item(id: VaultItemIdentifier, bytes: Data) -> VaultItem {

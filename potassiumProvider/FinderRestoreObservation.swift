@@ -9,6 +9,12 @@ enum FinderRestoreObservation {
             url.lastPathComponent.precomposedStringWithCanonicalMapping == name.precomposedStringWithCanonicalMapping
     }
 
+    static func observeVisibleDestination(parent: URL, name: String,
+                                          readVisible: () async throws -> URL) async throws -> URL? {
+        let candidate = try await readVisible()
+        return matchesVisibleDestination(candidate, parent: parent, name: name) ? candidate : nil
+    }
+
     /// A completed UI-originated callback gates verification. Active-item 404
     /// while restoration becomes visible is pending, never positive evidence.
     static func observe(callbackCompleted: Bool, expected: KDriveRemoteItem,

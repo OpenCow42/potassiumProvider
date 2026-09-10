@@ -129,6 +129,10 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         await run(requestPermissions: requestPermissions, conflictCase: nil)
     }
 
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult {
+        await run(requestPermissions: requestPermissions, conflictCase: nil, extensionLaunchMode: extensionLaunchMode)
+    }
+
     private func run(requestPermissions: Bool, conflictCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode? = nil) async -> FinderStabilityCommandResult {
         let reportStartedAt = Date()
         let runCoordinator: StabilityRunCoordinator
@@ -142,6 +146,8 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             try statusWriter(StabilityLiveStatus(state: .preflight), ownedRun.run)
             if let conflictCase {
                 try await runCoordinator.selectConflictProfile(conflictCase, ownedRun: ownedRun, extensionLaunchMode: extensionLaunchMode)
+            } else if let extensionLaunchMode {
+                try await runCoordinator.requireExtensionLaunch(extensionLaunchMode, ownedRun: ownedRun)
             }
             launchController = try extensionLaunchMode.map { try StabilityExtensionProcessController(mode: $0, run: ownedRun.run) }
         } catch {

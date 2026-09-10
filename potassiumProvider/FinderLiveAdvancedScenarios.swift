@@ -5,16 +5,29 @@ import PotassiumProviderCore
 
 extension FinderLiveRunSession {
     func waitRestoredLocation(_ item: KDriveRemoteItem) async throws -> URL {
+        try await waitVisibleDestination(item)
+    }
+
+    func waitVisibleDestination(_ item: KDriveRemoteItem) async throws -> URL {
         let parent = try require(owned[item.parentID])
         let parentURL = try await visible(parent)
-        var restoredURL: URL?
+        var result: URL?
+        var lastObservation: String?
         try await poll {
-            let candidate = try await self.visible(item)
-            guard FinderRestoreObservation.matchesVisibleDestination(candidate, parent: parentURL, name: item.name) else { return false }
-            restoredURL = candidate
-            return true
+            result = try await FinderRestoreObservation.observeVisibleDestination(parent: parentURL, name: item.name) {
+                let candidate = try await self.visible(item)
+                let parentMatches = FinderUIURLIdentity.matches(candidate.deletingLastPathComponent(), parentURL)
+                let nameMatches = candidate.lastPathComponent.precomposedStringWithCanonicalMapping == item.name.precomposedStringWithCanonicalMapping
+                let observation = "parentMatches=\(parentMatches) nameMatches=\(nameMatches)"
+                if (!parentMatches || !nameMatches), lastObservation != observation {
+                    print("finder stability: local destination pending; " + observation)
+                    lastObservation = observation
+                }
+                return candidate
+            }
+            return result != nil
         }
-        return try require(restoredURL)
+        return try require(result)
     }
 
     func waitRestored(_ item: KDriveRemoteItem) async throws -> KDriveRemoteItem {

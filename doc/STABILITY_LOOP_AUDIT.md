@@ -94,6 +94,62 @@ while that invocation was still reading it. The current script passes `bash -n`;
 this separate harness-development error does not alter the six sealed app reports.
 Do not edit the command script during a live invocation.
 
+Targeted navigation rerun `63316860-231f-40c9-b575-276d186f4fe9`
+(`--conflicts --case move-move --yes-live`) finalized one passed and fifteen
+unselected entries. Go to Folder navigation exposed the exact generated row;
+the actual Finder move reached its scheduling gate, the competing remote move
+completed, the local destination won on the same identity, and the file reopened
+with matching bytes. Owned windows closed and the bundle sealed. This is a passing
+reproduction of the previously failing case, not proof that the intermittent
+Finder issue is eliminated or that all live cases pass.
+
+### Fresh-extension profile: five passed, delayed local move observation failed
+
+The fresh profile used verified kernel births, signed code and matching initialization
+terminals. Its first five cases sealed as passed:
+`c7b545ba-27aa-4687-bf2f-2980b4ee8097` (content-before-preflight),
+`19f413dd-04cf-484c-affc-573d8dbeb3a1` (content-after-preflight),
+`7132ed32-3ebb-4fb8-83ad-acc227616db6` (rename-rename),
+`fa96b9ab-acd1-4628-b8a5-2d7d160db4f0` (move-move), and
+`75d63673-f6a5-444c-9619-d104ffe6bf4b` (edit-rename).
+Each includes `extension-launch.json`; these are case results, not a complete
+profile certificate. Launch timestamps retain microseconds because ISO-8601
+whole-second encoding otherwise loses the process/recorder ordering. The targeted
+`potassium-conflict-mac-12.xcresult` finalized 20 passed with zero failures/skips.
+
+`2a5fcd7a-b29e-4318-824d-b85510399864` (edit-move) reached the actual gate
+and failed at the immediate expected-local-destination assertion after server
+metadata and byte verification. The UI trace had not yet begun reopening the result;
+that identifies the destination guard as the earliest assertion divergence.
+Competing remote move span `1E274C51-8960-4449-A203-6FEAFF3FEE8D`,
+conditional replacement `5E212013-E5CB-442F-821C-3CEC094D91F5`, and its
+parent modify callback `C75AE248-F637-4F39-8781-97C48D37CBA5` all completed.
+Expected: the same item under the remote destination, with edited bytes and the
+unchanged filename, visible and reopenable in Finder. Observed: backend state
+passed, but the current provider URL did not yet satisfy the parent/name guard.
+Classification: harness timing, high confidence for the immediate assertion gap;
+the precise macOS propagation delay remains to be measured.
+
+The runner now reuses a bounded destination observation for Restore and conflict
+results, retaining exact parent/name and domain/item binding. A stale location
+remains pending rather than success. `FinderRestoreObservationTests` adds a
+stale-move/wrong-name/valid-location sequence and cancellation regression.
+Reproduce with `--conflicts --case edit-move --extension-state fresh --yes-live`.
+The failed bundle and fixtures are retained; its live rerun is pending.
+
+Latest finalized validation after create-callback coverage, stronger vault replay
+oracles and delayed-location handling: Stability macOS
+`potassium-conflict-mac-13.xcresult` **423 passed**; standard macOS
+`potassium-conflict-standard-mac-03.xcresult` **381 passed**; iOS
+`potassium-conflict-ios-04.xcresult` **365 passed**; visionOS Simulator
+`potassium-conflict-vision-sim-03.xcresult` **365 passed**. The signed generic
+visionOS build succeeded (`potassium-conflict-vision-build-02.log`). Subsequent
+original-run launch-option and required-evidence tests finalized
+`potassium-conflict-mac-14.xcresult` **28 passed**. All have zero failed/skipped/
+expected failures. Navigation now clears its previous selection before opening Go
+to Folder because the provider may already have moved that selected identity.
+The ordinary signed live build is being rerun with these changes.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on

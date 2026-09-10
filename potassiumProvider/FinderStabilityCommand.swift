@@ -59,9 +59,8 @@ enum FinderStabilityCommandLine {
                         requestPermissions: options.requestPermissions
                     )
                 case .run:
-                    result = await executor.run(
-                        requestPermissions: options.requestPermissions
-                    )
+                    result = await executor.run(requestPermissions: options.requestPermissions,
+                        extensionLaunchMode: options.extensionLaunchMode)
                 case .conflicts:
                     result = await executor.conflicts(requestPermissions: options.requestPermissions, selectedCase: options.conflictCase, extensionLaunchMode: options.extensionLaunchMode)
                 case .recover:
@@ -89,7 +88,7 @@ enum FinderStabilityCommandLine {
           potassiumProvider --finder-stability provision --yes-live
           potassiumProvider --finder-stability watch
           potassiumProvider --finder-stability preflight [--request-permissions]
-          potassiumProvider --finder-stability run --yes-live [--request-permissions]
+          potassiumProvider --finder-stability run --yes-live [--extension-state fresh|running] [--request-permissions]
           potassiumProvider --finder-stability conflicts --yes-live [--case CASE] [--extension-state fresh|running] [--request-permissions]
           potassiumProvider --finder-stability recover --yes-recover
 
@@ -224,7 +223,8 @@ enum FinderStabilityArgumentParser {
 
         guard let mode else { throw FinderStabilityArgumentError.missingMode }
         guard !expectsCase, !expectsLaunchMode,
-              (conflictCase == nil && extensionLaunchMode == nil) || mode == .conflicts else { throw FinderStabilityArgumentError.unknownOption }
+              conflictCase == nil || mode == .conflicts,
+              extensionLaunchMode == nil || mode == .conflicts || mode == .run else { throw FinderStabilityArgumentError.unknownOption }
         switch mode {
         case .conflicts where !confirmedLiveRun:
             throw FinderStabilityArgumentError.liveConfirmationRequired
@@ -301,12 +301,17 @@ enum FinderStabilityCommandResult: Equatable, Sendable {
 protocol FinderStabilityCommandExecuting {
     func preflight(requestPermissions: Bool) async -> FinderStabilityCommandResult
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult
     func conflicts(requestPermissions: Bool, selectedCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult
     func recoverStaleRun() async -> FinderStabilityCommandResult
     func provision() async -> FinderStabilityCommandResult
     func watch() async -> FinderStabilityCommandResult
 }
 extension FinderStabilityCommandExecuting {
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult {
+        guard extensionLaunchMode == nil else { return .rejected }
+        return await run(requestPermissions: requestPermissions)
+    }
     func conflicts(requestPermissions: Bool, selectedCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult { .rejected }
     func provision() async -> FinderStabilityCommandResult { .rejected }
     func watch() async -> FinderStabilityCommandResult { .rejected }

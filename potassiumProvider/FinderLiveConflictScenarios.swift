@@ -90,11 +90,7 @@ extension FinderLiveRunSession {
 
     private func showAndReopen(_ item: KDriveRemoteItem, expected: Data, capture: Int) async throws {
         remember(item)
-        let url = try await visible(item)
-        let parentURL = try await visible(require(owned[item.parentID]))
-        guard FinderRestoreObservation.matchesVisibleDestination(url, parent: parentURL, name: item.name) else {
-            throw FinderLiveError.assertionFailed
-        }
+        let url = try await waitVisibleDestination(item)
         try await bind(url, item: item)
         try await ui.select(url)
         try await ui.capture(in: run.directoryURL.appendingPathComponent("visual-evidence"), sequence: capture)

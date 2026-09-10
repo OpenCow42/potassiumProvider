@@ -668,6 +668,17 @@ public actor StabilityRunCoordinator {
                 at: ownedRun.run.directoryURL.appendingPathComponent("conflict-profile.json"), permissions: 0o400)
         }
     }
+    public func requireExtensionLaunch(_ mode: StabilityExtensionLaunchMode, ownedRun: StabilityOwnedRunHandle) throws {
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard try Self.matchesOwnership(ownedRun, decoder: decoder),
+                  try StabilityRunLocator.activeRunUnlocked(rootDirectoryURL: rootDirectoryURL)?.runID == ownedRun.run.runID else {
+                throw ProviderDiagnosticStoreError.runNotFound(ownedRun.run.runID)
+            }
+            try SecurePOSIXFile.createExclusively(encoder.encode(StabilityExtensionLaunchRequest(runID: ownedRun.run.runID, mode: mode)),
+                at: ownedRun.run.directoryURL.appendingPathComponent("extension-launch-request.json"), permissions: 0o400)
+        }
+    }
+
     public func recordExtensionLaunch(_ evidence: StabilityExtensionLaunchEvidence, ownedRun: StabilityOwnedRunHandle) throws {
         try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
             guard evidence.runID == ownedRun.run.runID, try Self.matchesOwnership(ownedRun, decoder: decoder),
@@ -733,6 +744,15 @@ public actor StabilityRunCoordinator {
                 }
             } else if report.stepResults.contains(where: { $0.outcome == .skipped(.notSelectedForConflictProfile) }) {
                 throw StabilityLiveEvidenceError.missingConflict
+            }
+            let launchRequestURL = handle.directoryURL.appendingPathComponent("extension-launch-request.json")
+            if SecurePOSIXFile.isRegularFile(launchRequestURL) {
+                let request = try decoder.decode(StabilityExtensionLaunchRequest.self, from: SecurePOSIXFile.read(launchRequestURL, maximumBytes: 4096))
+                guard request.runID == handle.runID else { throw StabilityLiveEvidenceError.wrongExtensionBuild }
+                let launchURL = handle.directoryURL.appendingPathComponent("extension-launch.json")
+                let evidence = SecurePOSIXFile.isRegularFile(launchURL)
+                    ? try decoder.decode(StabilityExtensionLaunchEvidence.self, from: SecurePOSIXFile.read(launchURL, maximumBytes: 4096)) : nil
+                try request.validate(evidence: evidence, report: report, diagnostics: timeline)
             }
             #endif
             if report.schemaVersion >= StabilityFinderRunReport.liveSchemaVersion {

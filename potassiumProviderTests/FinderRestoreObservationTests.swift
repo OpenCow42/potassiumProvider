@@ -15,6 +15,23 @@ struct FinderRestoreObservationTests {
         #expect(!FinderRestoreObservation.matchesVisibleDestination(parent.appendingPathComponent("different.txt"), parent: parent, name: "restored.txt"))
     }
 
+    @Test func delayedMoveLocationCannotPassUntilParentAndNameBothMatch() async throws {
+        let parent = URL(filePath: "/synthetic/run/Sibling", directoryHint: .isDirectory)
+        let previous = URL(filePath: "/synthetic/run/conflict.txt")
+        let final = parent.appendingPathComponent("conflict.txt")
+        let pending = try await FinderRestoreObservation.observeVisibleDestination(parent: parent, name: "conflict.txt") { previous }
+        #expect(pending == nil)
+        let wrongName = try await FinderRestoreObservation.observeVisibleDestination(parent: parent, name: "conflict.txt") {
+            parent.appendingPathComponent("another.txt")
+        }
+        #expect(wrongName == nil)
+        let resolved = try await FinderRestoreObservation.observeVisibleDestination(parent: parent, name: "conflict.txt") { final }
+        #expect(resolved == final)
+        await #expect(throws: CancellationError.self) {
+            try await FinderRestoreObservation.observeVisibleDestination(parent: parent, name: "conflict.txt") { throw CancellationError() }
+        }
+    }
+
     private func item(id: Int = 42, drive: Int = 7, parent: Int = 3) -> KDriveRemoteItem {
         KDriveRemoteItem(id: id, name: "Synthetic.txt", type: "file", status: "ok", driveID: drive,
             parentID: parent, path: nil, size: 4, mimeType: "text/plain", createdAt: nil,

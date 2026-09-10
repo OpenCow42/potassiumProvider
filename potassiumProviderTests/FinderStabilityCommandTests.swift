@@ -26,14 +26,16 @@ struct FinderStabilityCommandTests {
         }
     }
 
-    @Test func launchStateSelectionIsClosedAndConflictOnly() throws {
+    @Test func launchStateSelectionIsClosedAndRunScoped() throws {
         for mode in [StabilityExtensionLaunchMode.fresh, .running] {
             let parsed = try FinderStabilityArgumentParser.parse(arguments:
                 ["app", "--finder-stability", "conflicts", "--yes-live", "--extension-state", mode.rawValue])
             #expect(parsed == .execute(.init(mode: .conflicts, requestPermissions: false, extensionLaunchMode: mode)))
         }
+        let fullRun = try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability", "run", "--yes-live", "--extension-state", "fresh"])
+        #expect(fullRun == .execute(.init(mode: .run, requestPermissions: false, extensionLaunchMode: .fresh)))
         for arguments in [
-            ["run", "--yes-live", "--extension-state", "fresh"],
+            ["preflight", "--extension-state", "fresh"],
             ["conflicts", "--yes-live", "--extension-state", "unknown"],
             ["conflicts", "--yes-live", "--extension-state"],
             ["conflicts", "--yes-live", "--extension-state", "fresh", "--extension-state", "running"]

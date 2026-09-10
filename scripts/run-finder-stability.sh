@@ -28,7 +28,7 @@ Options:
   --run                   Execute the verified disposable-root scenario sequence.
   --conflicts             Run independent conflict cases, each with fresh fixtures and evidence.
   --case CASE             Select one conflict case; requires --conflicts.
-  --extension-state MODE  Require fresh or running extension evidence for --conflicts.
+  --extension-state MODE  Require fresh or running extension evidence for --run or --conflicts.
   --recover-stale-run     Preserve and abandon a local run whose owner process has exited.
   --yes-live              Required with --run, --provision, or --conflicts; confirms the saved development account and lab may be mutated.
   --yes-recover           Required with --recover-stale-run; confirms local evidence recovery.
@@ -112,8 +112,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$EXTENSION_STATE" && ( "$MODE" != "conflicts" || ( "$EXTENSION_STATE" != "fresh" && "$EXTENSION_STATE" != "running" ) ) ]]; then
-  echo "error: --extension-state requires --conflicts and fresh or running" >&2
+if [[ -n "$EXTENSION_STATE" && ( ( "$MODE" != "conflicts" && "$MODE" != "run" ) || ( "$EXTENSION_STATE" != "fresh" && "$EXTENSION_STATE" != "running" ) ) ]]; then
+  echo "error: --extension-state requires --run or --conflicts and fresh or running" >&2
   exit 2
 fi
 if [[ ( "$MODE" == "run" || "$MODE" == "provision" || "$MODE" == "conflicts" ) && "$CONFIRMED_LIVE" -ne 1 ]]; then

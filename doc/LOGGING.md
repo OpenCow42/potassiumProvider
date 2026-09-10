@@ -264,8 +264,10 @@ callback evidence. Other entries are `notSelectedForConflictProfile`; the full
 sixteen-scenario certificate is unchanged. Failures and local screenshots retain
 the existing privacy and immutability boundaries.
 
-Conflict profiles may require `--extension-state fresh|running`. The immutable
-`extension-launch.json` (schema 1) records the kernel process birth time, signed
+Both `--run` and `--conflicts` may require `--extension-state fresh|running`.
+The original runner declares this in `extension-launch-request.json` schema 1;
+conflict runs declare it in their profile. Missing requested evidence cannot pass. The immutable
+`extension-launch.json` (schema 1) records microsecond integer timestamps (preserving kernel birth ordering), the signed
 build hash, diagnostic process UUID, and preparation fence. Fresh evidence requires
 an initialization terminal before the tested mutation in a newly born process.
 Running evidence requires an earlier callback, an unchanged kernel process, and no

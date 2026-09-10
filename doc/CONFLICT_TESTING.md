@@ -26,7 +26,12 @@ movement/removal. Failure injection covers offline, authentication, permissions,
 throttling, quota, and cancellation. Assertions inspect identities, parentage,
 versions, bytes, staged recovery contents, and subsequent reads.
 
-Both callback executors are called by the real extension. Parameterized tests
+The production create router is also exercised with `.mayAlreadyExist`. Tests
+verify that existing bytes survive, file replay reuses the created identity under
+the service-token model, and repeated directory delivery produces two usable
+directories under current policy. This records CR-009 rather than asserting that
+name matching safely reconciles identity. The router and both modification
+executors are called by the real extension. Parameterized tests
 cover combined contents/name/parent changes, contents plus Trash, and unsupported
 fields. The vault executor now applies supported changes before Trash, uses the
 committed revisions, and leaves unsupported fields pending. Missing content URLs
@@ -39,7 +44,7 @@ coverage runs 32 deterministic seeds, six competing writers, reverse delivery an
 12 shuffled orders per seed. It checks preserved content revisions, canonical
 results, conflict copies, and two encrypted SQLite stores reopened after persistence.
 Metadata conflicts, stale purge, duplicate journal records, and causally valid
-reproducer reduction have dedicated tests. Divergent replay writes a synthetic
+reproducer reduction have dedicated tests. Replay divergence or content/graph preservation failures write a synthetic
 seed and minimized journal under the local temporary `potassium-conflict-failures`
 directory; no live data or credential is included.
 
@@ -69,6 +74,9 @@ scripts/run-finder-stability.sh --conflicts --yes-live
 scripts/run-finder-stability.sh --conflicts --extension-state fresh --yes-live
 scripts/run-finder-stability.sh --conflicts --extension-state running --yes-live
 ```
+
+The same `--extension-state` option is available with the original `--run` mode;
+its sixteen scenarios and exact-item permanent-delete confirmation stay required.
 
 The fresh profile verifies the lab first, waits for recorded work to settle, then
 terminates only the exact signed embedded provider process. Domain access launches

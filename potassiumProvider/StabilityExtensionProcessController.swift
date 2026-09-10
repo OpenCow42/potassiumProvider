@@ -16,6 +16,7 @@ final class StabilityExtensionProcessController {
     private let executable: URL
     private let expectedCodeHash: String
     private let initial: ProcessIdentity?
+    private let createdAt = Date()
     private var preparedAt: Date?
 
     init(mode: StabilityExtensionLaunchMode, run: StabilityRunHandle) throws {
@@ -31,14 +32,27 @@ final class StabilityExtensionProcessController {
     func prepare(verifySafety: @MainActor () async throws -> Void) async throws {
         try await verifySafety()
         if mode == .running {
-            guard try observe() == initial else { throw FinderLiveError.unverifiedBuild }
-            preparedAt = Date()
-            return
+            let end = ContinuousClock.now.advanced(by: .seconds(90))
+            while true {
+                try Task.checkCancellation()
+                guard try observe() == initial else { throw FinderLiveError.unverifiedBuild }
+                guard ContinuousClock.now < end else { throw StabilityDeadlineError.expired }
+                let boundary = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+                let events = try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL)
+                if boundary >= createdAt, events.contains(where: { $0.source == .fileProviderExtension &&
+                    $0.phase == .completed && $0.occurredAt < boundary &&
+                    $0.processCodeHash == expectedCodeHash && $0.processInstanceID != nil }) {
+                    preparedAt = boundary
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(250))
+            }
         }
         // Wait for all recorded work to finish before stopping this one process.
         // Any callback racing this fence remains visible and prevents certification.
         let end = ContinuousClock.now.advanced(by: .seconds(90))
         var quietSince: ContinuousClock.Instant?
+        var lastEventID: UUID?
         while true {
             try Task.checkCancellation()
             guard ContinuousClock.now < end else { throw StabilityDeadlineError.expired }
@@ -50,6 +64,7 @@ final class StabilityExtensionProcessController {
             }
             let started = Set(starts.compactMap(\.spanID))
             let terminal = Set(events.filter { [.completed, .failed, .cancelled].contains($0.phase) }.compactMap(\.spanID))
+            if events.last?.id != lastEventID { quietSince = nil; lastEventID = events.last?.id }
             if started.isSubset(of: terminal) {
                 quietSince = quietSince ?? .now
                 if let quietSince, quietSince.duration(to: .now) >= .seconds(2) { break }
@@ -57,7 +72,10 @@ final class StabilityExtensionProcessController {
             try await Task.sleep(for: .milliseconds(200))
         }
         let current = try observe()
-        preparedAt = Date()
+        // JSONL event times use whole seconds. Two seconds without any new
+        // event leaves a clean whole-second fence without reclassifying old
+        // callbacks as belonging to the replacement process.
+        preparedAt = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
         if let current {
             guard try observe() == current, kill(current.pid, SIGTERM) == 0 else { throw FinderLiveError.unverifiedBuild }
             while Self.identity(pid: current.pid) == current {
@@ -75,7 +93,7 @@ final class StabilityExtensionProcessController {
         let events = try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL)
         let ids = Set(events.filter { $0.source == .fileProviderExtension && $0.occurredAt >= preparedAt }.compactMap(\.processInstanceID))
         guard ids.count == 1, let instance = ids.first else { throw FinderLiveError.unverifiedBuild }
-        let evidence = StabilityExtensionLaunchEvidence(runID: run.runID, mode: mode, preparedAt: preparedAt,
+        let evidence = StabilityExtensionLaunchEvidence(runID: run.runID, mode: mode, recordingStartedAt: report.startedAt, preparedAt: preparedAt,
             processStartedAt: current.startedAt, processInstanceID: instance, expectedCodeHash: expectedCodeHash)
         try evidence.validate(runID: run.runID, report: report, diagnostics: events)
         return evidence

@@ -26,11 +26,28 @@ Trash. Unsupported fields, including currently unsupported standalone vault date
 remain pending. This is a callback correctness fix, not a new vault conflict policy.
 `ModificationCallbackTests` records the affected decision cells below.
 
+`CreationCallbackTests` and the catalog's `.mayAlreadyExist` cases exercise the
+production plaintext create router. Reconciliation hints preserve the existing
+conservative create policy: existing bytes are never overwritten by name; file
+replay depends on the modeled upload token, while directory replay can create a
+second usable directory. CR-009 remains mitigated with explicit unresolved gaps.
+Vault replay regressions now check the independent canonical metadata winner and
+preserved original content winner, minimize content-preservation failures as well
+as replay divergence, and verify duplicate journal rejection leaves SQLite state
+unchanged. No resolution policy changed for these cases.
+
 Permanent-delete preflight now uses the typed Trash metadata endpoint when supplied
 by the remote service, instead of treating active-item 404 as authoritative absence
 of a trashed identity. `ConflictDeletionTests` keeps active metadata unavailable
 while verifying deletion against the exact Trash identity and repeated authoritative
 absence. Existing version guards and the open CR-013 server race remain unchanged.
+
+The edit/move conflict profile now treats a stale local destination URL as pending
+within its existing deadline, using the same exact parent/name predicate as Restore.
+A completed server mutation alone cannot prove Finder has applied the returned
+parent. `FinderRestoreObservationTests.delayedMoveLocationCannotPassUntilParentAndNameBothMatch`
+rejects stale paths and wrong names and preserves cancellation. Run-specific
+reproduction and supporting successful backend spans are in the local audit.
 
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot

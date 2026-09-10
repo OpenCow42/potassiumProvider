@@ -148,6 +148,9 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
 
     func navigate(to url: URL) async throws {
+        // Navigation binds the owned window and destination. A previous file
+        // selection may already have moved or been renamed by the provider.
+        selectionURL = nil
         if windowID != nil {
             try await navigateWithGoToFolder(url)
         } else {

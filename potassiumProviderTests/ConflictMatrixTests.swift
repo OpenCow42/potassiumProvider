@@ -26,6 +26,8 @@ enum ConflictCase: String, CaseIterable, Sendable {
     case lostDirectoryResponse = "plaintext.retry.directory-response-lost"
     case sameNameReplacement = "plaintext.identity.same-name-replacement"
     case repeatedMetadata = "plaintext.retry.metadata-delivery"
+    case mayAlreadyExistFile = "plaintext.callback.may-already-exist-file"
+    case mayAlreadyExistDirectory = "plaintext.callback.may-already-exist-directory"
     case movedParent = "plaintext.folder.parent-moved"
     case removedParent = "plaintext.folder.parent-removed"
 
@@ -42,11 +44,13 @@ enum ConflictCase: String, CaseIterable, Sendable {
 
     enum Engine: String { case plaintext, vault }
     var engine: Engine { rawValue.hasPrefix("vault.") ? .vault : .plaintext }
-    static var plaintextCases: [Self] { allCases.filter { $0.engine == .plaintext } }
+    static var callbackCases: [Self] { [.mayAlreadyExistFile, .mayAlreadyExistDirectory] }
+    static var plaintextCases: [Self] { allCases.filter { $0.engine == .plaintext && !callbackCases.contains($0) } }
     static var vaultCases: [Self] { allCases.filter { $0.engine == .vault } }
     var ordering: String {
         switch self {
         case .conditionalRace: "competing client commits after local preflight"
+        case .mayAlreadyExistFile, .mayAlreadyExistDirectory: "existing server identity, then duplicate create delivery through production callback routing"
         case .lostCreateResponse, .lostConflictResponse, .lostReplacementResponse, .lostDirectoryResponse: "server commits, response is lost, client restarts and retries"
         default: engine == .vault ? "causal transactions delivered in different orders" : "both clients cache base; remote intent precedes local intent"
         }
@@ -61,10 +65,11 @@ enum ConflictCase: String, CaseIterable, Sendable {
         case .nameCollision, .caseCollision, .unicodeCollision, .vaultNameAllocation: ["create sibling", "claim equivalent name"]
         case .trashEdit, .staleDeletion, .vaultStalePurge: ["edit contents", "trash or delete stale identity"]
         case .lostCreateResponse, .lostConflictResponse, .lostReplacementResponse, .lostDirectoryResponse: ["commit mutation", "restart and replay unacknowledged mutation"]
+        case .mayAlreadyExistFile, .mayAlreadyExistDirectory: ["server item already exists", "create callback with reconciliation hint", "repeat callback"]
         case .sameNameReplacement: ["remove original identity", "create another identity at the same path", "edit original cached identity"]
         case .repeatedMetadata: ["move and rename", "repeat same callback intent"]
         case .movedParent, .removedParent: ["move or remove parent", "create child by parent identity"]
-        case .vaultMetadata: ["rename and move A", "rename and move B"]
+        case .vaultMetadata: ["rename A", "rename B"]
         case .vaultCycle: ["move A under B", "move B under A"]
         case .vaultDeleteChild: ["delete parent", "create child"]
         case .vaultTrashProvenance: ["trash descendant independently", "trash and restore ancestor"]
@@ -75,7 +80,7 @@ enum ConflictCase: String, CaseIterable, Sendable {
     }
     var unresolvedFinding: String? {
         switch self {
-        case .lostReplacementResponse, .lostDirectoryResponse: "CR-009"
+        case .lostReplacementResponse, .lostDirectoryResponse, .mayAlreadyExistDirectory: "CR-009"
         case .staleDeletion: "CR-013"
         default: nil
         }
@@ -95,6 +100,8 @@ enum ConflictCase: String, CaseIterable, Sendable {
         case .lostDirectoryResponse: "preserve original and create second directory; reconciliation remains CR-009"
         case .sameNameReplacement: "reject missing original identity; preserve replacement and staged local bytes"
         case .repeatedMetadata: "return same identity without repeating remote effects"
+        case .mayAlreadyExistFile: "preserve existing bytes; file replay returns the same created identity under the service token model"
+        case .mayAlreadyExistDirectory: "preserve both directories; do not infer identity from a matching name; CR-009 remains"
         case .movedParent: "address the parent by stable identity"
         case .removedParent: "reject create and retain staged bytes"
         case .vaultContent: "canonical winner plus stable copies of competing contents"
@@ -272,6 +279,17 @@ struct ConflictMatrixTests {
         let final = try await remote.item(driveID: 7, fileID: resultID)
         #expect(final.driveID == 7 && final.etag != nil)
         _ = try await remote.downloadFile(driveID: 7, fileID: resultID)
+    }
+
+    @Test(arguments: ConflictCase.callbackCases)
+    func creationCallbackPolicyMatrix(_ scenario: ConflictCase) async throws {
+        switch scenario {
+        case .mayAlreadyExistFile:
+            try await CreationCallbackTests().reconciliationHintPreservesExistingBytesAndReplaysFileIdentity(mayAlreadyExist: true)
+        case .mayAlreadyExistDirectory:
+            try await CreationCallbackTests().repeatedDirectoryHintRetainsTheDocumentedReconciliationLimitation()
+        default: Issue.record("Unexpected create callback catalog entry")
+        }
     }
 
     @Test(arguments: ConflictCase.vaultCases)

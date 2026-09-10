@@ -488,29 +488,18 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 }
                 let coordinator = self.makeMutationCoordinator(runtime: loadedRuntime)
                 let parentID = try self.fileID(forParentIdentifier: itemTemplate.parentItemIdentifier, runtime: loadedRuntime)
-                let createdItem: KDriveRemoteItem
-
-                if isDirectory {
-                    createdItem = try await coordinator.createDirectory(
-                        parentID: parentID,
-                        name: itemTemplate.filename
-                    )
-                } else {
-                    createdItem = try await Self.contentTransferLimiter.withPermit {
-                        let contents = try url.map {
-                            try KDriveDirectUploadContentLoader.loadContents(at: $0)
-                        } ?? Data()
-                        progress.prepareForByteCount(contents.count)
-                        FileProviderLog.replicatedExtension.debug("upload new file parentFileID(\(parentID, privacy: .public)) bytes(\(contents.count, privacy: .public))")
-                        return try await coordinator.createFile(
-                            parentID: parentID,
-                            fileName: itemTemplate.filename,
-                            contents: contents,
-                            lastModifiedAt: itemTemplate.contentModificationDate ?? nil,
-                            transferProgress: progress.attachTransfer
-                        )
-                    }
-                }
+                let createdItem = try await KDriveCreationExecutor.execute(isDirectory: isDirectory, options: options,
+                    createDirectory: {
+                        try await coordinator.createDirectory(parentID: parentID, name: itemTemplate.filename)
+                    }, createFile: {
+                        try await Self.contentTransferLimiter.withPermit {
+                            let contents = try url.map { try KDriveDirectUploadContentLoader.loadContents(at: $0) } ?? Data()
+                            progress.prepareForByteCount(contents.count)
+                            return try await coordinator.createFile(parentID: parentID, fileName: itemTemplate.filename,
+                                contents: contents, lastModifiedAt: itemTemplate.contentModificationDate ?? nil,
+                                transferProgress: progress.attachTransfer)
+                        }
+                    })
 
                 FileProviderLog.replicatedExtension.info("created \(kind, privacy: .public) item(\(createdItem.id, privacy: .public)) parentFileID(\(createdItem.parentID, privacy: .public)) driveID(\(loadedRuntime.configuration.driveID, privacy: .public))")
                 await ProviderEventRecorder.recordActivity(
