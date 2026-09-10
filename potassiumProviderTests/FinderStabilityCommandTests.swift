@@ -8,6 +8,36 @@ import Testing
 @MainActor
 @Suite("Finder Stability command")
 struct FinderStabilityCommandTests {
+    @Test func recorderStartsBeforePreflightCanEmitItsFirstCallback() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let coordinator = StabilityRunCoordinator(rootDirectoryURL: directory)
+        let callback = ProviderDiagnosticEvent(spanID: UUID(), processInstanceID: UUID(),
+            processCodeHash: String(repeating: "a", count: 40), correlationID: UUID(),
+            source: .fileProviderExtension, operation: .runtimeInitialize, phase: .started)
+        let accounts = FinderPreflightAccountStore(accounts: [], beforeLoad: {
+            let run = try #require(await coordinator.activeRun())
+            let store = try KDriveProviderEventJSONLStore(runDirectoryURL: run.directoryURL)
+            try await store.recordDiagnostic(callback)
+            throw FinderPreflightProbeError.stopAfterFirstCallback
+        })
+        let remote = FinderPreflightRemote(root: finderPreflightItem(id: 42, parentID: 1, type: "dir"),
+            marker: finderPreflightItem(id: 43, parentID: 42, type: "file"), markerData: Data())
+        let loader = FinderStabilityContextLoader(accountStore: accounts,
+            domainStore: FinderPreflightDomainStore(domains: []), tokenStore: InMemoryOAuthTokenStore(),
+            registrar: FinderPreflightRegistrar(domainIdentifier: "synthetic", rootURL: directory),
+            remoteFactory: { _, _ in remote },
+            visibleDomainResolver: { _ in throw FinderPreflightProbeError.stopAfterFirstCallback })
+        let executor = SystemFinderStabilityCommandExecutor(contextLoader: loader,
+            permissionChecker: FinderPreflightPermissionProbe(), scenarioRunner: FinderPreflightScenarioProbe(),
+            runCoordinatorProvider: { coordinator }, statusWriter: { _, _ in })
+        #expect(await executor.run(requestPermissions: false) == .rejected)
+        let run = try #require(await coordinator.activeRun())
+        #expect(try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL).map(\.id) == [callback.id])
+        #expect(!FileManager.default.fileExists(atPath: run.finderReportURL.path))
+        #expect(!FileManager.default.fileExists(atPath: run.directoryURL.appendingPathComponent("summary.json").path))
+    }
+
     @Test func parserRequiresExplicitLiveConfirmationOnlyForRun() throws {
         #expect(try FinderStabilityArgumentParser.parse(arguments: [
             "app", "--finder-stability", "preflight",
@@ -374,16 +404,35 @@ private final class FinderStabilityCommandExecutorFake: FinderStabilityCommandEx
 
 private actor FinderPreflightAccountStore: ProviderAccountStoring {
     var accounts: [ProviderAccount]
+    let beforeLoad: (@Sendable () async throws -> Void)?
 
-    init(accounts: [ProviderAccount]) { self.accounts = accounts }
+    init(accounts: [ProviderAccount], beforeLoad: (@Sendable () async throws -> Void)? = nil) {
+        self.accounts = accounts; self.beforeLoad = beforeLoad
+    }
 
-    func allAccounts() -> [ProviderAccount] { accounts }
+    func allAccounts() async throws -> [ProviderAccount] { try await beforeLoad?(); return accounts }
     func account(accountIdentifier: String) -> ProviderAccount? {
         accounts.first { $0.accountIdentifier == accountIdentifier }
     }
     func save(_ account: ProviderAccount) { accounts.append(account) }
     func remove(accountIdentifier: String) {
         accounts.removeAll { $0.accountIdentifier == accountIdentifier }
+    }
+}
+
+private enum FinderPreflightProbeError: Error { case stopAfterFirstCallback }
+
+private struct FinderPreflightPermissionProbe: FinderStabilityPermissionChecking {
+    nonisolated func check(requestPermissions: Bool) -> FinderStabilityPermissionSnapshot {
+        FinderStabilityPermissionSnapshot(accessibilityOutcome: .passed, automationOutcome: .passed)
+    }
+}
+
+@MainActor
+private struct FinderPreflightScenarioProbe: FinderStabilityScenarioRunning {
+    func run(context: FinderStabilityLiveContext) async -> FinderStabilityScenarioExecution {
+        Issue.record("A failed preflight must not start Finder scenarios")
+        return .skippingAll(reason: .preflightFailure, startedAt: Date())
     }
 }
 

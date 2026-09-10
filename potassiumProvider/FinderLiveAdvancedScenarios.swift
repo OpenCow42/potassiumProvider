@@ -4,6 +4,19 @@ import FileProvider
 import PotassiumProviderCore
 
 extension FinderLiveRunSession {
+    func waitRestoredLocation(_ item: KDriveRemoteItem) async throws -> URL {
+        let parent = try require(owned[item.parentID])
+        let parentURL = try await visible(parent)
+        var restoredURL: URL?
+        try await poll {
+            let candidate = try await self.visible(item)
+            guard FinderRestoreObservation.matchesVisibleDestination(candidate, parent: parentURL, name: item.name) else { return false }
+            restoredURL = candidate
+            return true
+        }
+        return try require(restoredURL)
+    }
+
     func waitRestored(_ item: KDriveRemoteItem) async throws -> KDriveRemoteItem {
         let alias = StabilityDiagnosticIdentity.alias(for: String(item.id), runID: run.runID)
         var restored: KDriveRemoteItem?

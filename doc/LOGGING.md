@@ -127,6 +127,13 @@ the required Restore mutation evidence.
 `live-status.json` is a replaceable closed status snapshot for the read-only watch
 command. Watch shows scenario transitions, errors, cancellations, retry checkpoints,
 and extension lifecycle events; routine request successes stay in the timeline.
+The run recorder starts before context preflight can emit callbacks. A context
+preflight failure retains the incomplete unsealed bundle for explicit stale-owner
+recovery. This ordering alone does not attest a fresh extension launch, because
+registration may have launched it before the command starts.
+Selection diagnostics retain the last live window/parent binding flags, list-view
+state, and exact-name match counts. They contain no paths, titles, or row contents;
+an expired post-failure query cannot overwrite those observations.
 `diagnostic-timeline.json` is ordered by timestamp and event ID, and becomes
 immutable with the final report. `diagnostic-health.failed` latches a failed append;
 subsequent successful writes cannot erase that gap or certify the bundle. The runner

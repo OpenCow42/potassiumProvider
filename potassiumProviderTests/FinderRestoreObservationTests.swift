@@ -8,6 +8,13 @@ import Testing
 @MainActor
 @Suite("Finder Restore observation")
 struct FinderRestoreObservationTests {
+    @Test func staleTrashLocationOrWrongNameCannotProveVisibleRestoration() {
+        let parent = URL(filePath: "/synthetic/run/Created Folder", directoryHint: .isDirectory)
+        #expect(FinderRestoreObservation.matchesVisibleDestination(parent.appendingPathComponent("restored.txt"), parent: parent, name: "restored.txt"))
+        #expect(!FinderRestoreObservation.matchesVisibleDestination(URL(filePath: "/synthetic/.Trash/restored.txt"), parent: parent, name: "restored.txt"))
+        #expect(!FinderRestoreObservation.matchesVisibleDestination(parent.appendingPathComponent("different.txt"), parent: parent, name: "restored.txt"))
+    }
+
     private func item(id: Int = 42, drive: Int = 7, parent: Int = 3) -> KDriveRemoteItem {
         KDriveRemoteItem(id: id, name: "Synthetic.txt", type: "file", status: "ok", driveID: drive,
             parentID: parent, path: nil, size: 4, mimeType: "text/plain", createdAt: nil,

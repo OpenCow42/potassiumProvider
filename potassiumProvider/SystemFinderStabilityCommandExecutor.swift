@@ -11,21 +11,29 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
     private let contextLoader: FinderStabilityContextLoader
     private let permissionChecker: any FinderStabilityPermissionChecking
     private let scenarioRunner: any FinderStabilityScenarioRunning
+    private let runCoordinatorProvider: () throws -> StabilityRunCoordinator
+    private let statusWriter: (StabilityLiveStatus, StabilityRunHandle) throws -> Void
 
     init() {
         self.contextLoader = FinderStabilityContextLoader()
         self.permissionChecker = SystemFinderStabilityPermissionChecker()
         self.scenarioRunner = LiveFinderStabilityScenarioRunner()
+        self.runCoordinatorProvider = { try StabilityRunCoordinator() }
+        self.statusWriter = { try $0.write(to: $1) }
     }
 
     init(
         contextLoader: FinderStabilityContextLoader,
         permissionChecker: any FinderStabilityPermissionChecking,
-        scenarioRunner: any FinderStabilityScenarioRunning
+        scenarioRunner: any FinderStabilityScenarioRunning,
+        runCoordinatorProvider: @escaping () throws -> StabilityRunCoordinator = { try StabilityRunCoordinator() },
+        statusWriter: @escaping (StabilityLiveStatus, StabilityRunHandle) throws -> Void = { try $0.write(to: $1) }
     ) {
         self.contextLoader = contextLoader
         self.permissionChecker = permissionChecker
         self.scenarioRunner = scenarioRunner
+        self.runCoordinatorProvider = runCoordinatorProvider
+        self.statusWriter = statusWriter
     }
 
     func provision() async -> FinderStabilityCommandResult {
@@ -105,14 +113,28 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
     }
 
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult {
+        let reportStartedAt = Date()
+        let runCoordinator: StabilityRunCoordinator
+        let ownedRun: StabilityOwnedRunHandle
+        do {
+            // Domain discovery or visible-root resolution may launch the
+            // extension. Its first callback must already have a recorder.
+            runCoordinator = try runCoordinatorProvider()
+            ownedRun = try await runCoordinator.startOwnedRun()
+            try statusWriter(StabilityLiveStatus(state: .preflight), ownedRun.run)
+        } catch {
+            return .failed
+        }
         let preflightContext: FinderStabilityPreflightContext
         do {
             preflightContext = try await contextLoader.loadPreflight()
         } catch {
+            try? statusWriter(StabilityLiveStatus(state: .failed), ownedRun.run)
+            // Preserve preflight diagnostics and the unsealed owned run for
+            // explicit stale-owner recovery; missing context cannot certify it.
             return .rejected
         }
 
-        let reportStartedAt = Date()
         var preflight = FinderStabilityPreflightEvaluator.results(
             permissions: permissionChecker.check(requestPermissions: false),
             hasFileProviderRegistration: true,
@@ -121,18 +143,9 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             recordedAt: Date()
         )
         var preflightCommandResult = FinderStabilityPreflightEvaluator.commandResult(for: preflight)
-        let runCoordinator: StabilityRunCoordinator
-        let ownedRun: StabilityOwnedRunHandle
-        do {
-            runCoordinator = try StabilityRunCoordinator()
-            ownedRun = try await runCoordinator.startOwnedRun()
-            try StabilityLiveStatus(state: .preflight).write(to: ownedRun.run)
-        } catch {
-            return .failed
-        }
         while preflightCommandResult == .checkpoint {
             let missing = preflight.filter { if case .checkpoint = $0.outcome { return true }; return false }.map { $0.check.rawValue }.joined(separator: ", ")
-            try? StabilityLiveStatus(state: .awaitingPermissions).write(to: ownedRun.run)
+            try? statusWriter(StabilityLiveStatus(state: .awaitingPermissions), ownedRun.run)
             print("finder stability paused: " + missing)
             if requestPermissions { _ = permissionChecker.check(requestPermissions: true) }
             guard await FinderRunnerPanel.awaitResume(message: "Allow the required macOS permissions, then continue. Pending: " + missing) else { break }

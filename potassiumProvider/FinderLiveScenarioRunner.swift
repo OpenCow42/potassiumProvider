@@ -216,7 +216,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
             try await ui.contextAction("Restore from kDrive Trash", on: url)
             s.file = try await s.waitRestored(item)
             try await s.waitBytes(item, expected: s.bytes)
-            let restored = try await s.visible(s.require(s.file))
+            let restored = try await s.waitRestoredLocation(s.require(s.file))
             try await ui.select(restored)
         case .permanentDeletion:
             let item = try s.require(s.file), url = try await s.visible(item)

@@ -246,7 +246,9 @@ fallback does not allow content or mutation preflight to operate on trashed item
 Restore verification waits for the exact provider callback to complete, then polls
 active metadata within the existing deadline. A temporary 404 is pending; it cannot
 establish success. Identity, drive, parentage, contents, Finder visibility, and the
-final correlated diagnostic validation are still required.
+final correlated diagnostic validation are still required. The resolved local URL
+must also have the expected restored parent and filename before Finder selection;
+an identity-bound URL that still points into Trash cannot pass.
 
 The Stability-only conflict barrier holds the exact local mutation after its real
 version preflight while the runner performs a competing typed remote replacement.
@@ -277,6 +279,10 @@ readable as historical evidence. A successful acceptance requires all 16 scenari
 on both a fresh extension and an already running extension; unit tests and permission
 checkpoints do not establish live acceptance. See `STABILITY_LOOP_AUDIT.md` for the
 current completed evidence and outstanding live coverage.
+Recording begins before context preflight. A failed context load preserves an
+unsealed bundle requiring explicit stale-owner recovery after the runner exits.
+The launcher may register the extension before this point, so recording order
+alone is insufficient evidence of a fresh extension launch.
 
 Screenshots are cropped to generated selected Finder rows and retained locally in
 `visual-evidence`, outside ordinary diagnostic exports. Closed failure reasons,

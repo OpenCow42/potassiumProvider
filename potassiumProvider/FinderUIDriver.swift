@@ -65,6 +65,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
     private var remainingTime: @MainActor () -> Duration = { .seconds(90) }
     private var actionPanelIdentifier: String?
     private var selectedDeletionRequested = false
+    private var lastRowObservation: String?
 
     func useDeadline(_ remaining: @escaping @MainActor () -> Duration) { remainingTime = remaining }
     func expectActionPanel(for alias: UUID) { actionPanelIdentifier = "provider.stability.action." + alias.uuidString }
@@ -102,10 +103,10 @@ final class SystemFinderUIDriver: FinderUIDriving {
 
     func navigate(to url: URL) async throws {
         if let windowID {
-            _ = try script("set target of Finder window id \(windowID) to POSIX file \(quote(url.path))", operation: .navigate)
+            _ = try script("set target of Finder window id \(windowID) to (POSIX file \(quote(url.path)) as alias)", operation: .navigate)
         } else {
             guard let owner = finderProcessIdentity() else { throw FinderUIError.finderUnavailable }
-            windowID = try script("set w to make new Finder window to POSIX file \(quote(url.path))\nreturn id of w", operation: .createWindow).int32Value
+            windowID = try script("set w to make new Finder window to (POSIX file \(quote(url.path)) as alias)\nreturn id of w", operation: .createWindow).int32Value
             if let windowID { windowOwner = FinderWindowOwnership(windowID: windowID, process: owner) }
         }
         if let windowID { _ = try script("set current view of Finder window id \(windowID) to list view", operation: .changeView) }
@@ -137,20 +138,15 @@ final class SystemFinderUIDriver: FinderUIDriving {
         let parent = url.deletingLastPathComponent()
         if !FinderUIURLIdentity.matches(currentURL, parent) { try await navigate(to: parent) }
         selectionURL = nil
+        lastRowObservation = nil
         try await activateFinder()
         try await FinderSelectionSequence.execute(waitUntilVisible: {
             print("finder stability UI: waiting for generated selection row")
             do { try await self.wait { try await self.contains(url) } }
             catch {
-                // Closed observations only: never log a path, displayed name,
-                // unrelated row, or window title while diagnosing missing UI.
-                let window = self.finderWindowAX()
-                let displayed = try? self.displayedName(of: url)
-                let matches = window.map { window in
-                    self.elements(window).filter { self.string($0, kAXRoleAttribute) == kAXTextFieldRole &&
-                        self.string($0, kAXValueAttribute) == displayed }.count
-                } ?? 0
-                print("finder stability UI: row observation windowBound=\(window != nil) parentMatches=\((try? self.verifyWindow(parent)) == true) titleMatches=\(window.map { self.string($0, kAXTitleAttribute) == parent.lastPathComponent } ?? false) displayNameAvailable=\(displayed != nil) matchingRows=\(matches)")
+                // Use the last live observation; querying after the deadline
+                // would fail its guard and fabricate an apparent binding loss.
+                print("finder stability UI: last row observation \(self.lastRowObservation ?? "unavailable")")
                 throw error
             }
         }, assignSelection: {
@@ -170,12 +166,23 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
 
     func contains(_ url: URL) async throws -> Bool {
-        guard windowID != nil else { throw FinderUIError.windowMismatch }
+        guard let windowID else { throw FinderUIError.windowMismatch }
         guard try verifyWindow(url.deletingLastPathComponent()) else { return false }
         guard let window = finderWindowAX() else { throw FinderUIError.windowMismatch }
         guard let displayedName = try displayedName(of: url) else { return false }
-        let names = elements(window).filter { string($0, kAXRoleAttribute) == kAXTextFieldRole }
+        let nodes = elements(window)
+        let names = nodes.filter { string($0, kAXRoleAttribute) == kAXTextFieldRole }
             .compactMap { string($0, kAXValueAttribute) }
+        let listView = try script("get current view of Finder window id \(windowID) is list view").booleanValue
+        let matches = names.filter { $0 == displayedName }.count
+        let namedElements = nodes.filter {
+            [string($0, kAXValueAttribute), string($0, kAXTitleAttribute), string($0, kAXDescriptionAttribute)].contains(displayedName)
+        }.count
+        let observation = "windowBound=true parentMatches=true listView=\(listView) matchingTextRows=\(matches) matchingNamedElements=\(namedElements)"
+        if lastRowObservation != observation {
+            print("finder stability UI: row observation " + observation)
+            lastRowObservation = observation
+        }
         return FinderUINameObservation.hasUniqueMatch(displayedName: displayedName, rowNames: names)
     }
 

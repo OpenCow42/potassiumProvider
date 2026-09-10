@@ -33,15 +33,58 @@ same item. The legacy global active-step pointer is not sufficient evidence.
 
 Current continuation evidence:
 
-- **Current Mac follow-up validation:** `potassium-live-stability-mac-13.xcresult`
-  finalized with 391 passed and zero failures/skips, covering the Restore observation
-  race and all current Mac-only timing/readiness changes. The previous shared-runtime
-  results below remain applicable; subsequent edits are guarded by macOS/STABILITY.
-  The next signed live run is in progress. Lifecycle acceptance also remains open:
-  source inspection confirms the first preflight can launch the extension before
-  the owned run recorder starts. Cold/warm certification must close that gap.
+- **Current live failure:** `5711656b-7079-446a-a21a-6716126d63a5`
+  finalized with zero passed, one failed, and fifteen skipped scenarios. The last
+  live observation confirmed the owned window, expected parent, and list view,
+  but no matching text row or other named element. The failure was reported as
+  `windowMismatch`; the driver now preserves its last live observation instead of
+  querying after the deadline and producing misleading binding flags. Classification:
+  UI automation; the underlying cause remains uncertain. The preceding run
+  `2bc01352-eedb-4bac-9292-ad266e98a179` failed at the same navigation stage.
+  Both windows closed and their immutable failed reports remain available.
 
-- **Latest live result:** `dc49fe60-e9e5-45fe-8261-85fd4339f5cc` again passed
+- **Restore assertion gap and re-trash failure:**
+  `c43e7fd0-23eb-4121-b06f-3a4ab0d0f0d2` reported eleven passed, one failed,
+  and four skipped scenarios. The completed Restore callback, remote identity,
+  parent, and bytes were verified, but the UI assertion did not require the
+  returned local URL to be under the restored parent. The following re-trash
+  produced no matching mutation callback and remote Trash lookup remained 404.
+  A stale local Trash URL is a hypothesis, not a confirmed provider defect.
+  Classification: harness assertion gap, high confidence from source inspection;
+  root cause of the missing re-trash remains uncertain. Restore now also waits
+  for the exact local parent and filename before Finder selection. Regression
+  coverage rejects a stale Trash location or wrong name. The historical eleven
+  passes do not establish current Restore acceptance. No permanent-delete
+  confirmation or deletion occurred. The strengthened live assertion remains
+  unexercised because subsequent navigation failed.
+
+- **Intermittent Finder listing:** `4f870547-58ff-44d3-9d85-d71f079cb3ac`
+  exhausted the full navigation budget waiting for the first generated row. A
+  read-only AX observer confirmed the exact run window, Finder foreground, and
+  zero matching `Nested` text fields. Provider enumeration span
+  `6148A63A-8459-4D48-ADC6-5670B82EC1AA` completed successfully; read-only
+  inspection of the provider-owned snapshot database found both generated children
+  in the run-root generations. This does not support an empty provider listing.
+  Finder navigation now explicitly resolves the directory as an Apple Events alias
+  before assigning its target. Later runs reproduced the UI failure, so alias
+  coercion has not resolved it. List-view drift is also unsupported by the latest
+  live observation. Reproduce with the documented opt-in command and inspect the
+  first selection's closed observations; do not weaken the row assertion.
+
+- **Recorder ordering:** the owned recorder now starts before context preflight,
+  which can launch the extension. An injected regression emits an initialization
+  event during preflight, then fails preflight; the event must survive and no final
+  report may certify that incomplete run. Real initialization telemetry was still
+  absent in the next live bundle. Plugin registration can precede command startup;
+  its role is unproven. Full cold/warm lifecycle attestation remains open.
+
+- **Current Mac follow-up validation:** `potassium-live-stability-mac-15.xcresult`
+  finalized with 393 passed and zero failures/skips, including local Restore
+  destination, recorder-before-preflight regressions, and the latest row-observation
+  logging. The signed live build also succeeded. The previous shared-runtime results
+  below remain applicable; subsequent edits are guarded by macOS/STABILITY.
+
+- **Completed navigation and Restore race:** `dc49fe60-e9e5-45fe-8261-85fd4339f5cc` again passed
   ten scenarios, now including all six added navigation captures and the remote
   change proof. It verified the Trash metadata fallback and exact Finder selection,
   then invoked Restore. The provider callback
