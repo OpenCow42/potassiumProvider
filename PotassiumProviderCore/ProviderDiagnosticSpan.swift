@@ -9,6 +9,8 @@ import Foundation
 /// request context through the logging API.
 public enum ProviderDiagnosticCorrelationContext {
     @TaskLocal public static var current: UUID?
+    @TaskLocal public static var parentSpanID: UUID?
+    @TaskLocal public static var subjectAlias: UUID?
 
     public static func withCorrelation<Result: Sendable>(
         _ correlationID: UUID,
@@ -24,6 +26,14 @@ public enum ProviderDiagnosticErrorClassifier {
     public static func classify(_ error: any Error) -> ProviderDiagnosticErrorClass {
         if error is CancellationError {
             return .cancellation
+        }
+
+        if let snapshotError = error as? KDriveSnapshotStoreError {
+            switch snapshotError {
+            case .staleSnapshot: return .concurrentSnapshot
+            case .expiredGeneration, .invalidPageToken: return .invalidCursor
+            case .missingAppGroupContainer: return .storage
+            }
         }
 
         if let rejection = KDriveRemoteErrorClassifier.apiRejection(from: error) {
@@ -196,6 +206,8 @@ public actor ProviderDiagnosticSpan {
 
     public nonisolated let correlationID: UUID
     public nonisolated let spanID: UUID
+    public nonisolated let parentSpanID: UUID?
+    public nonisolated let subjectAlias: UUID?
     public nonisolated let source: ProviderDiagnosticSource
     public nonisolated let operation: ProviderDiagnosticOperation
     public nonisolated let fieldShape: [ProviderDiagnosticField]
@@ -212,6 +224,7 @@ public actor ProviderDiagnosticSpan {
 
     private init(
         correlationID: UUID,
+        subjectAlias: UUID?,
         source: ProviderDiagnosticSource,
         operation: ProviderDiagnosticOperation,
         fieldShape: [ProviderDiagnosticField],
@@ -222,6 +235,8 @@ public actor ProviderDiagnosticSpan {
     ) {
         self.correlationID = correlationID
         self.spanID = UUID()
+        self.parentSpanID = ProviderDiagnosticCorrelationContext.parentSpanID
+        self.subjectAlias = subjectAlias
         self.source = source
         self.operation = operation
         self.fieldShape = Array(Set(fieldShape)).sorted { $0.rawValue < $1.rawValue }
@@ -236,6 +251,7 @@ public actor ProviderDiagnosticSpan {
 
     public static func start(
         correlationID: UUID? = nil,
+        itemIdentifier: String? = nil,
         source: ProviderDiagnosticSource,
         operation: ProviderDiagnosticOperation,
         fieldShape: [ProviderDiagnosticField] = [],
@@ -255,6 +271,7 @@ public actor ProviderDiagnosticSpan {
         }
         let span = ProviderDiagnosticSpan(
             correlationID: correlationID ?? inheritedCorrelationID ?? UUID(),
+            subjectAlias: StabilityDiagnosticIdentity.activeAlias(for: itemIdentifier) ?? ProviderDiagnosticCorrelationContext.subjectAlias,
             source: source,
             operation: operation,
             fieldShape: fieldShape,
@@ -272,10 +289,11 @@ public actor ProviderDiagnosticSpan {
     public nonisolated func withCorrelation<Result: Sendable>(
         operation: @Sendable () async throws -> Result
     ) async rethrows -> Result {
-        try await ProviderDiagnosticCorrelationContext.withCorrelation(
-            correlationID,
-            operation: operation
-        )
+        try await ProviderDiagnosticCorrelationContext.$parentSpanID.withValue(spanID) {
+            try await ProviderDiagnosticCorrelationContext.$subjectAlias.withValue(subjectAlias) {
+                try await ProviderDiagnosticCorrelationContext.withCorrelation(correlationID, operation: operation)
+            }
+        }
     }
 
     public func progress(fractionCompleted: Double) async {
@@ -293,11 +311,13 @@ public actor ProviderDiagnosticSpan {
     public func checkpoint(
         hasCursor: Bool? = nil,
         hasMore: Bool? = nil,
-        hasAnchor: Bool? = nil
+        hasAnchor: Bool? = nil,
+        errorClass: ProviderDiagnosticErrorClass? = nil
     ) async {
         guard terminalWasEmitted == false else { return }
         await emit(
             phase: .checkpoint,
+            errorClass: errorClass,
             durationMilliseconds: elapsedMilliseconds(),
             hasCursor: hasCursor,
             hasMore: hasMore,
@@ -309,11 +329,13 @@ public actor ProviderDiagnosticSpan {
         statusClass: ProviderDiagnosticStatusClass? = nil,
         hasCursor: Bool? = nil,
         hasMore: Bool? = nil,
-        hasAnchor: Bool? = nil
+        hasAnchor: Bool? = nil,
+        itemMetadataAlias: UUID? = nil
     ) async {
         guard beginTerminalEmission() else { return }
         await emit(
             phase: .completed,
+            itemMetadataAlias: itemMetadataAlias,
             statusClass: statusClass,
             durationMilliseconds: elapsedMilliseconds(),
             progressPercentBucket: 100,
@@ -332,6 +354,8 @@ public actor ProviderDiagnosticSpan {
             phase: .failed,
             statusClass: statusClass,
             errorClass: ProviderDiagnosticErrorClassifier.classify(error),
+            errorCode: Self.safeCode(error),
+            validationFields: ProviderDiagnosticValidationField.classify(error),
             durationMilliseconds: elapsedMilliseconds()
         )
     }
@@ -359,9 +383,12 @@ public actor ProviderDiagnosticSpan {
 
     private func emit(
         phase: ProviderDiagnosticPhase,
+        itemMetadataAlias: UUID? = nil,
         occurredAt: Date = Date(),
         statusClass: ProviderDiagnosticStatusClass? = nil,
         errorClass: ProviderDiagnosticErrorClass? = nil,
+        errorCode: Int? = nil,
+        validationFields: [ProviderDiagnosticValidationField]? = nil,
         durationMilliseconds: Int? = nil,
         progressPercentBucket: Int? = nil,
         hasCursor: Bool? = nil,
@@ -372,6 +399,13 @@ public actor ProviderDiagnosticSpan {
         let event = ProviderDiagnosticEvent(
             occurredAt: occurredAt,
             spanID: spanID,
+            parentSpanID: parentSpanID,
+            subjectAlias: subjectAlias,
+            itemMetadataAlias: itemMetadataAlias,
+            processInstanceID: StabilityDiagnosticIdentity.processInstanceID,
+            processCodeHash: StabilityDiagnosticIdentity.processCodeHash,
+            errorCode: errorCode,
+            validationFields: validationFields,
             correlationID: correlationID,
             source: source,
             operation: operation,
@@ -392,6 +426,12 @@ public actor ProviderDiagnosticSpan {
         } catch {
             // Diagnostics are evidence, never part of callback or API success.
         }
+    }
+
+    private static func safeCode(_ error: any Error) -> Int? {
+        if let rejection = KDriveRemoteErrorClassifier.apiRejection(from: error) { return rejection.statusCode }
+        let value = error as NSError
+        return [NSFileProviderErrorDomain, NSURLErrorDomain, NSCocoaErrorDomain, NSPOSIXErrorDomain].contains(value.domain) ? value.code : nil
     }
 
     private func elapsedMilliseconds() -> Int {

@@ -254,6 +254,11 @@ public struct KDriveMutationCoordinator: Sendable {
             expectedETag,
             contentHash,
         ])
+        #if STABILITY
+        if configuration.purpose == .stabilityLab {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: String(fileID))
+        }
+        #endif
         let operation = try remote.replaceFileOperation(
             driveID: configuration.driveID,
             fileID: fileID,
@@ -348,6 +353,15 @@ public struct KDriveMutationCoordinator: Sendable {
     }
 
     public func updateModificationDate(fileID: Int, date: Date) async throws -> KDriveRemoteItem {
+        let current = try await remote.item(driveID: configuration.driveID, fileID: fileID)
+        if current.isDirectory {
+            // The server owns directory timestamps and rejects last-modified
+            // writes for directories. Apple's modifyItem contract propagates
+            // a returned authoritative field to disk when it is not pending.
+            // Resolve the automatic local directory mtime change to that value;
+            // never report a file-only HTTP mutation as if it had succeeded.
+            return current
+        }
         try await remote.updateModificationDate(
             driveID: configuration.driveID,
             fileID: fileID,

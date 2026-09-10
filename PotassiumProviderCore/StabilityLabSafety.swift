@@ -11,20 +11,41 @@ public struct StabilityLabOwnershipMarker: Codable, Equatable, Sendable {
     public var driveID: Int
     public var rootFileID: Int
     public var createdAt: Date
+    /// Nil preserves legacy top-level labs; new labs bind their verified Private parent.
+    public var parentFileID: Int?
 
     public init(
         schemaVersion: UInt16 = Self.currentSchemaVersion,
         identifier: UUID = UUID(),
         driveID: Int,
         rootFileID: Int,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        parentFileID: Int? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.identifier = identifier
         self.driveID = driveID
         self.rootFileID = rootFileID
-        self.createdAt = createdAt
+        self.createdAt = Date(timeIntervalSince1970: floor(createdAt.timeIntervalSince1970))
+        self.parentFileID = parentFileID
     }
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, identifier, driveID, rootFileID, createdAt, parentFileID
+    }
+
+    /// Domain configuration uses ISO-8601 seconds, whereas legacy remote marker
+    /// JSON uses Foundation numeric dates. Normalize both without changing any
+    /// identity field or requiring a write to an existing remote marker.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(schemaVersion: try values.decode(UInt16.self, forKey: .schemaVersion),
+            identifier: try values.decode(UUID.self, forKey: .identifier),
+            driveID: try values.decode(Int.self, forKey: .driveID),
+            rootFileID: try values.decode(Int.self, forKey: .rootFileID),
+            createdAt: try values.decode(Date.self, forKey: .createdAt),
+            parentFileID: try values.decodeIfPresent(Int.self, forKey: .parentFileID))
+    }
+
 }
 
 public enum StabilityLabRegisteredDomainPurpose: String, Codable, Equatable, Sendable {
@@ -65,6 +86,7 @@ public struct StabilityLabRootObservation: Equatable, Sendable {
     public var parentFileID: Int
     public var driveRootFileID: Int
     public var hasVerifiedLabOwnership: Bool
+    public var verifiedPrivateParentFileID: Int?
     public var ownershipMarker: StabilityLabOwnershipMarker?
 
     public init(
@@ -73,13 +95,15 @@ public struct StabilityLabRootObservation: Equatable, Sendable {
         parentFileID: Int,
         driveRootFileID: Int,
         hasVerifiedLabOwnership: Bool,
-        ownershipMarker: StabilityLabOwnershipMarker?
+        ownershipMarker: StabilityLabOwnershipMarker?,
+        verifiedPrivateParentFileID: Int? = nil
     ) {
         self.driveID = driveID
         self.fileID = fileID
         self.parentFileID = parentFileID
         self.driveRootFileID = driveRootFileID
         self.hasVerifiedLabOwnership = hasVerifiedLabOwnership
+        self.verifiedPrivateParentFileID = verifiedPrivateParentFileID
         self.ownershipMarker = ownershipMarker
     }
 }
@@ -328,7 +352,9 @@ public enum StabilityLabSafety {
         if root.driveID != marker.driveID || root.fileID != marker.rootFileID {
             record(.rootIdentityMismatch)
         }
-        if root.parentFileID != root.driveRootFileID {
+        let expectedParent = marker.parentFileID ?? root.driveRootFileID
+        if root.parentFileID != expectedParent || root.fileID == expectedParent ||
+            (marker.parentFileID != nil && root.verifiedPrivateParentFileID != expectedParent) {
             record(.rootIsNotTopLevel)
         }
         if root.hasVerifiedLabOwnership == false {

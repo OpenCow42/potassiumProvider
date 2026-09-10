@@ -135,7 +135,7 @@ public extension StabilityFinderScenario {
         case .trash:
             StabilityFinderDiagnosticRequirement(
                 source: .fileProviderExtension,
-                operations: [.deleteItem]
+                operations: [.modifyItem]
             )
         case .workingSetRefresh:
             StabilityFinderDiagnosticRequirement(

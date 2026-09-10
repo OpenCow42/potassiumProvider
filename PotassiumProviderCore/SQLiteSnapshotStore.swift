@@ -530,6 +530,15 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         var committedSnapshot: KDriveWorkingSetSnapshot?
         try database.transaction {
             for update in containerSnapshotUpdates {
+                if let current = try snapshot(domainIdentifier: domainIdentifier, containerIdentifier: update.containerIdentifier),
+                   !update.condition.accepts(current),
+                   update.snapshot.isSameAdvancedListingResult(as: current) {
+                    // Enumeration already committed this exact server result.
+                    // Preserve its newer local anchor/generation; do not write
+                    // the stale prepared snapshot over it. The working-set
+                    // change batch still commits atomically below.
+                    continue
+                }
                 try saveSnapshot(
                     update.snapshot,
                     domainIdentifier: domainIdentifier,

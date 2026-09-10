@@ -239,7 +239,13 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
 
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL {
         let manager = try await manager(for: configuration)
-        return try await manager.getUserVisibleURL(for: .rootContainer)
+        return try await StabilityCallbackWaiter<URL>().wait { completion in
+            manager.getUserVisibleURL(for: .rootContainer) { url, error in
+                if let error { completion(.failure(error)) }
+                else if let url { completion(.success(url)) }
+                else { completion(.failure(StabilityDeadlineError.expired)) }
+            }
+        }
     }
 
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {

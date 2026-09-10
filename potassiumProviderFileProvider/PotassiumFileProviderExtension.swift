@@ -81,6 +81,10 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     return
                 }
                 let systemItems = try await MaterializedSetReader.read(using: manager)
+                #if STABILITY
+                let previousMaterializedIDs = Set(try await runtime.workingSetStateStore.materializedItems(
+                    domainIdentifier: runtime.configuration.domainIdentifier).map(\.fileID))
+                #endif
                 let materializedItems = systemItems.compactMap { item -> KDriveMaterializedItem? in
                     let fileID: Int
                     if item.itemIdentifier == .rootContainer {
@@ -101,8 +105,19 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     materializedItems,
                     domainIdentifier: runtime.configuration.domainIdentifier
                 )
-                _ = try await pollWorkingSet(runtime: runtime, minimumInterval: 0)
-                await signalWorkingSet(runtime: runtime)
+                #if STABILITY
+                // Attribute only identifiers actually added/removed by this
+                // system observation. A global materialization notification
+                // alone cannot prove eviction of the intended fixture.
+                for identifier in previousMaterializedIDs.symmetricDifference(Set(materializedItems.map(\.fileID))).sorted() {
+                    let itemSpan = await ProviderDiagnosticSpan.start(itemIdentifier: String(identifier), source: .fileProviderExtension,
+                        operation: .materializedItemsChanged, recorder: diagnosticRecorder)
+                    await itemSpan.complete(statusClass: .success)
+                }
+                #endif
+                let outcome = try await pollWorkingSet(runtime: runtime, minimumInterval: 0,
+                    coalescePendingMaterializationPolls: true)
+                if outcome.didPoll { await signalWorkingSet(runtime: runtime) }
             } catch {
                 FileProviderLog.replicatedExtension.error("refresh materialized items failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -119,6 +134,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         let lifecycle = FileProviderOperationLifecycle(
             progress: .discreteOperation(),
             diagnosticOperation: .itemLookup,
+            diagnosticItemIdentifier: identifier.rawValue,
             diagnosticRecorder: diagnosticRecorder
         ) {
             FileProviderLog.replicatedExtension.debug("cancel item(forIdentifier:\(identifier.rawValue, privacy: .public))")
@@ -210,6 +226,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         let lifecycle = FileProviderOperationLifecycle(
             progress: progress,
             diagnosticOperation: .fetchContents,
+            diagnosticItemIdentifier: itemIdentifier.rawValue,
             diagnosticRecorder: diagnosticRecorder
         ) {
             FileProviderLog.replicatedExtension.debug("cancel fetchContents(for:\(itemIdentifier.rawValue, privacy: .public))")
@@ -375,6 +392,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 fields,
                 isTrashDestination: itemTemplate.parentItemIdentifier == .trashContainer
             ),
+            diagnosticItemIdentifier: itemTemplate.parentItemIdentifier.rawValue,
             diagnosticRecorder: diagnosticRecorder
         ) {
             FileProviderLog.replicatedExtension.debug("cancel createItem(parentIdentifier:\(itemTemplate.parentItemIdentifier.rawValue, privacy: .public))")
@@ -548,6 +566,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 changedFields,
                 isTrashDestination: item.parentItemIdentifier == .trashContainer
             ),
+            diagnosticItemIdentifier: item.itemIdentifier.rawValue,
             diagnosticRecorder: diagnosticRecorder
         ) {
             FileProviderLog.replicatedExtension.debug("cancel modifyItem(\(item.itemIdentifier.rawValue, privacy: .public))")
@@ -850,6 +869,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         let lifecycle = FileProviderOperationLifecycle(
             progress: .discreteOperation(),
             diagnosticOperation: .deleteItem,
+            diagnosticItemIdentifier: itemIdentifier.rawValue,
             diagnosticRecorder: diagnosticRecorder
         ) {
             FileProviderLog.replicatedExtension.debug("cancel deleteItem(\(itemIdentifier.rawValue, privacy: .public))")
@@ -1165,7 +1185,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
     private func pollWorkingSet(
         runtime: FileProviderRuntime,
-        minimumInterval: TimeInterval = KDriveWorkingSetPollCoordinator.pollingInterval
+        minimumInterval: TimeInterval = KDriveWorkingSetPollCoordinator.pollingInterval,
+        coalescePendingMaterializationPolls: Bool = false
     ) async throws -> KDriveWorkingSetPollOutcome {
         let span = await ProviderDiagnosticSpan.start(
             source: .fileProviderExtension,
@@ -1181,7 +1202,9 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                     remote: runtime.remote,
                     workingSetRemote: runtime.workingSetRemote,
                     stateStore: runtime.workingSetStateStore
-                ).poll(minimumInterval: minimumInterval)
+                ).poll(minimumInterval: minimumInterval, coalescePendingMaterializationPolls: coalescePendingMaterializationPolls) {
+                    await span.checkpoint(errorClass: .concurrentSnapshot)
+                }
             }
             await span.complete(statusClass: .success)
             return outcome

@@ -34,7 +34,7 @@ struct StabilityLabView: View {
     private var introduction: some View {
         GroupBox("Disposable development root") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("This opt-in lab uses the existing manual-token Keychain flow and registers one verified, top-level plaintext folder—not the drive root.")
+                Text("This opt-in lab uses the selected account’s saved Keychain login and registers one verified plaintext folder inside Private.")
                 Text("Use only a dedicated development account containing no customer data. Live checks and Finder mutations remain outside CI.")
                     .foregroundStyle(.secondary)
             }
@@ -63,7 +63,7 @@ struct StabilityLabView: View {
         GroupBox("Provision") {
             VStack(alignment: .leading, spacing: 12) {
                 if model.accounts.isEmpty {
-                    Text("Add the dedicated development account in Setup, using the existing manual-token flow, then return here.")
+                    Text("Add the dedicated development account in Setup with OAuth or a manual token, then return here.")
                         .foregroundStyle(.secondary)
                 } else {
                     Picker("Account", selection: $selectedAccountIdentifier) {

@@ -3,8 +3,241 @@
 This file is the auditable implementation ledger for
 [`STABILITY_LOOP_PLAN.md`](STABILITY_LOOP_PLAN.md). It contains no live account
 data, private identifiers, URLs containing identifiers, request/response
-bodies, or credentials. Live-result cells remain `not run` until an operator
-explicitly supplies a development account and lab-owned non-root folder.
+bodies, or credentials. Historical milestone tables below describe their original
+validation. Current live execution and acceptance are recorded separately here.
+
+## 2026-09-10 — Live Finder implementation in progress
+
+Base: PR #22 at `49ac27a`; implementation branch `codex/live-finder-integration`.
+The operator authorized the saved lab account and Keychain login. Authentication,
+remote ownership, registration, and domain binding have passed real preflight.
+The lab is a new child of the verified server-created `Private` folder. Neither
+`Private`, the lab root, its marker, nor previous contents are disposable fixtures.
+
+**Acceptance remains open:** there are no complete passing cold/warm Finder runs.
+Permission checkpoints and skipped scenarios are not passes. Code implementing a
+scenario does not establish that its selectors or provider behavior work live.
+
+Implemented runner paths include all 16 scenarios, injectable fresh-window UI
+driving, monotonic deadlines, monitored permission/confirmation panels, a scoped
+post-preflight conflict barrier, exact target ancestry and provider binding,
+item-specific diagnostic aliases, process/build identity, local row screenshots,
+read-only watch, and immutable version 2 reports with correlated timelines.
+Ordinary callbacks require successful terminals; the cancellation scenario
+requires actual progress, cancellation, and a subsequent successful fetch of the
+same item. The legacy global active-step pointer is not sufficient evidence.
+
+### Findings and reproduction evidence
+
+Current continuation evidence:
+
+- **Commit-time validation:** `/private/tmp/potassium-live-stability-mac-09.xcresult`
+  finalized with 375 passed, zero failed/skipped, including the added navigation
+  milestone failure test. This validates the source being committed; it does
+  not replace the outstanding live rerun of those additional captures.
+
+- **Latest live result:** `0c8fea91-5123-4c8f-87d7-54b7e451a9fc` passed the
+  first ten scenarios, including verified TextEdit editing/upload, rename, move,
+  and the provider's `modifyItem` Trash transition. Restore failed before its
+  UI action: active-item metadata returned HTTP 404 in span
+  `90C81DC4-C76A-4D87-8DE1-230929B3EFA5`, then the provider returned
+  `.cannotSynchronize` (-2005) in parent span
+  `3DAFD9B8-B676-43F3-A495-52BBFE75B915`. Source inspection confirms that
+  `item(for:request:)` consults only active-item metadata, without a Trash lookup
+  fallback. This is the next focused diagnosis/fix; no fallback has been
+  implemented or validated yet. The run finalized with 10 passed, 1 failed,
+  5 skipped, and its Finder window closed. Its fixtures and evidence remain.
+  Scenarios 11–16 and both complete cold/warm acceptance runs remain open.
+- Navigation now captures generated rows at the root, nested levels, Back,
+  Forward, and parent milestones; the sibling capture follows its remote
+  change. A missing milestone capture stops further navigation. These added
+  captures postdate the latest live bundle and require a live rerun.
+
+- `/private/tmp/potassium-live-stability-mac-08.xcresult`: 374 passed, zero
+  failed/skipped, including native TextEdit sequencing failure guards, fresh
+  working-set metadata evidence, and pending-poll coalescing. The requested
+  iPhone 17/iOS 26.5 and Apple Vision Pro/visionOS 26.5 runs finalized with
+  335 passed each in `potassium-live-ios-06.xcresult` and
+  `potassium-live-vision-sim-04.xcresult`. The signed generic visionOS build
+  `potassium-live-vision-build-04.log` exited successfully. Current standard
+  macOS validation and complete cold/warm live runs remain outstanding.
+- `5d9ec73b-175e-436f-b558-5c9294dc818c`,
+  `d3fffe35-dda6-4bed-9a87-146de8c07997`, and
+  `2d333d69-822d-4cc0-afd8-5963b4ce18b6` each passed six scenarios, then
+  failed editing. The French keyboard layout explains why a hard-coded US
+  Command-A could quit TextEdit. Replacing shortcuts with an opened menu still
+  left native menu tracking stuck, which the operator reported and force quit.
+  The subsequent `1f8e7574-9fba-4e1e-bd3e-cf7bf4b669d3` stopped at hydration
+  while the earlier menu was still blocked. All dedicated Finder windows closed.
+  A fresh local generated-file probe now passes direct AXMenuItem Select All,
+  Paste, Save, matching disk bytes, and exact-document closure. It also confirms
+  that AXEdited belongs to the close button, not the TextEdit window. This local
+  probe is diagnosis, not a live Finder scenario pass. The later ten-scenario
+  live result above verifies the resulting TextEdit correction.
+
+- `0901be6f-ba75-4dde-a1d7-70d5d7e7d80f` verified the first six scenarios,
+  including entering the Finder-created directory with verified remote parentage.
+  TextEdit did not contain the requested replacement after process-addressed
+  synthetic keys; no content-change callback followed. The runner now verifies
+  the editor text and Save acknowledgement before closing the exact document.
+  An attempted WindowServer-key workaround was subsequently replaced by the
+  verified native menu-item actions described above.
+- `a431f636-8889-4a08-8e32-833547c1673b` verified navigation and hydration,
+  then exhausted the eviction deadline after waiting for system stabilization.
+  The contextual eviction command was invoked; no resource-busy alert was
+  recorded. Global working-set polls took 19–61 seconds, including queue time,
+  and did not report errors. Each materialization notification queued another
+  full refresh. Pending notifications now share only a successful poll begun
+  after their observations, with regression coverage for ordering and failure.
+  The Finder window closed and the failed bundle was finalized. Rerun pending.
+
+- `/private/tmp/potassium-live-stability-mac-05.xcresult` finalized with 363
+  passed and zero failed/skipped, including the per-domain poll scheduling test.
+- `67f1dda7-7d1b-4c77-a90f-eb5fff93e1e7` subsequently recorded 33 completed
+  working-set refreshes, no failures, and no contention retries. This is live
+  evidence for serializing immediate materialization polls with other polls.
+  It still failed directory naming; all five earlier scenarios passed and the
+  dedicated Finder window closed. The name editor is contained in the expected
+  window bounds but absent from its child tree, selected-row tree, and ordinary
+  AX parent/focused-window identity. An alternative checks the exact new Finder
+  selection, editor value/process, verified front window ID, and fresh bounds.
+  Its live result is pending; weak or ambiguous matches cannot pass.
+
+- `/private/tmp/potassium-live-vision-build-03.log`: signed generic visionOS
+  build completed successfully with `-allowProvisioningUpdates`. Xcode refreshed
+  provisioning; the earlier missing-App-Groups profile blocker is superseded.
+- `fef2a881-ccea-4e2e-8770-15f3f6a588b7` still recorded six exhausted snapshot
+  refreshes alongside 33 successful refreshes. Bounded retries and equivalent
+  result handling are not a complete resolution of working-set contention.
+  Keep this finding open; do not describe a single recovered poll as a complete fix.
+
+- `/private/tmp/potassium-live-ios-04.xcresult` and
+  `/private/tmp/potassium-live-vision-sim-03.xcresult` each finalized with 330
+  passed, zero failed/skipped on the requested iPhone 17/iOS 26.5 and Apple
+  Vision Pro/visionOS 26.5 simulators. They include the shared snapshot retry,
+  equivalent-result transaction checks, and strict contextual evidence tests.
+
+- `/private/tmp/potassium-live-stability-mac-04.xcresult` finalized with 359
+  passed, zero failed/skipped. This includes SQLite snapshot retry and Finder
+  window-ownership regressions; later UI refinements need the final rerun.
+- `47dae10c-d9ba-4c6f-8d1b-4f0b7db6635b` recorded 11 completed working-set
+  refreshes and one recovered `concurrentSnapshot` checkpoint, with no failed
+  refresh. This verifies the focused retry on a real concurrent enumeration.
+- The operator observed and dismissed Finder's "Unable to Remove Download" /
+  "Resource busy" alert. This establishes that the command was invoked; it was
+  not simply a missing menu selector. The runner had sent TextEdit's close key
+  without observing document closure. Waiting for the exact document window to
+  disappear and the manager's documented testing stabilization barrier precedes
+  eviction; a scoped detector records and dismisses this specific failure alert.
+- `abb74c1a-43a8-4f04-a994-53fbf9042656` certified the first five scenarios:
+  navigation, hydration, eviction, download, and Finder file creation. It closed
+  its Finder window after failing directory creation (5 passed, 1 failed, 10
+  skipped). The generated parent was correlated to its cached snapshot without
+  exporting identifiers: Finder created the default folder name, with no rename
+  callback. Replace the fixed entry delay with a fresh editable-name-field check.
+  No full 16-scenario or cold/warm acceptance is established by this run.
+
+2026-09-10 continuation: runs `6bd4ce12-06fa-4392-ac35-37afe3f09a11`,
+`14e6edaa-05c8-4889-abb6-b8cea7e5bf73`, and
+`75af7047-2894-4bb7-9c01-a3be17d9602e` each certified navigation and hydration,
+then stopped at Finder eviction (2 passed, 1 failed, 13 skipped). The directory
+date 400 and partial-activity 422 did not recur. This closes those reproduced
+request defects, not broader working-set correctness or 16-scenario acceptance.
+
+The next cleanup run, `5e82a9fb-1240-49ef-8363-6e4e52243658`, verified closure
+of the run-owned Finder window after failure. Cleanup checks the created window
+ID and kernel process start time (Finder's LaunchServices launch date can be nil).
+`FinderNavigationTests` cover unrelated/reused process identities and observable
+cleanup errors. Finder popup tracking can reject Apple Events with
+`errFinderIsBusy` (-15260), documented in Apple's SDK `FinderRegistry.h`.
+Await menu dismissal and bounded read-only readiness before another operation;
+cleanup must remain monitored and cannot silently certify a failed close.
+
+That run also classified both former unknown working-set failures as
+`concurrentSnapshot`: all remote requests completed, then the atomic snapshot
+commit rejected a container changed by concurrent enumeration. The focused fix
+repeats the entire snapshot read and remote preparation at most twice, retaining
+the throttle claim and successful watermark until an atomic commit succeeds.
+Retries emit closed `concurrentSnapshot` checkpoints. Persistent contention still
+fails; no stale write is forced. Regression injects real SQLite concurrent saves
+and checks successful convergence plus bounded persistent failure and watermark
+preservation. Current test and live rerun results remain pending.
+
+| Finding | Expected / observed and earliest divergence | Confidence, fix, and regression |
+| --- | --- | --- |
+| Marker date codec mismatch | A freshly provisioned marker should verify after reloading configuration. Remote numeric dates retained fractions; local ISO8601 dates lost them, so equality rejected the same ownership marker before Finder started. | High. Canonicalize marker dates to seconds on creation and decoding without weakening UUID/drive/root/parent checks. `markerSurvivesRemoteAndDomainDateEncodings` covers the two codecs. Real registration resume subsequently verified the existing lab. |
+| Stability host sandbox blocks assistive AX | Runner should request usable Accessibility access. The sandboxed host could not use the assistive APIs. | High; Apple's [sandbox restrictions](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox) corroborate. Only the macOS Stability containing app is outside App Sandbox; both extensions and standard profiles remain sandboxed. Signed entitlement inspection verified this boundary. |
+| CLI sheet event loop and launcher connection | A permission pause should retain the run and respond to the panel. A bare RunLoop did not reliably dispatch the sheet; restarting the launcher also lost its stdout connection. | High for the harness lifecycle defect. Run NSApplication's event loop, ignore SIGPIPE, launch through LaunchServices with persistent private stdout/stderr. The paused run remained readable through the new panel. |
+| Automation consent classification | An app needing first-time Apple Events consent should pause and request it. `errAEEventWouldRequireUserConsent` was classified as Finder unavailable. | High. Treat both consent statuses as checkpoints. A subsequent live preflight passed Finder Automation and Accessibility. |
+| Ambiguous privacy grant / duplicate signed copies | Settings shows Screen Recording enabled, while the installed runner still receives denial. The ordinary `/Applications` app has a different designated signing requirement from the installed Stability app; current and rebuilt Stability requirements match. | Medium; duplicate registration is a supported hypothesis, not proven TCC internals. Reuse one installed bundle by default, with explicit `--build`, and ask the operator to bind the grant to that exact path. No privacy database modifications or broad resets. |
+| Working-set partial-activity HTTP 422 | Working-set refresh should validate the partial-activity response and advance its durable watermark. A `listPartialActivities` failure with numeric status 422 preceded a failed `workingSetRefresh` span. | Resolved for the reproduced request: use upstream's `with=file`; ten requests succeeded in `0965c244-7ea6-457e-bc34-56cba76a1033`, with no recurrence in subsequent Finder runs. Snapshot contention is a separate finding. |
+
+Preserved bundles live under the app group's `StabilityRuns/runs` directory:
+`5a365b82-a543-4d84-9dc1-06619259ee56` (permission checkpoint),
+`c235fa55-8253-4344-8443-425fc4ef5062` (launcher-interrupted, explicitly abandoned),
+`84942857-a39e-4bb4-8e6e-56aa27a98bdc` (Automation classification failure), and
+`ed3e55d5-3fb0-4897-a003-95cb3b543daa` (remaining Screen Recording checkpoint).
+These bundles have zero scenario passes and must remain available for comparison.
+Live completion no longer automatically prunes earlier bundles.
+
+### Finalized validation to date
+
+Subsequent live findings:
+
+- `0965c244-7ea6-457e-bc34-56cba76a1033`: ten partial-activity requests succeeded
+  after `with=file`; no 422 recurrence. Date-only directory mutations still
+  failed with 400. Hidden-extension handling passed; selection verification
+  remained blocked.
+- `73bb9a3a-d0d5-4e3b-a4cc-83724c20c5dc` and
+  `d9d0dab7-ca73-48dd-8d95-26979058ff56`: retained older Finder windows could
+  have exactly equal titles and frames. Bind the front Apple Events window ID
+  before using AX focus to disambiguate. A direct comparison also reproduced
+  Finder's `count selection` returning zero while a fetched selection list
+  contained one item. The runner now fetches and validates a single list snapshot.
+- `e02376a2-19db-45c5-b213-72165a517fe4`: all navigation UI checks and cropped
+  row screenshot capture succeeded; diagnostic certification correctly failed
+  on directory date updates. A separate-correlation API comparison accepted the
+  untouched generated file's existing timestamp. Both rejected subjects matched
+  directory types in the provider's own snapshot cache (no raw identifiers or
+  data exported). Omitting directory content dates did not prevent callbacks in
+  `672f3d5e-6497-4fa7-b9d7-084710480fa3`; that experiment was reverted. The
+  supported fix refetches and returns the server directory date without issuing
+  the file-only request. The SDK's `NSFileProviderReplicatedExtension.h` describes
+  propagation of differing non-pending returned fields to disk. Regression:
+  directory timestamp server-wins and regular-file mutation/refetch tests in
+  `KDriveMutationCoordinatorTests`; live rerun pending.
+- Installer correction: an absent obsolete plug-in registration is normal, but
+  `pluginkit -r` returned nonzero between backup and install. The verified staged
+  bundle was installed and its previous bundle retained. Cleanup is now best
+  effort after install; the install path has a rollback guard. No lab/domain or
+  credential was removed.
+
+The first real navigation bundle, `aed38bf2-8864-4d67-a3ae-f990c3c1596d`,
+finalized with one failed scenario and fifteen skipped. Fresh extension build
+attestation passed. Finder reached both nested levels, Back/Forward/parent, and
+Sibling, where the generated remote fixture was present. The UI exposed the
+display name without its extension, while the selector required the full filename;
+this was the immediate 90-second assertion timeout. The selector now obtains the
+display name for the exact bound URL and rejects ambiguous labels. Its regression
+covers hidden extensions and duplicate labels; live rerun is required. This does
+not hide the provider failures independently recorded in the same bundle:
+`listPartialActivities` 422 and `updateModificationDate` 400 on date-only
+`modifyItem` callbacks. Failure classification and API diagnosis continue.
+
+All commands use the root Xcode project and `-only-testing:potassiumProviderTests`.
+No simulator test invokes the live account. Result paths are local, untracked.
+
+| Destination / profile | Finalized result | Scope caveat |
+| --- | --- | --- |
+| macOS Stability | `/private/tmp/potassium-live-tests-mac-02.xcresult`: 339 passed, 0 failed/skipped | Predates the latest confinement, callback waiter, and validation-field additions; final rerun required. |
+| iPhone 17 / iOS 26.5 | `/private/tmp/potassium-live-ios-01.xcresult`: 315 passed, 0 failed/skipped | Updated shared suite is being rerun. |
+| Apple Vision Pro / visionOS 26.5 | `/private/tmp/potassium-live-vision-sim-02.xcresult`: 321 passed, 0 failed/skipped | Includes confinement and waiter tests; predates validation-field additions. The earlier cancellation test fixture had impossible timestamp ordering and was corrected before this run. |
+| generic visionOS | `/private/tmp/potassium-live-vision-build-02.log`: build succeeded with `CODE_SIGNING_ALLOWED=NO` | Signed device build is blocked by the locally selected actions-extension profile lacking App Groups. This is compile validation, not a signed-device pass. |
+
+Still required: finalized current macOS standard/Stability results and updated
+shared-platform checks, real Finder selector diagnosis, complete healthy evidence
+for all 16 scenarios twice, and focused regression/rerun evidence for each live
+failure. CR-013 remains open regardless of disposable permanent-deletion success.
 
 ## Evidence Revisions
 

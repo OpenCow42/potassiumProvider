@@ -8,10 +8,6 @@
 	</array>
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
-	<key>com.apple.security.temporary-exception.apple-events</key>
-	<array>
-		<string>com.apple.finder</string>
-	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>keychain-access-groups</key>

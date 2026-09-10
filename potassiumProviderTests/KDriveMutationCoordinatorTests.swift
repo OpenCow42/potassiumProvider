@@ -5,6 +5,29 @@ import PotassiumProviderCore
 
 @Suite(.serialized)
 struct KDriveMutationCoordinatorTests {
+    @Test(arguments: ["dir", "directory"])
+    func directoryTimestampResolvesToServerValueWithoutFileOnlyMutation(_ type: String) async throws {
+        let current = makeItem(id: Self.fileID, name: "Folder", type: type, mimeType: nil)
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [current]])
+        let result = try await makeCoordinator(remote: remote).updateModificationDate(
+            fileID: Self.fileID, date: Date(timeIntervalSince1970: 900))
+        #expect(result == current)
+        #expect(await remote.calls() == [.item(driveID: Self.driveID, fileID: Self.fileID)])
+    }
+
+    @Test func fileTimestampMutationIsAppliedAndRefetched() async throws {
+        let current = makeItem(id: Self.fileID, name: "File.txt")
+        let date = Date(timeIntervalSince1970: 900)
+        let updated = makeItem(id: Self.fileID, name: "File.txt", modifiedAt: date)
+        let remote = RecordingKDriveFileProvider(itemResults: [Self.fileID: [current, updated]])
+        let result = try await makeCoordinator(remote: remote).updateModificationDate(fileID: Self.fileID, date: date)
+        #expect(result == updated)
+        #expect(await remote.calls() == [
+            .item(driveID: Self.driveID, fileID: Self.fileID),
+            .updateModificationDate(driveID: Self.driveID, fileID: Self.fileID, date: date),
+            .item(driveID: Self.driveID, fileID: Self.fileID)
+        ])
+    }
     @Test func fileCreateUsesCollisionSafeIdempotentUpload() async throws {
         let createdItem = makeItem(id: 101, name: "New.txt")
         let remote = RecordingKDriveFileProvider(uploadResult: createdItem)

@@ -7,6 +7,16 @@ import Testing
 
 @Suite("Provider diagnostic spans")
 struct ProviderDiagnosticSpanTests {
+    @Test func snapshotRaceClassificationOmitsPrivateIdentifiers() async throws {
+        let sink = InMemoryDiagnosticSink()
+        let span = await ProviderDiagnosticSpan.start(source: .fileProviderExtension, operation: .workingSetRefresh, recorder: sink)
+        await span.fail(error: KDriveSnapshotStoreError.staleSnapshot(domainIdentifier: "private-domain-sentinel", containerIdentifier: "private-container-sentinel"))
+        let events = await sink.snapshot()
+        #expect(events.last?.errorClass == .concurrentSnapshot)
+        let json = String(decoding: try JSONEncoder().encode(events), as: UTF8.self)
+        #expect(!json.contains("private-domain-sentinel"))
+        #expect(!json.contains("private-container-sentinel"))
+    }
     @Test func startAndOnlyOneTerminalEventAreRecordedUnderRaces() async {
         let sink = InMemoryDiagnosticSink()
         let span = await ProviderDiagnosticSpan.start(

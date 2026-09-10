@@ -15,6 +15,7 @@ public actor FileProviderOperationLifecycle {
         diagnosticSource: ProviderDiagnosticSource = .fileProviderExtension,
         diagnosticOperation: ProviderDiagnosticOperation? = nil,
         diagnosticFieldShape: [ProviderDiagnosticField] = [],
+        diagnosticItemIdentifier: String? = nil,
         diagnosticRecorder: (any ProviderDiagnosticRecording)? = nil,
         cancellationCompletion: @escaping @Sendable () -> Void
     ) {
@@ -23,6 +24,7 @@ public actor FileProviderOperationLifecycle {
         if let diagnosticOperation {
             self.diagnosticSpanTask = Task {
                 await ProviderDiagnosticSpan.start(
+                    itemIdentifier: diagnosticItemIdentifier,
                     source: diagnosticSource,
                     operation: diagnosticOperation,
                     fieldShape: diagnosticFieldShape,

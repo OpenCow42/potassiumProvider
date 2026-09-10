@@ -152,6 +152,12 @@ app.
 - Keep networking behavior testable with mocks, fixtures, or injectable
   clients. Live checks must be explicit, locally guarded, and kept out of the
   default test path.
+- Provision new Stability Lab roots below the server-created `Private` folder,
+  verifying its stable identity and drive-root parent; do not assume the drive
+  root accepts creates. Never use the `Private` folder itself as a disposable root.
+- The current account is an operator-authorized lab account. Stability may reuse
+  its existing OAuth Keychain login as well as manually entered tokens; never
+  extract a credential into a command, fixture, environment variable, or log.
 - Prefer typed request/response flows from Potassium products over app-local
   ad hoc HTTP construction.
 

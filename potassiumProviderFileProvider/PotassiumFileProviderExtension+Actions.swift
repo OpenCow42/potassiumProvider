@@ -12,6 +12,7 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
         let lifecycle = FileProviderOperationLifecycle(
             progress: progress,
             diagnosticOperation: Self.diagnosticOperation(for: actionIdentifier),
+            diagnosticItemIdentifier: itemIdentifiers.count == 1 ? itemIdentifiers.first?.rawValue : nil,
             diagnosticRecorder: diagnosticRecorder
         ) {
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))

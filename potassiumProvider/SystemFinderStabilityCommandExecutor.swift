@@ -28,6 +28,65 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         self.scenarioRunner = scenarioRunner
     }
 
+    func provision() async -> FinderStabilityCommandResult {
+        let model = PotassiumProviderAppModel(automaticallyReloadStoredState: false)
+        await model.reloadStoredState()
+        if model.domains.count == 1, model.stabilityLabConfiguration != nil {
+            do {
+                try await model.resumeStabilityLabRegistration()
+                print("finder stability provision: existing lab verified and registered")
+                return .ready
+            } catch {
+                if let safety = error as? StabilityLabRemoteCoordinatorError { print(safety.localizedDescription) }
+                print("finder stability registration: type \(String(reflecting: type(of: error))); class \(ProviderDiagnosticErrorClassifier.classify(error).rawValue); code \((error as NSError).code)")
+                return .failed
+            }
+        }
+        guard model.accounts.count == 1, model.domains.isEmpty, let account = model.accounts.first else {
+            print("finder stability provision: requires one saved account and no domain")
+            return .rejected
+        }
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
+        let drives = model.drives(for: account.accountIdentifier).filter(\.isUsableInternalDrive)
+        guard let drive = drives.first(where: { $0.id == model.selectedDriveIDs[account.accountIdentifier] }) ?? drives.first else {
+            print("finder stability provision: available drive count \(drives.count); error \(model.lastDriveDiscoveryErrorClass?.rawValue ?? "none") \(model.lastDriveDiscoveryErrorCode.map(String.init) ?? "")")
+            return .rejected
+        }
+        await model.provisionStabilityLab(accountIdentifier: account.accountIdentifier, drive: drive)
+        guard model.stabilityLabConfiguration != nil, model.errorMessage == nil else {
+            print("finder stability provision: " + (model.errorMessage ?? "root creation or domain registration failed"))
+            return .failed
+        }
+        print("finder stability provision: verified lab created inside Private")
+        return .ready
+    }
+
+    func watch() async -> FinderStabilityCommandResult {
+        do {
+            guard let run = try StabilityDiagnosticIdentity.activeRun() else {
+                print("finder stability watch: no active run")
+                return .ready
+            }
+            var seen: Set<UUID> = []
+            var previousStatus: StabilityLiveStatus?
+            repeat {
+                if let status = try StabilityLiveStatus.read(from: run), status != previousStatus {
+                    print("run \(status.state.rawValue): \(status.scenario?.rawValue ?? "preflight")")
+                    previousStatus = status
+                }
+                let events = try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL)
+                for event in events where seen.insert(event.id).inserted {
+                    guard [.failed, .cancelled, .checkpoint].contains(event.phase) ||
+                          [.runtimeInitialize, .runtimeInvalidate].contains(event.operation) else { continue }
+                    print("\(event.source.rawValue) \(event.operation.rawValue) \(event.phase.rawValue) \(event.errorClass?.rawValue ?? "") \(event.errorCode.map(String.init) ?? "")")
+                }
+                if try StabilityDiagnosticIdentity.activeRun()?.runID != run.runID { break }
+                try await Task.sleep(for: .seconds(1))
+            } while !Task.isCancelled
+            return .ready
+        } catch { return .failed }
+    }
+
     func preflight(requestPermissions: Bool) async -> FinderStabilityCommandResult {
         do {
             let context = try await contextLoader.loadPreflight()
@@ -38,6 +97,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
                 labSafetyAllowed: true,
                 recordedAt: Date()
             )
+            for result in results { print("finder stability permission: \(result.check.rawValue) \(result.outcome)") }
             return FinderStabilityPreflightEvaluator.commandResult(for: results)
         } catch {
             return .rejected
@@ -53,21 +113,36 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         }
 
         let reportStartedAt = Date()
-        let preflight = FinderStabilityPreflightEvaluator.results(
-            permissions: permissionChecker.check(requestPermissions: requestPermissions),
+        var preflight = FinderStabilityPreflightEvaluator.results(
+            permissions: permissionChecker.check(requestPermissions: false),
             hasFileProviderRegistration: true,
             hasVerifiedFileProviderConsent: preflightContext.hasVerifiedFileProviderConsent,
             labSafetyAllowed: true,
             recordedAt: Date()
         )
-        let preflightCommandResult = FinderStabilityPreflightEvaluator.commandResult(for: preflight)
+        var preflightCommandResult = FinderStabilityPreflightEvaluator.commandResult(for: preflight)
         let runCoordinator: StabilityRunCoordinator
         let ownedRun: StabilityOwnedRunHandle
         do {
             runCoordinator = try StabilityRunCoordinator()
             ownedRun = try await runCoordinator.startOwnedRun()
+            try StabilityLiveStatus(state: .preflight).write(to: ownedRun.run)
         } catch {
             return .failed
+        }
+        while preflightCommandResult == .checkpoint {
+            let missing = preflight.filter { if case .checkpoint = $0.outcome { return true }; return false }.map { $0.check.rawValue }.joined(separator: ", ")
+            try? StabilityLiveStatus(state: .awaitingPermissions).write(to: ownedRun.run)
+            print("finder stability paused: " + missing)
+            if requestPermissions { _ = permissionChecker.check(requestPermissions: true) }
+            guard await FinderRunnerPanel.awaitResume(message: "Allow the required macOS permissions, then continue. Pending: " + missing) else { break }
+            do {
+                try await preflightContext.verifySafety()
+                preflight = FinderStabilityPreflightEvaluator.results(
+                    permissions: permissionChecker.check(requestPermissions: false), hasFileProviderRegistration: true,
+                    hasVerifiedFileProviderConsent: true, labSafetyAllowed: true, recordedAt: Date())
+                preflightCommandResult = FinderStabilityPreflightEvaluator.commandResult(for: preflight)
+            } catch { preflightCommandResult = .rejected; break }
         }
         let context: FinderStabilityLiveContext
         do {
@@ -97,8 +172,10 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             )
         }
 
+        guard execution.canSeal else { return .failed }
         do {
             let report = try StabilityFinderRunReport(
+                schemaVersion: StabilityFinderRunReport.liveSchemaVersion,
                 correlationID: UUID(),
                 startedAt: reportStartedAt,
                 finishedAt: Date(),
@@ -122,7 +199,8 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
                         + report.stepSummary.checkpointed
                 )
             )
-            _ = try await runCoordinator.pruneCompletedRuns()
+            // Live failures are comparison evidence. Retention is an explicit
+            // maintenance operation; never prune them after a later run.
 
             if report.preflightSummary.failed > 0 || report.stepSummary.failed > 0 {
                 return .failed
@@ -130,6 +208,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             if report.preflightSummary.checkpointed > 0 || report.stepSummary.checkpointed > 0 {
                 return .checkpoint
             }
+            guard report.stepSummary.passed == StabilityFinderScenario.allCases.count else { return .failed }
             return .completed
         } catch {
             // A report is the commit marker for the two evidence JSONL files.
@@ -166,6 +245,7 @@ enum FinderStabilityPreflightEvaluator {
         let outcomes: [StabilityFinderPreflightCheck: StabilityFinderPreflightOutcome] = [
             .accessibilityPermission: permissions.accessibilityOutcome,
             .finderAutomationPermission: permissions.automationOutcome,
+            .screenRecordingPermission: permissions.recordingOutcome,
             .fileProviderRegistration: hasFileProviderRegistration
                 ? .passed
                 : .failed(.fileProviderNotRegistered),
@@ -207,6 +287,7 @@ enum FinderStabilityPreflightEvaluator {
 struct FinderStabilityPermissionSnapshot: Equatable, Sendable {
     let accessibilityOutcome: StabilityFinderPreflightOutcome
     let automationOutcome: StabilityFinderPreflightOutcome
+    var recordingOutcome: StabilityFinderPreflightOutcome = .passed
 }
 
 protocol FinderStabilityPermissionChecking: Sendable {
@@ -247,7 +328,7 @@ struct SystemFinderStabilityPermissionChecker: FinderStabilityPermissionChecking
             switch status {
             case noErr:
                 automation = .passed
-            case OSStatus(errAEEventNotPermitted):
+            case OSStatus(errAEEventNotPermitted), OSStatus(errAEEventWouldRequireUserConsent):
                 automation = .checkpoint(.finderAutomationConsentRequired)
             default:
                 automation = .failed(.finderUnavailable)
@@ -255,7 +336,8 @@ struct SystemFinderStabilityPermissionChecker: FinderStabilityPermissionChecking
         }
         return FinderStabilityPermissionSnapshot(
             accessibilityOutcome: accessibility,
-            automationOutcome: automation
+            automationOutcome: automation,
+            recordingOutcome: (requestPermissions ? CGRequestScreenCaptureAccess() : CGPreflightScreenCaptureAccess()) ? .passed : .checkpoint(.screenRecordingConsentRequired)
         )
     }
 }
@@ -389,24 +471,33 @@ struct FinderStabilityContextLoader {
         }
         let accountStore = try accountStoreProvider()
         let domainStore = try domainStoreProvider()
+        print("finder stability preflight: stored configuration")
         let accounts = try await accountStore.allAccounts()
         let domains = try await domainStore.allConfigurations()
         guard domains.count == 1,
               let domain = domains.first,
               domain.isCompatible(with: .stability),
               let lab = domain.stabilityLab,
-              accounts.first(where: { $0.accountIdentifier == domain.accountIdentifier })?
-                .authenticationKind == .manualAccessToken else {
+              accounts.contains(where: { $0.accountIdentifier == domain.accountIdentifier }) else {
             throw FinderStabilityContextError.invalidLabConfiguration
         }
 
+        print("finder stability preflight: domain registration")
         guard try await registrar.registeredDomainIdentifiers() == [domain.domainIdentifier] else {
             throw FinderStabilityContextError.fileProviderNotRegistered
         }
-        guard let token = try await tokenStore.loadToken(
+        print("finder stability preflight: Keychain authentication")
+        guard var token = try await tokenStore.loadToken(
             accountIdentifier: domain.accountIdentifier
         ), token.accessToken.isEmpty == false else {
             throw FinderStabilityContextError.credentialUnavailable
+        }
+        if token.shouldRefresh() {
+            guard let refreshToken = token.refreshToken else {
+                throw FinderStabilityContextError.credentialUnavailable
+            }
+            token = try await KDriveOAuthClient.refresh(refreshToken: refreshToken)
+            try await tokenStore.saveToken(token, accountIdentifier: domain.accountIdentifier)
         }
 
         let recorder = try ProviderEventStoreFactory.makeDefault(
@@ -445,8 +536,10 @@ struct FinderStabilityContextLoader {
             }
         }
         try await verifyRemoteSafety()
+        print("finder stability preflight: remote ownership verified; resolving visible root")
 
         let rootURL = try await registrar.userVisibleRootURL(for: domain)
+        print("finder stability preflight: binding visible domain")
         let visibleRootBinding = try await visibleDomainResolver(rootURL)
         let consentMatches = FinderStabilityRootBinding.matches(
             expectedDomainIdentifier: domain.domainIdentifier,
@@ -478,15 +571,15 @@ struct FinderStabilityContextLoader {
     private static func identifier(
         for url: URL
     ) async throws -> (NSFileProviderItemIdentifier, NSFileProviderDomainIdentifier) {
-        try await withCheckedThrowingContinuation { continuation in
+        try await StabilityCallbackWaiter<(NSFileProviderItemIdentifier, NSFileProviderDomainIdentifier)>().wait { completion in
             NSFileProviderManager.getIdentifierForUserVisibleFile(at: url) {
                 itemIdentifier, domainIdentifier, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    completion(.failure(error))
                 } else if let itemIdentifier, let domainIdentifier {
-                    continuation.resume(returning: (itemIdentifier, domainIdentifier))
+                    completion(.success((itemIdentifier, domainIdentifier)))
                 } else {
-                    continuation.resume(throwing: FinderStabilityContextError.fileProviderNotRegistered)
+                    completion(.failure(FinderStabilityContextError.fileProviderNotRegistered))
                 }
             }
         }
@@ -534,6 +627,7 @@ protocol FinderStabilityScenarioRunning {
 struct FinderStabilityScenarioExecution: Sendable {
     let stepResults: [StabilityFinderStepResult]
     let observations: [StabilityFinderAPIObservation]
+    var canSeal = true
 
     static func skippingAll(
         reason: StabilityFinderStepSkipReason,

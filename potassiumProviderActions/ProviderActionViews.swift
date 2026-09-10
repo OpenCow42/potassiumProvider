@@ -1,4 +1,5 @@
 import PotassiumProviderCore
+import FileProvider
 import SwiftUI
 
 struct ProviderActionRootView: View {
@@ -52,6 +53,11 @@ struct ProviderActionRootView: View {
             }
         }
         .frame(minWidth: 360, minHeight: 440)
+        #if STABILITY
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("provider.stability.action." +
+            (StabilityDiagnosticIdentity.activeAlias(for: model.itemIdentifier.rawValue)?.uuidString ?? "unbound"))
+        #endif
     }
 
     private var navigationTitle: String {
@@ -324,6 +330,7 @@ private struct VersionRow: View {
             }
             Spacer()
             Button("Restore", action: restore)
+                .accessibilityIdentifier("provider.version.restore." + KDriveMutationIdentity.clientToken([String(version.id)]))
                 .buttonStyle(.borderless)
         }
     }

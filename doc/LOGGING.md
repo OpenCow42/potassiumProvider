@@ -17,9 +17,16 @@ the small set of sanitized fields that are useful to users and support.
 
 ## Stability Run Bundles
 
+Live edit, rename, and move evidence requires the corresponding `contents`,
+`filename`, or `parent` field on a successful `modifyItem` callback. Incidental
+last-used or timestamp callbacks cannot satisfy those scenarios. Finder Trash
+requires both `parent` and `trash`; permanent deletion requires `deleteItem`.
+
 `Stability` defines the `STABILITY` compilation condition on the app, shared
-core, File Provider, actions, unit-test, and UI-test targets. It does not change
-bundle identifiers, app groups, entitlements, or the Keychain credential flow.
+core, File Provider, actions, unit-test, and UI-test targets. It preserves
+bundle identifiers, app groups, and the Keychain credential flow. The macOS
+Stability host alone runs outside App Sandbox to use assistive Accessibility;
+both extensions and the standard host remain sandboxed.
 The standard profile continues to store activity and conflict history in
 `Snapshots.sqlite3`.
 
@@ -86,22 +93,46 @@ copied into diagnostic events. Lab provisioning and reset use the same closed
 typed-network spans as other requests, so only route and option shapes are
 durable.
 
-Finder evidence uses a closed schema: fixed scenario, preflight, assertion,
-checkpoint, failure, skip, and API-observation enums; random correlation UUIDs;
-timestamps and bounded durations; booleans; and bucketed item counts. A passing
-step requires one correlated baseline and one correlated postcondition, both
-Finder-visible and server-authoritative assertions, and a successful terminal
-File Provider callback or typed network diagnostic appropriate to that
-scenario. The enumeration/anchor scenario requires both a completed item
-enumeration and a completed change-enumeration or current-anchor callback;
-unrelated alternatives cannot mask missing anchor evidence. Checkpoint reasons
-are restricted to the four scenarios that deliberately stop for operator UI.
-Checkpointed steps are exempt from terminal diagnostic requirements
-and never masquerade as passing coverage. No evidence field can
-hold a credential, account/drive/item identifier, name, path, URL, header,
-body, share link, response payload, or file bytes. Report assembly validates
-the complete ordered 16-step plan before any immutable Finder report is
-created.
+Finder report version 2 adds run-local item aliases, observed UI action counts,
+expected extension code hashes, cancellation/conflict/working-set observations, and
+closed failure categories/reasons with supporting span IDs. Diagnostics version 3
+adds subject aliases, parent spans, process-instance UUIDs, code hashes, and safe
+numeric error codes. An optional `validationFields` array contains only known
+request-field classes from a 400 or 422 response; messages, values, and unknown keys
+are discarded. Version 1 Finder reports and older diagnostic records remain
+readable. New live reports require the newer evidence fields.
+
+`concurrentSnapshot` identifies a rejected snapshot compare-and-swap without
+exporting the error's domain/container identifiers. Bounded working-set retries
+emit this class on nonterminal checkpoints; exhaustion emits a failed terminal.
+It never hides a remote failure or changes a successful watermark. Finder's
+scoped eviction alert maps to the closed `resourceBusy` failure reason; native
+Apple Event failures print numeric codes without private command text.
+
+Each passing step requires a baseline and postcondition, Finder-visible and remote
+assertions, and successful item-specific callback evidence from the expected build.
+Cancellation accepts the expected cancelled fetch and requires real progress plus a
+later successful fetch for that same item. Trash uses `modifyItem`; permanent
+selected-item deletion uses `deleteItem`. Root enumeration cannot substitute for
+an actual working-set member event. Missing starts/terminals or contradictory
+terminals reject certification. Checkpoints are incomplete coverage.
+
+`live-status.json` is a replaceable closed status snapshot for the read-only watch
+command. Watch shows scenario transitions, errors, cancellations, retry checkpoints,
+and extension lifecycle events; routine request successes stay in the timeline.
+`diagnostic-timeline.json` is ordered by timestamp and event ID, and becomes
+immutable with the final report. `diagnostic-health.failed` latches a failed append;
+subsequent successful writes cannot erase that gap or certify the bundle. The runner
+retains monitoring through operator pauses and waits for outstanding spans to settle.
+Local screenshots live separately under `visual-evidence`; they are cropped to
+positively identified generated content and are excluded from ordinary exports.
+
+Version 3 diagnostics optionally include `itemMetadataAlias`, a run-salted
+commitment to item identity, name, parent, and size. No raw metadata values are
+exported. The live report's optional `expectedWorkingSetMetadataAlias` becomes
+mandatory to certify scenario 15: its matching member terminal must be a child
+of a completed working-set enumeration. A newly introduced remote name change
+prevents stale membership from passing. Historical bundles remain decodable.
 
 The shared `ProviderDiagnosticSpan` emits one best-effort start and at most one
 terminal event even when completion, failure, and cancellation race. Every

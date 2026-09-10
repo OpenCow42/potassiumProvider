@@ -3,8 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DERIVED_DATA_PATH="${TMPDIR:-/private/tmp}/potassiumProviderFinderStabilityDerivedData"
+DERIVED_DATA_PATH="${POTASSIUM_STABILITY_DERIVED_DATA:-${TMPDIR:-/private/tmp}/potassiumProviderFinderStabilityDerivedData}"
 APP_PATH=""
+BUILD_APP=0
+INSTALLED_APP_PATH="$HOME/Applications/Potassium Stability.app"
 MODE="preflight"
 REQUEST_PERMISSIONS=0
 CONFIRMED_LIVE=0
@@ -13,24 +15,32 @@ CONFIRMED_RECOVERY=0
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/run-finder-stability.sh [--app PATH] [--preflight] [--run --yes-live] [--recover-stale-run --yes-recover] [--request-permissions]
+  scripts/run-finder-stability.sh [--app PATH | --build] [--preflight] [--provision --yes-live] [--run --yes-live] [--watch] [--recover-stale-run --yes-recover] [--request-permissions]
 
 Options:
-  --app PATH              Use an existing macOS Stability app instead of building.
+  --app PATH              Use a specific existing macOS Stability app.
+  --build                 Build and install at ~/Applications/Potassium Stability.app.
   --preflight             Verify lab, domain, and consent state without Finder or remote mutation (default).
+  --provision             Create or resume the isolated lab inside Private using the saved Keychain account.
+  --watch                 Show sanitized active-run diagnostics without mutation.
   --run                   Execute the verified disposable-root scenario sequence.
   --recover-stale-run     Preserve and abandon a local run whose owner process has exited.
-  --yes-live              Required with --run; confirms the saved development account and lab may be mutated.
+  --yes-live              Required with --run or --provision; confirms the saved development account and lab may be mutated.
   --yes-recover           Required with --recover-stale-run; confirms local evidence recovery.
   --request-permissions   Ask macOS to present Accessibility/Finder Automation consent prompts.
   --help                  Show this help.
 
-Credentials are accepted only through the app's existing manual-token Keychain flow.
+Credentials stay in the app's existing OAuth or manual-token Keychain flow.
+The installed Stability app is reused unless --build is supplied or it is absent.
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --build)
+      BUILD_APP=1
+      shift
+      ;;
     --app)
       if [[ $# -lt 2 || -z "$2" ]]; then
         echo "error: --app requires a path" >&2
@@ -41,6 +51,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --preflight)
       MODE="preflight"
+      shift
+      ;;
+    --provision)
+      MODE="provision"
+      shift
+      ;;
+    --watch)
+      MODE="watch"
       shift
       ;;
     --run)
@@ -75,12 +93,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$MODE" == "run" && "$CONFIRMED_LIVE" -ne 1 ]]; then
-  echo "error: --run requires --yes-live" >&2
+if [[ ( "$MODE" == "run" || "$MODE" == "provision" ) && "$CONFIRMED_LIVE" -ne 1 ]]; then
+  echo "error: --run and --provision require --yes-live" >&2
   exit 2
 fi
-if [[ "$MODE" == "preflight" && "$CONFIRMED_LIVE" -eq 1 ]]; then
-  echo "error: --yes-live is accepted only with --run" >&2
+if [[ "$MODE" != "run" && "$MODE" != "provision" && "$CONFIRMED_LIVE" -eq 1 ]]; then
+  echo "error: --yes-live is accepted only with --run or --provision" >&2
   exit 2
 fi
 if [[ "$MODE" == "recover" && "$CONFIRMED_RECOVERY" -ne 1 ]]; then
@@ -100,7 +118,24 @@ if [[ "$MODE" == "recover" && "$REQUEST_PERMISSIONS" -eq 1 ]]; then
   exit 2
 fi
 
+if [[ -n "$APP_PATH" && "$BUILD_APP" -eq 1 ]]; then
+  echo "error: --app and --build are mutually exclusive" >&2
+  exit 2
+fi
 if [[ -z "$APP_PATH" ]]; then
+  APP_PATH="$INSTALLED_APP_PATH"
+  if [[ ! -d "$APP_PATH" ]]; then BUILD_APP=1; fi
+fi
+if [[ "$BUILD_APP" -eq 1 ]]; then
+  # Replacing a running bundle can mix code versions and invalidate evidence.
+  if ps -axo comm= | /usr/bin/grep -Fq "$APP_PATH/Contents/MacOS/potassiumProvider"; then
+    echo "error: stop the installed Stability app before rebuilding" >&2
+    exit 2
+  fi
+  if [[ -e "$HOME/Library/Group Containers/group.net.weavee.potassiumProvider/StabilityRuns/current-run.json" ]]; then
+    echo "error: finish or explicitly recover the active Stability run before rebuilding" >&2
+    exit 2
+  fi
   echo "Building the macOS Stability app..."
   env -u INFOMANIAK_TOKEN xcodebuild build \
     -project "$PROJECT_ROOT/potassiumProvider.xcodeproj" \
@@ -108,7 +143,40 @@ if [[ -z "$APP_PATH" ]]; then
     -configuration Stability \
     -destination 'platform=macOS' \
     -derivedDataPath "$DERIVED_DATA_PATH"
-  APP_PATH="$DERIVED_DATA_PATH/Build/Products/Stability/potassiumProvider.app"
+  BUILT_APP_PATH="$DERIVED_DATA_PATH/Build/Products/Stability/potassiumProvider.app"
+  /usr/bin/codesign --verify --deep --strict "$BUILT_APP_PATH"
+  mkdir -p "$(dirname "$APP_PATH")"
+  INSTALL_STAGING="$(mktemp -d "$(dirname "$APP_PATH")/.potassium-stability-install.XXXXXX")"
+  /usr/bin/ditto "$BUILT_APP_PATH" "$INSTALL_STAGING/candidate.bundle"
+  /usr/bin/codesign --verify --deep --strict "$INSTALL_STAGING/candidate.bundle"
+  trap 'if [[ ! -d "$APP_PATH" && -n "${BACKUP_PATH:-}" && -d "$BACKUP_PATH" ]]; then mv "$BACKUP_PATH" "$APP_PATH"; fi' EXIT
+  # Only the selected app's embedded processes are restarted, and only after
+  # excluding an active run. Never terminate fileproviderd or other providers.
+  while read -r PROVIDER_PID PROVIDER_COMMAND; do
+    case "$PROVIDER_COMMAND" in
+      "$APP_PATH/Contents/PlugIns/potassiumProviderFileProvider.appex/Contents/MacOS/potassiumProviderFileProvider"|"$APP_PATH/Contents/PlugIns/potassiumProviderActions.appex/Contents/MacOS/potassiumProviderActions")
+        kill -TERM "$PROVIDER_PID" 2>/dev/null || true
+        ;;
+    esac
+  done < <(ps -axo pid=,comm=)
+  if [[ -d "$APP_PATH" ]]; then
+    # Keep one recoverable backup outside LaunchServices' app directories.
+    BACKUP_ROOT="$HOME/Library/Application Support/potassiumProvider/StabilityBuildBackup"
+    mkdir -p "$BACKUP_ROOT"
+    BACKUP_PATH="$(mktemp -d "$BACKUP_ROOT/build.XXXXXX")/previous.bundle"
+    mv "$APP_PATH" "$BACKUP_PATH"
+  fi
+  mv "$INSTALL_STAGING/candidate.bundle" "$APP_PATH"
+  rmdir "$INSTALL_STAGING"
+  /usr/bin/codesign --verify --deep --strict "$APP_PATH"
+  for EXTENSION in potassiumProviderFileProvider potassiumProviderActions; do
+    if [[ -n "${BACKUP_PATH:-}" ]]; then
+      /usr/bin/pluginkit -r "$BACKUP_PATH/Contents/PlugIns/$EXTENSION.appex" 2>/dev/null || true
+    fi
+    /usr/bin/pluginkit -r "$BUILT_APP_PATH/Contents/PlugIns/$EXTENSION.appex" 2>/dev/null || true
+    /usr/bin/pluginkit -a "$APP_PATH/Contents/PlugIns/$EXTENSION.appex"
+  done
+  trap - EXIT
 fi
 
 EXECUTABLE_PATH="$APP_PATH/Contents/MacOS/potassiumProvider"
@@ -118,7 +186,7 @@ if [[ ! -x "$EXECUTABLE_PATH" ]]; then
 fi
 
 COMMAND_ARGS=(--finder-stability "$MODE")
-if [[ "$MODE" == "run" ]]; then
+if [[ "$MODE" == "run" || "$MODE" == "provision" ]]; then
   COMMAND_ARGS+=(--yes-live)
 fi
 if [[ "$MODE" == "recover" ]]; then
@@ -128,11 +196,30 @@ if [[ "$REQUEST_PERMISSIONS" -eq 1 ]]; then
   COMMAND_ARGS+=(--request-permissions)
 fi
 
-set +e
-env -u INFOMANIAK_TOKEN "$EXECUTABLE_PATH" "${COMMAND_ARGS[@]}"
-STATUS=$?
-set -e
-if [[ "$STATUS" -eq 3 ]]; then
-  echo "Checkpoint reached. Grant the requested macOS consent or complete the reported Finder UI checkpoint, then rerun."
+# LaunchServices gives the signed app its own macOS privacy identity. Keeping
+# stdout in a local file also lets the app survive the invoking terminal closing.
+if [[ "$MODE" == "watch" || "$MODE" == "recover" ]]; then
+  exec env -u INFOMANIAK_TOKEN "$EXECUTABLE_PATH" "${COMMAND_ARGS[@]}"
 fi
-exit "$STATUS"
+RUN_LOG="$(mktemp -t potassium-finder-stability)"
+RUN_ERROR_LOG="${RUN_LOG}.stderr"
+: > "$RUN_ERROR_LOG"
+chmod 600 "$RUN_LOG" "$RUN_ERROR_LOG"
+echo "Local runner log: $RUN_LOG"
+TAIL_PID=""
+trap 'if [[ -n "$TAIL_PID" ]]; then kill "$TAIL_PID" 2>/dev/null || true; fi' EXIT
+/usr/bin/tail -n +1 -f "$RUN_LOG" &
+TAIL_PID=$!
+set +e
+env -u INFOMANIAK_TOKEN /usr/bin/open -n -W --stdout "$RUN_LOG" --stderr "$RUN_ERROR_LOG" \
+  -a "$APP_PATH" --args "${COMMAND_ARGS[@]}"
+LAUNCH_STATUS=$?
+set -e
+if [[ "$LAUNCH_STATUS" -ne 0 ]]; then exit "$LAUNCH_STATUS"; fi
+# open returns launch status, not the app's exit code. Interpret only the exact
+# closed terminal messages emitted by FinderStabilityCommandResult.
+if /usr/bin/grep -q '^finder stability run: evidence bundle sealed$' "$RUN_LOG"; then exit 0; fi
+if /usr/bin/grep -q '^finder stability preflight: ready$' "$RUN_LOG"; then exit 0; fi
+if /usr/bin/grep -q '^finder stability checkpoint:' "$RUN_LOG"; then exit 3; fi
+if /usr/bin/grep -q '^finder stability rejected:' "$RUN_LOG"; then exit 2; fi
+exit 1

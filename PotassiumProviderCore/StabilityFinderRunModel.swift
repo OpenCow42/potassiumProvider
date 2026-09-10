@@ -29,11 +29,13 @@ public enum StabilityFinderPreflightCheck: String, CaseIterable, Codable, Equata
     case fileProviderRegistration
     case fileProviderConsent
     case stabilityLabSafety
+    case screenRecordingPermission
 }
 
 /// A pause that needs operator or OS-owned UI action, not a product failure.
 public enum StabilityFinderCheckpointReason: String, Codable, Equatable, Hashable, Sendable {
     case accessibilityConsentRequired
+    case screenRecordingConsentRequired
     case finderAutomationConsentRequired
     case fileProviderConsentRequired
     case variableContextualUI
@@ -145,6 +147,7 @@ public struct StabilityFinderStepResult: Codable, Equatable, Sendable {
     public let durationMilliseconds: UInt64
     public let outcome: StabilityFinderStepOutcome
     public let assertions: [StabilityFinderAssertionResult]
+    public let liveEvidence: StabilityLiveStepEvidence?
 
     public init(
         sequenceNumber: UInt16,
@@ -153,7 +156,8 @@ public struct StabilityFinderStepResult: Codable, Equatable, Sendable {
         startedAt: Date,
         finishedAt: Date,
         outcome: StabilityFinderStepOutcome,
-        assertions: [StabilityFinderAssertionResult]
+        assertions: [StabilityFinderAssertionResult],
+        liveEvidence: StabilityLiveStepEvidence? = nil
     ) {
         self.sequenceNumber = sequenceNumber
         self.scenario = scenario
@@ -163,6 +167,7 @@ public struct StabilityFinderStepResult: Codable, Equatable, Sendable {
         self.durationMilliseconds = Self.milliseconds(from: startedAt, to: finishedAt)
         self.outcome = outcome
         self.assertions = assertions
+        self.liveEvidence = liveEvidence
     }
 
     private static func milliseconds(from startedAt: Date, to finishedAt: Date) -> UInt64 {
@@ -238,6 +243,7 @@ public enum StabilityFinderRunValidationError: Error, Codable, Equatable, Sendab
 /// has both Finder-visible and server-authoritative assertion records.
 public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
     public static let currentSchemaVersion: UInt16 = 1
+    public static let liveSchemaVersion: UInt16 = 2
 
     public let schemaVersion: UInt16
     public let correlationID: UUID
@@ -257,7 +263,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         preflightResults: [StabilityFinderPreflightResult],
         stepResults: [StabilityFinderStepResult]
     ) throws {
-        guard schemaVersion == Self.currentSchemaVersion else {
+        guard [Self.currentSchemaVersion, Self.liveSchemaVersion].contains(schemaVersion) else {
             throw StabilityFinderRunValidationError.unsupportedSchemaVersion(schemaVersion)
         }
         guard finishedAt >= startedAt else {
@@ -266,6 +272,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
 
         try Self.validatePreflight(
             preflightResults,
+            schemaVersion: schemaVersion,
             runStartedAt: startedAt,
             runFinishedAt: finishedAt
         )
@@ -322,7 +329,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
             forKey: .stepSummary
         )
 
-        guard schemaVersion == Self.currentSchemaVersion else {
+        guard [Self.currentSchemaVersion, Self.liveSchemaVersion].contains(schemaVersion) else {
             throw StabilityFinderRunValidationError.unsupportedSchemaVersion(schemaVersion)
         }
         guard finishedAt >= startedAt else {
@@ -330,6 +337,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         }
         try Self.validatePreflight(
             preflightResults,
+            schemaVersion: schemaVersion,
             runStartedAt: startedAt,
             runFinishedAt: finishedAt
         )
@@ -375,6 +383,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
 
     private static func validatePreflight(
         _ results: [StabilityFinderPreflightResult],
+        schemaVersion: UInt16,
         runStartedAt: Date,
         runFinishedAt: Date
     ) throws {
@@ -382,10 +391,11 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         for result in results where !seen.insert(result.check).inserted {
             throw StabilityFinderRunValidationError.duplicatePreflightResult(result.check)
         }
-        for check in StabilityFinderPreflightCheck.allCases where !seen.contains(check) {
+        let required = StabilityFinderPreflightCheck.allCases.filter { schemaVersion >= Self.liveSchemaVersion || seen.contains(.screenRecordingPermission) || $0 != .screenRecordingPermission }
+        for check in required where !seen.contains(check) {
             throw StabilityFinderRunValidationError.missingPreflightResult(check)
         }
-        for (expected, actual) in zip(StabilityFinderPreflightCheck.allCases, results) {
+        for (expected, actual) in zip(required, results) {
             guard expected == actual.check else {
                 throw StabilityFinderRunValidationError.preflightOutOfSequence(
                     expected: expected,
@@ -410,7 +420,8 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
             return
         }
         let isValid = switch (check, reason) {
-        case (.accessibilityPermission, .accessibilityConsentRequired),
+        case (.screenRecordingPermission, .screenRecordingConsentRequired),
+             (.accessibilityPermission, .accessibilityConsentRequired),
              (.finderAutomationPermission, .finderAutomationConsentRequired),
              (.fileProviderConsent, .fileProviderConsentRequired):
             true

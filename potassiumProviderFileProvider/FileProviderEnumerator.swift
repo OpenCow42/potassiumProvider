@@ -17,6 +17,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         if let diagnosticRecorder {
             Task {
                 let span = await ProviderDiagnosticSpan.start(
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
                     source: .fileProviderExtension,
                     operation: .enumeratorInitialize,
                     recorder: diagnosticRecorder
@@ -31,6 +32,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         if let diagnosticRecorder {
             Task {
                 let span = await ProviderDiagnosticSpan.start(
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
                     source: .fileProviderExtension,
                     operation: .enumeratorInvalidate,
                     recorder: diagnosticRecorder
@@ -46,6 +48,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         FileProviderLog.enumeration.debug("enumerateItems start container(\(self.containerItemIdentifier.rawValue, privacy: .public)) kind(\(self.snapshotContainerIdentifier, privacy: .public)) cursorPresent(\(cursor != nil, privacy: .public))")
         Task {
             let span = await ProviderDiagnosticSpan.start(
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
                 source: .fileProviderExtension,
                 operation: .enumerateItems,
                 optionShape: cursor == nil ? [.pageLimit] : [.paginationCursor, .pageLimit],
@@ -74,6 +77,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     return
                 }
                 let itemPage = try await self.listItems(runtime: loadedRuntime, startingAt: page)
+                if self.containerItemIdentifier == .workingSet {
+                    await self.recordWorkingSetMembers(itemPage.items, runtime: loadedRuntime)
+                }
                 let enumeratesTrash = self.containerItemIdentifier == .trashContainer
                 observer.didEnumerate(itemPage.items.map {
                     FileProviderItem(
@@ -115,6 +121,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
         Task {
             let span = await ProviderDiagnosticSpan.start(
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
                 source: .fileProviderExtension,
                 operation: .currentSyncAnchor,
                 recorder: diagnosticRecorder
@@ -203,6 +210,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         FileProviderLog.enumeration.debug("enumerateChanges start container(\(self.containerItemIdentifier.rawValue, privacy: .public)) requestedAnchorPresent(\(requestedAnchor != nil, privacy: .public))")
         Task {
             let span = await ProviderDiagnosticSpan.start(
+                    itemIdentifier: self.containerItemIdentifier.rawValue,
                 source: .fileProviderExtension,
                 operation: .enumerateChanges,
                 optionShape: requestedAnchor == nil ? [] : [.paginationCursor],
@@ -719,6 +727,20 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
+    /// Emits membership only for items delivered by a real working-set enumeration.
+    private func recordWorkingSetMembers(_ items: [KDriveRemoteItem], runtime: FileProviderRuntime) async {
+        for item in items {
+            let member = await ProviderDiagnosticSpan.start(
+                itemIdentifier: String(item.id), source: .fileProviderExtension, operation: .workingSetRefresh,
+                recorder: runtime.eventStore as? any ProviderDiagnosticRecording
+            )
+            let metadataAlias = (try? StabilityDiagnosticIdentity.activeRun()).map {
+                StabilityDiagnosticIdentity.metadataAlias(for: item, runID: $0.runID)
+            }
+            await member.complete(statusClass: .success, itemMetadataAlias: metadataAlias)
+        }
+    }
+
     private func enumerateWorkingSetChanges(
         for observer: NSFileProviderChangeObserver,
         runtime: FileProviderRuntime,
@@ -736,6 +758,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             throw NSFileProviderError(.syncAnchorExpired)
         }
         emit(result.changes, to: observer, rootFileID: runtime.configuration.rootFileID)
+        await recordWorkingSetMembers(result.changes.updatedItems, runtime: runtime)
         FileProviderLog.enumeration.info("enumerateWorkingSetChanges success updated(\(result.changes.updatedItems.count, privacy: .public)) deleted(\(result.changes.deletedItemIDs.count, privacy: .public))")
         await diagnosticSpan.complete(
             statusClass: .success,

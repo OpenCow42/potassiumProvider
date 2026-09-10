@@ -56,7 +56,10 @@ data.
 - [File Provider Cleanup](doc/FILE_PROVIDER_CLEANUP.md): local development
   uninstall script, reset modes, stale registration repair, and safety boundary.
 - [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md): schemes,
-  dependencies, commands, and local-state caveats.
+  dependencies, commands, and the opt-in live Finder suite using the saved
+  Keychain account and an isolated lab inside `Private`.
+- [Stability implementation audit](doc/STABILITY_LOOP_AUDIT.md): retained live
+  failures, focused fixes, finalized validation results, and remaining gates.
 
 ## Project Shape
 

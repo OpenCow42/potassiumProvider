@@ -4,6 +4,34 @@ import Testing
 
 @Suite("Stability Lab safety")
 struct StabilityLabSafetyTests {
+    @Test func markerSurvivesRemoteAndDomainDateEncodings() throws {
+        var marker = makeMarker()
+        // Simulate a pre-fix remote marker containing subsecond precision.
+        marker.createdAt = Date(timeIntervalSince1970: 1_800_000_000.875)
+        let remote = try JSONDecoder().decode(StabilityLabOwnershipMarker.self, from: JSONEncoder().encode(marker))
+        let domainEncoder = JSONEncoder(); domainEncoder.dateEncodingStrategy = .iso8601
+        let domainDecoder = JSONDecoder(); domainDecoder.dateDecodingStrategy = .iso8601
+        let local = try domainDecoder.decode(StabilityLabOwnershipMarker.self, from: domainEncoder.encode(marker))
+        #expect(remote == local)
+        #expect(remote.identifier == marker.identifier)
+        #expect(remote.rootFileID == marker.rootFileID)
+    }
+
+    @Test func privateParentMustBeVerifiedAndCannotBeTheLabRoot() {
+        var input = makeInput(marker: makeMarker())
+        input.expectedMarker.parentFileID = 10
+        input.root.parentFileID = 10
+        input.root.ownershipMarker = input.expectedMarker
+        #expect(!StabilityLabSafety.preflight(input).isAllowed)
+        input.root.verifiedPrivateParentFileID = 10
+        #expect(StabilityLabSafety.preflight(input).isAllowed)
+        input.expectedMarker.parentFileID = input.expectedMarker.rootFileID
+        input.root.parentFileID = input.expectedMarker.rootFileID
+        input.root.verifiedPrivateParentFileID = input.expectedMarker.rootFileID
+        input.root.ownershipMarker = input.expectedMarker
+        #expect(!StabilityLabSafety.preflight(input).isAllowed)
+    }
+
     @Test func ownershipMarkerRoundTripsWithoutAccountOrPathFields() throws {
         let marker = makeMarker()
         let data = try JSONEncoder().encode(marker)

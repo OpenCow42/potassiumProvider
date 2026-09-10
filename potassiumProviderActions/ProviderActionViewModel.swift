@@ -293,7 +293,10 @@ final class ProviderActionViewModel: ObservableObject {
         message = nil
         defer { isWorking = false }
         do {
-            try await operation()
+            let subject = item.flatMap { StabilityDiagnosticIdentity.activeAlias(for: String($0.id)) }
+            try await ProviderDiagnosticCorrelationContext.$subjectAlias.withValue(subject) {
+                try await operation()
+            }
         } catch {
             errorMessage = error.localizedDescription
             await recordFailure(error)

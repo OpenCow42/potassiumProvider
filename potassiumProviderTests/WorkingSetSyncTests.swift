@@ -4,6 +4,78 @@ import PotassiumProviderCore
 
 @Suite(.serialized)
 struct WorkingSetSyncTests {
+    @Test func immediateMaterializationPollsCannotOverlapEachOther() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let remote = WorkingSetRemoteMock(relevantItems: [], advancedResponses: [:], itemByID: [:], partialResults: [],
+            relevantDelay: .milliseconds(40))
+        let coordinator = makeCoordinator(remote: remote, store: store)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<4 {
+                group.addTask { _ = try await coordinator.poll(now: Date(timeIntervalSince1970: 1_000), minimumInterval: 0) }
+            }
+            try await group.waitForAll()
+        }
+        #expect(await remote.relevantRequestCount() == 4)
+        #expect(await remote.peakConcurrentRelevantRequests() == 1)
+    }
+    @Test(arguments: [false, true])
+    func equivalentServerResultPreservesNewerGenerationButDifferentContentsStillReject(differentContents: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        let item = makeWorkingSetItem(id: 30, name: "Server.txt", updatedAt: 1_000)
+        let current = KDriveSnapshot(anchor: "newer-local-anchor", serverCursor: "same-server-cursor", isFullyEnumerated: true,
+            usesAdvancedListing: true, items: [item])
+        try await store.save(current, domainIdentifier: "domain-1", containerIdentifier: "10")
+        let prepared = KDriveSnapshot(anchor: "prepared-local-anchor", serverCursor: "same-server-cursor", isFullyEnumerated: true,
+            usesAdvancedListing: true, items: differentContents ? [] : [item])
+        let updates = [KDriveWorkingSetContainerSnapshotUpdate(containerIdentifier: "10", snapshot: prepared,
+            condition: .matching(anchor: "old-local-anchor", serverCursor: "old-server-cursor"))]
+        let now = Date(timeIntervalSince1970: 2_000)
+        if differentContents {
+            await #expect(throws: KDriveSnapshotStoreError.staleSnapshot(domainIdentifier: "domain-1", containerIdentifier: "10")) {
+                try await store.commitWorkingSetPoll(domainIdentifier: "domain-1", containerSnapshotUpdates: updates,
+                    items: [], changes: KDriveSnapshotChangeSet(updatedItems: [], deletedItemIDs: [item.id]), completedAt: now)
+            }
+            #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == nil)
+        } else {
+            _ = try await store.commitWorkingSetPoll(domainIdentifier: "domain-1", containerSnapshotUpdates: updates,
+                items: [item], changes: KDriveSnapshotChangeSet(updatedItems: [item], deletedItemIDs: []), completedAt: now)
+            #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == now)
+        }
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "10") == current)
+    }
+    @Test(arguments: [false, true])
+    func concurrentEnumerationIsRetriedWithoutAdvancingARejectedWatermark(persistentRace: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        try await store.replaceMaterializedItems([KDriveMaterializedItem(fileID: 10, isContainer: true)], domainIdentifier: "domain-1")
+        let old = makeWorkingSetItem(id: 30, name: "Old.txt", updatedAt: 1_000)
+        let fresh = makeWorkingSetItem(id: 31, name: "Fresh.txt", updatedAt: 1_001)
+        let race = WorkingSetSnapshotRace(store: store, item: fresh, persistent: persistentRace)
+        let remote = WorkingSetRemoteMock(relevantItems: [], advancedResponses: [
+            "<initial>": KDriveAdvancedItemPage(items: [old], actions: [], actionItems: [], nextCursor: "initial", hasMore: false),
+            "concurrent": KDriveAdvancedItemPage(items: [], actions: [], actionItems: [], nextCursor: "final", hasMore: false),
+        ], itemByID: [:], partialResults: [], beforePartial: { try await race.inject() })
+        let coordinator = makeCoordinator(remote: remote, store: store)
+        let now = Date(timeIntervalSince1970: 2_000)
+        if persistentRace {
+            await #expect(throws: KDriveSnapshotStoreError.staleSnapshot(domainIdentifier: "domain-1", containerIdentifier: "10")) {
+                try await coordinator.poll(now: now)
+            }
+            #expect(await remote.relevantRequestCount() == 3)
+            #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == nil)
+            #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "10")?.items == [fresh])
+        } else {
+            let result = try await coordinator.poll(now: now)
+            #expect(result.snapshot?.items == [fresh])
+            #expect(await remote.relevantRequestCount() == 2)
+            #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == now)
+        }
+    }
     @Test func sqliteStorePersistsMaterializationThrottleAndChainedChanges() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("working-set-store-tests-\(UUID().uuidString)", isDirectory: true)
@@ -355,12 +427,16 @@ struct WorkingSetSyncTests {
 }
 
 private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteProviding {
+    private let beforePartial: (@Sendable () async throws -> Void)?
     private let relevantItems: [KDriveRemoteItem]
     private let advancedResponses: [String: KDriveAdvancedItemPage]
     private let itemByID: [Int: KDriveRemoteItem]
     private let partialResults: [KDrivePartialActivityResult]
     private let failsPartialListing: Bool
     private var relevantCalls = 0
+    private let relevantDelay: Duration
+    private var activeRelevantCalls = 0
+    private var peakRelevantCalls = 0
     private var partialFileIDs: [Int] = []
     private var partialSince: Date?
 
@@ -369,21 +445,30 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
         advancedResponses: [String: KDriveAdvancedItemPage],
         itemByID: [Int: KDriveRemoteItem],
         partialResults: [KDrivePartialActivityResult],
-        failsPartialListing: Bool = false
+        failsPartialListing: Bool = false,
+        beforePartial: (@Sendable () async throws -> Void)? = nil,
+        relevantDelay: Duration = .zero
     ) {
         self.relevantItems = relevantItems
         self.advancedResponses = advancedResponses
         self.itemByID = itemByID
         self.partialResults = partialResults
         self.failsPartialListing = failsPartialListing
+        self.beforePartial = beforePartial
+        self.relevantDelay = relevantDelay
     }
 
     func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
         relevantCalls += 1
+        activeRelevantCalls += 1
+        peakRelevantCalls = max(peakRelevantCalls, activeRelevantCalls)
+        defer { activeRelevantCalls -= 1 }
+        if relevantDelay > .zero { try await Task.sleep(for: relevantDelay) }
         return relevantItems
     }
 
     func listPartialActivities(driveID: Int, fileIDs: [Int], since: Date) async throws -> [KDrivePartialActivityResult] {
+        try await beforePartial?()
         partialFileIDs.append(contentsOf: fileIDs)
         partialSince = since
         if failsPartialListing { throw WorkingSetRemoteMockError.unimplemented }
@@ -393,6 +478,7 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     func requestedPartialFileIDs() -> [Int] { partialFileIDs.sorted() }
     func requestedPartialSince() -> Date? { partialSince }
     func relevantRequestCount() -> Int { relevantCalls }
+    func peakConcurrentRelevantRequests() -> Int { peakRelevantCalls }
 
     func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
         guard let item = itemByID[fileID] else { throw WorkingSetRemoteMockError.unimplemented }
@@ -419,6 +505,23 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     func updateModificationDate(driveID: Int, fileID: Int, date: Date) async throws { throw WorkingSetRemoteMockError.unimplemented }
     func trashItem(driveID: Int, fileID: Int) async throws { throw WorkingSetRemoteMockError.unimplemented }
     func deleteTrashedItem(driveID: Int, fileID: Int) async throws { throw WorkingSetRemoteMockError.unimplemented }
+}
+
+private actor WorkingSetSnapshotRace {
+    let store: KDriveSnapshotSQLiteStore
+    let item: KDriveRemoteItem
+    let persistent: Bool
+    var injected = false
+    init(store: KDriveSnapshotSQLiteStore, item: KDriveRemoteItem, persistent: Bool) {
+        self.store = store; self.item = item; self.persistent = persistent
+    }
+    func inject() async throws {
+        guard persistent || !injected else { return }
+        injected = true
+        try await store.save(KDriveSnapshot(anchor: UUID().uuidString, serverCursor: "concurrent",
+            isFullyEnumerated: true, usesAdvancedListing: true, items: [item]),
+            domainIdentifier: "domain-1", containerIdentifier: "10")
+    }
 }
 
 private enum WorkingSetRemoteMockError: Error {

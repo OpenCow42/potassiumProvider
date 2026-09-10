@@ -220,6 +220,20 @@ both "invalid" and "cursor".
 The partial-activity request is batched at 200 identifiers and uses the last
 durable successful-poll watermark. It includes create, delete, trash, restore,
 update, rename, move, favorite, and share actions relevant to working-set state.
+Its expansion is `with=file`, matching the upstream iOS endpoint. The former
+`file,file.etag` expansion is unsupported by the known route contract. A live
+422 motivated this correction; the live rerun must establish whether it is the
+only cause. Failed partial responses still cannot advance a durable watermark.
+
+Live rerun `0965c244-7ea6-457e-bc34-56cba76a1033` recorded ten successful
+partial-activity requests and no repeated 422 after the expansion correction.
+Directory `last-modified` calls independently returned 400, while a generated
+regular file accepted its unchanged timestamp. Plaintext directory timestamp
+mutations therefore refetch and return the authoritative server date without
+issuing a file-only timestamp write. The local directory date resolves to the
+server value under Apple's returned-field propagation contract. An earlier
+experiment omitting the optional date did not stop callbacks and was reverted.
+Regular-file timestamp requests retain their behavior.
 
 ## Opaque vault mapping
 

@@ -5,6 +5,19 @@ import Testing
 
 @Suite("Version-pinned kDrive API evidence", .serialized)
 struct KDriveAPIEvidenceTests {
+    @Test func partialActivitiesRequestsOnlySupportedFileExpansion() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "inherit")
+        defer { session.invalidateAndCancel() }
+        #expect(try await service.listPartialActivities(driveID: 11, fileIDs: [22], since: Date(timeIntervalSince1970: 100)).isEmpty)
+        let captured = try #require(await KDriveAPIEvidenceURLProtocol.recordedRequests().first)
+        let url = try #require(captured.request.url)
+        #expect(url.path == "/3/drive/11/files/listing/partial")
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems == [URLQueryItem(name: "with", value: "file")])
+        let body = try #require(captured.body)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let files = try #require(json["files"] as? [[String: Int]])
+        #expect(files == [["id": 22, "from_date": 100]])
+    }
     @Test("Share-link access supports inherit")
     func shareLinkAccessSupportsInherit() async throws {
         #expect(KDriveShareLinkConfiguration.Access.allCases.contains(.inherit))
@@ -269,6 +282,9 @@ private actor KDriveAPIEvidenceTransportState {
     }
 
     func responseBody(for request: URLRequest) -> Data {
+        if request.url?.path.hasSuffix("/listing/partial") == true {
+            return Data("{\"result\":\"success\",\"data\":[]}".utf8)
+        }
         if request.httpMethod == "PUT" {
             return Data(#"{"result":"success","data":true}"#.utf8)
         }

@@ -40,6 +40,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     private static let log = ProviderLog.app
     static let encryptedVaultRiskWarningDelaySeconds: TimeInterval = 5
 
+    private(set) var lastDriveDiscoveryErrorClass: ProviderDiagnosticErrorClass?
+    private(set) var lastDriveDiscoveryErrorCode: Int?
+
     @Published private(set) var accounts: [ProviderAccount] = []
     @Published private(set) var drivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:]
     @Published private(set) var domains: [ProviderDomainConfiguration] = []
@@ -475,6 +478,8 @@ final class PotassiumProviderAppModel: ObservableObject {
             return
         }
 
+        lastDriveDiscoveryErrorClass = nil
+        lastDriveDiscoveryErrorCode = nil
         loadingDriveAccountIdentifiers.insert(accountIdentifier)
         defer { loadingDriveAccountIdentifiers.remove(accountIdentifier) }
 
@@ -495,6 +500,8 @@ final class PotassiumProviderAppModel: ObservableObject {
                 ? "No usable kDrives found for \(account.displayName)."
                 : "Loaded \(usableDrives.count) usable kDrive\(usableDrives.count == 1 ? "" : "s") for \(account.displayName)."
         } catch {
+            lastDriveDiscoveryErrorClass = ProviderDiagnosticErrorClassifier.classify(error)
+            lastDriveDiscoveryErrorCode = KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode
             await recordAppFailure(
                 kind: .driveDiscovery,
                 summary: "Could not load kDrives.",
@@ -602,9 +609,13 @@ final class PotassiumProviderAppModel: ObservableObject {
             let token = try await usableToken(accountIdentifier: accountIdentifier)
             let remote = fileProviderFactory(token.accessToken)
             let coordinator = StabilityLabRemoteCoordinator(remote: remote)
+            let privateParentID = try await KDrivePrivateDirectoryResolver.resolveFileID(
+                driveID: drive.id, rootFileID: ProviderConstants.defaultRootFileID, remote: remote
+            )
             let provisioned = try await coordinator.provision(
                 driveID: drive.id,
                 driveRootFileID: ProviderConstants.defaultRootFileID,
+                privateParentFileID: privateParentID,
                 registeredDomainsProvider: { [weak self] in
                     guard let self else { throw StabilityLabAppError.domainIsolationRequired }
                     return try await self.provisioningDomainEvidence()
@@ -650,9 +661,26 @@ final class PotassiumProviderAppModel: ObservableObject {
             statusMessage = "Stability Lab provisioned. Verify it before starting a Finder run."
         } catch {
             await refreshDomainListAfterStabilityLabOperation()
+#if STABILITY
+            print("stability lab failure: type \(String(reflecting: type(of: error))); class \(ProviderDiagnosticErrorClassifier.classify(error).rawValue); code \(KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode ?? 0)")
+#endif
             errorMessage = stabilityLabMessage(for: error)
             statusMessage = nil
         }
+    }
+
+    /// Retry only registration for a previously provisioned, positively identified lab.
+    func resumeStabilityLabRegistration() async throws {
+        guard beginStabilityLabOperation() else { throw StabilityLabAppError.domainIsolationRequired }
+        defer { isPerformingStabilityLabOperation = false }
+        let context = try await makeStabilityLabContext(requireRegisteredDomain: false)
+        _ = try await context.coordinator.observe(configuration: context.remoteConfiguration)
+        let registered = try await domainRegistrar.registeredDomainIdentifiers()
+        guard registered.isEmpty || registered == [context.domain.domainIdentifier] else {
+            throw StabilityLabAppError.domainIsolationRequired
+        }
+        if registered.isEmpty { try await domainRegistrar.addDomain(for: context.domain) }
+        _ = try await verifyStabilityLabWhileHoldingOperationGate()
     }
 
     func verifyStabilityLab() async {

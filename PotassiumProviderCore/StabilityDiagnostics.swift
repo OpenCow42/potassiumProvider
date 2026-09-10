@@ -166,6 +166,7 @@ public enum ProviderDiagnosticStatusClass: String, Codable, Equatable, Sendable 
 }
 
 public enum ProviderDiagnosticErrorClass: String, Codable, Equatable, Sendable {
+    case concurrentSnapshot
     case authentication
     case cancellation
     case conflict
@@ -185,12 +186,19 @@ public enum ProviderDiagnosticErrorClass: String, Codable, Equatable, Sendable {
 /// caller cannot accidentally persist a token, URL, item name, path, body, or
 /// account identifier.
 public struct ProviderDiagnosticEvent: Codable, Equatable, Sendable {
-    public static let schemaVersion = 2
+    public static let schemaVersion = 3
 
     public let schemaVersion: Int
     public let id: UUID
     public let occurredAt: Date
     public let spanID: UUID?
+    public let parentSpanID: UUID?
+    public let subjectAlias: UUID?
+    public let itemMetadataAlias: UUID?
+    public let processInstanceID: UUID?
+    public let processCodeHash: String?
+    public let errorCode: Int?
+    public let validationFields: [ProviderDiagnosticValidationField]?
     public let correlationID: UUID
     public let source: ProviderDiagnosticSource
     public let operation: ProviderDiagnosticOperation
@@ -210,6 +218,13 @@ public struct ProviderDiagnosticEvent: Codable, Equatable, Sendable {
         id: UUID = UUID(),
         occurredAt: Date = Date(),
         spanID: UUID? = nil,
+        parentSpanID: UUID? = nil,
+        subjectAlias: UUID? = nil,
+        itemMetadataAlias: UUID? = nil,
+        processInstanceID: UUID? = nil,
+        processCodeHash: String? = nil,
+        errorCode: Int? = nil,
+        validationFields: [ProviderDiagnosticValidationField]? = nil,
         correlationID: UUID,
         source: ProviderDiagnosticSource,
         operation: ProviderDiagnosticOperation,
@@ -229,6 +244,15 @@ public struct ProviderDiagnosticEvent: Codable, Equatable, Sendable {
         self.id = id
         self.occurredAt = occurredAt
         self.spanID = spanID
+        self.parentSpanID = parentSpanID
+        self.subjectAlias = subjectAlias
+        self.itemMetadataAlias = itemMetadataAlias
+        self.processInstanceID = processInstanceID
+        self.processCodeHash = processCodeHash.flatMap { value in
+            value.count == 40 && value.allSatisfy(\.isHexDigit) ? value.lowercased() : nil
+        }
+        self.errorCode = errorCode
+        self.validationFields = validationFields
         self.correlationID = correlationID
         self.source = source
         self.operation = operation
@@ -656,11 +680,18 @@ public actor StabilityRunCoordinator {
             guard SecurePOSIXFile.pathKind(handle.finderReportURL) == .missing else {
                 throw ProviderDiagnosticStoreError.finderEvidenceAlreadyFinalized(handle.runID)
             }
+            guard SecurePOSIXFile.pathKind(handle.directoryURL.appendingPathComponent("diagnostic-health.failed")) == .missing else {
+                throw ProviderDiagnosticStoreError.malformedRecord
+            }
             try Self.validateFinderObservations(observations, report: report)
-            try Self.validateFinderDiagnostics(
-                try Self.readDiagnosticEvents(from: handle.eventsURL, decoder: decoder),
-                report: report
-            )
+            let timeline = try Self.readDiagnosticEvents(from: handle.eventsURL, decoder: decoder).sorted {
+                $0.occurredAt == $1.occurredAt ? $0.id.uuidString < $1.id.uuidString : $0.occurredAt < $1.occurredAt
+            }
+            try Self.validateFinderDiagnostics(timeline, report: report)
+            if report.schemaVersion >= StabilityFinderRunReport.liveSchemaVersion {
+                try SecurePOSIXFile.replaceAtomically(try encoder.encode(timeline),
+                    at: handle.directoryURL.appendingPathComponent("diagnostic-timeline.json"), permissions: 0o400)
+            }
 
             let assertionRecords = report.preflightResults.map {
                 FinderAssertionRecord.preflight($0)
@@ -835,10 +866,11 @@ public actor StabilityRunCoordinator {
         }
     }
 
-    private static func readDiagnosticEvents(
+    public static func readDiagnosticEvents(
         from eventsURL: URL,
-        decoder: JSONDecoder
+        decoder suppliedDecoder: JSONDecoder? = nil
     ) throws -> [ProviderDiagnosticEvent] {
+        let decoder = suppliedDecoder ?? makeDecoder()
         let data = try LockedJSONLFile.read(
             from: eventsURL,
             maximumBytes: defaultMaximumTotalBytes
@@ -871,6 +903,10 @@ public actor StabilityRunCoordinator {
         report: StabilityFinderRunReport
     ) throws {
         for step in report.stepResults where step.outcome == .passed {
+            if report.schemaVersion == StabilityFinderRunReport.liveSchemaVersion {
+                try StabilityLiveEvidenceValidator.validate(step: step, diagnostics: diagnostics)
+                continue
+            }
             guard let requirement = step.scenario.diagnosticRequirement,
                   requirement.operationGroups.isEmpty == false,
                   requirement.operationGroups.allSatisfy({ operationGroup in
@@ -1238,7 +1274,13 @@ public actor KDriveProviderEventJSONLStore: KDriveProviderEventStoring,
             guard SecurePOSIXFile.pathKind(summaryURL) == .missing else {
                 throw ProviderDiagnosticStoreError.runAlreadyFinished(runID)
             }
-            try LockedJSONLFile.append(data, to: eventsURL, maximumBytes: maximumEventBytes)
+            do {
+                try LockedJSONLFile.append(data, to: eventsURL, maximumBytes: maximumEventBytes)
+            } catch {
+                // Persist a content-free health latch: a later successful write cannot hide a gap.
+                try? SecurePOSIXFile.createExclusively(Data(), at: eventsURL.deletingLastPathComponent().appendingPathComponent("diagnostic-health.failed"), permissions: 0o400)
+                throw error
+            }
         }
     }
 
@@ -1583,7 +1625,7 @@ private enum LockedJSONLFile {
     }
 }
 
-private enum SecurePOSIXFile {
+enum SecurePOSIXFile {
     enum PathKind: Equatable {
         case missing
         case regularFile

@@ -325,10 +325,8 @@ struct FinderStabilityCommandTests {
         ) as? [String: Any])
 
         #expect(stability["com.apple.security.automation.apple-events"] as? Bool == true)
-        #expect(
-            stability["com.apple.security.temporary-exception.apple-events"] as? [String]
-                == ["com.apple.finder"]
-        )
+        #expect(stability["com.apple.security.temporary-exception.apple-events"] == nil)
+        #expect(projectText.contains("\"ENABLE_APP_SANDBOX[sdk=macosx*]\" = NO;"))
         #expect(ordinary["com.apple.security.automation.apple-events"] == nil)
         #expect(ordinary["com.apple.security.temporary-exception.apple-events"] == nil)
     }

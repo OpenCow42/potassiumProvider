@@ -202,7 +202,7 @@ struct StabilityFinderEvidenceTests {
             from: Data(contentsOf: handle.finderReportURL)
         )
         #expect(decodedReport == report)
-        #expect(try Data(contentsOf: handle.assertionsURL).split(separator: 0x0A).count == 21)
+        #expect(try Data(contentsOf: handle.assertionsURL).split(separator: 0x0A).count == StabilityFinderPreflightCheck.allCases.count + StabilityFinderScenario.allCases.count)
         #expect(try Data(contentsOf: handle.observationsURL).split(separator: 0x0A).count == 32)
 
         for url in [handle.finderReportURL, handle.assertionsURL, handle.observationsURL] {

@@ -15,6 +15,78 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The latest live run passed ten scenarios through Trash, then failed Restore
+because the metadata callback queried the active-item endpoint for a trashed
+identity (HTTP 404 mapped to `.cannotSynchronize`). A Trash-aware metadata
+lookup remains unimplemented and unvalidated. The failure spans and preserved
+bundle are recorded in `STABILITY_LOOP_AUDIT.md`. No restore/permanent-delete
+acceptance or change to the open CR-013 server guarantee is claimed.
+
+Immediate materialization notifications, working-set enumeration, and the timer
+can request overlapping polls; `minimumInterval: 0` is not an in-flight lock.
+Polls are serialized per domain with the existing cancellation-aware
+`AsyncOperationLimiter`. The registry releases an idle domain after its last
+caller. Snapshot transactions and the bounded enumeration-race retries remain
+required. `WorkingSetSyncTests.immediateMaterializationPollsCannotOverlapEachOther`
+checks four simultaneous forced polls and a maximum of one active remote request.
+
+The live continuation also exposed redundant queued materialization polls taking
+up to 61 seconds. Pending materialization requests may reuse a successful poll
+only when that poll started after their materialized-set observations were
+persisted. A request arriving during remote I/O requires a subsequent poll;
+failed or throttled polls cannot satisfy queued observations. Other explicit
+polls retain their original behavior. `WorkingSetPollSchedulingTests` covers
+coalescing, failed-first-poll recovery, arrivals during I/O, and cancellation.
+No snapshot transaction guard or successful watermark is bypassed.
+
+`StabilityConflictBarrierTests` isolates the Stability-only conflict barrier from
+the live active-run pointer and covers exact item/correlation matching, wrong-run
+release rejection, successful release, cancellation, and deadline expiry. This
+does not change the server's conditional mutation contract or close CR-013.
+
+2026-09-10 live follow-up: real folder navigation reproduced a working-set
+snapshot compare-and-swap rejection after successful remote calls. The atomic
+rollback is retained. A claimed poll may repeat the full read/prepare/commit up
+to two times after `staleSnapshot`, with cancellable backoff and observable
+`concurrentSnapshot` checkpoints; it never retries a stale write or advances the
+watermark on a rejected transaction. Persistent contention still fails.
+`WorkingSetSyncTests.concurrentEnumerationIsRetriedWithoutAdvancingARejectedWatermark`
+covers both convergence and exhausted retries with actual concurrent SQLite saves.
+Current live validation is recorded in `STABILITY_LOOP_AUDIT.md`. CR-013 remains open.
+
+If concurrent enumeration already committed the exact prepared server result,
+the working-set transaction retains that newer container generation and commits
+its change batch without rewriting the container. This exception requires both
+snapshots to be fully enumerated advanced listings, the same non-nil server cursor,
+and equality of every item and metadata field independent of row order. Different
+contents, missing cursors, or different cursors still reject and roll back.
+`WorkingSetSyncTests.equivalentServerResultPreservesNewerGenerationButDifferentContentsStillReject`
+checks unchanged local generation/anchor and rejected deletions with equal cursors.
+
+The live comparison in `e02376a2-19db-45c5-b213-72165a517fe4` accepted a regular
+file's unchanged timestamp and rejected date updates for two positively
+correlated directory subjects with HTTP 400. Omitting the optional directory
+date did not stop the callbacks and that experiment was reverted. Directory
+timestamps now resolve to a freshly fetched authoritative server value without
+calling the file-only mutation route. Apple's SDK contract for `modifyItem`
+explicitly propagates a differing returned field to disk when it is not pending.
+This applies to automatic and explicitly touched plaintext directory dates:
+the server value wins. File dates and encrypted-vault metadata are unchanged.
+`KDriveMutationCoordinatorTests.directoryTimestampResolvesToServerValueWithoutFileOnlyMutation`
+covers both directory spellings; `fileTimestampMutationIsAppliedAndRefetched`
+protects file behavior. Repeated live passes of the first five scenarios,
+including `abb74c1a-43a8-4f04-a994-53fbf9042656`, verified this fix without
+recurrence of the directory date 400. Full 16-scenario acceptance remains open.
+
+2026-09-10 live diagnostic follow-up: partial-activity requests now use the
+upstream `with=file` expansion instead of `file,file.etag`, with exact request
+coverage in `KDriveAPIEvidenceTests.partialActivitiesRequestsOnlySupportedFileExpansion`.
+The first live navigation run recorded partial-activity 422 and standalone
+modification-date 400 failures. A failed response still leaves the working-set
+watermark unchanged; no error is suppressed and no destructive decision changes.
+The reproduced request defects have live rerun evidence above. CR-013 remains
+open; no underlying server permanent-delete guarantee has changed.
+
 - Integration reviewed: 2026-08-10.
 - Merge inputs: encrypted-vault head `a0e0839` and `origin/main` at `f042b7e`.
 - macOS `build-for-testing` and the complete `potassiumProviderTests` target
@@ -309,19 +381,34 @@ Infomaniak's public API contract documents the primitives used here:
 `revisedAt` and size are diagnostic. Legacy timestamp versions and missing
 ETags fail closed into preserve-both or `.failOnConflict` behavior.
 
+### 2026-09-10 live-run implementation evidence
+
+The PR-based live runner now uses Finder/Accessibility and TextEdit, item aliases,
+parent spans, process/build identity, strict v2 report validation, and the cancellable
+Stability-only post-preflight conflict barrier. New lab roots are created under
+verified `Private` using the authorized existing OAuth Keychain account. Initial
+live provisioning exposed fractional-date ownership-marker mismatch; canonical
+seconds plus registration resume corrected it, with codec/parent safety regression
+coverage. Real authentication, marker readback, and domain registration succeeded.
+The first permission-blocked run records zero passed scenarios. Live 16/16 cold/warm
+acceptance remains outstanding until finalized bundles demonstrate it. See the
+implementation audit for updated run/test results. `CR-013` is still **Open**.
+
 ## Legacy Plaintext Core Mutation Truth Table
 
 ### Stability Lab Provisioning And Cleanup
 
 | Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
 | --- | --- | --- | --- | --- | --- |
-| Provision lab root | No saved or registered domain; selected drive has one internal non-maintenance discovery record; explicit drive root resolves as a directory | Create one unique direct child, upload the fixed random marker with `conflict=error`, re-read both, persist exact root/marker evidence, then register File Provider | Creates a directory and marker file | Low. Internal discovery proves membership, while created-and-matched root/marker evidence proves lab ownership. Partial provisioning is never auto-cleaned, so a failed local save/registration can leave an orphaned development folder but cannot delete unrelated data. | Inspect the dedicated development drive and remove an abandoned folder manually only after verifying its marker. |
+| Provision lab root | No saved or registered domain; selected drive has one internal non-maintenance discovery record; explicit drive root resolves as a directory | Verify the server-created `Private` directory and its drive-root parent, create one unique child below it, upload the fixed random marker with `conflict=error`, re-read both, persist exact root/marker evidence, then register File Provider | Creates a directory and marker file | Low. Internal discovery proves membership, while created-and-matched root/marker evidence proves lab ownership. Partial provisioning is never auto-cleaned, so a failed local save/registration can leave an orphaned development folder but cannot delete unrelated data. | Inspect the dedicated development drive and remove an abandoned folder manually only after verifying its marker. |
 | Marker collision or incomplete provisioning | Marker upload/verification fails | Stop, retain any created root, and do not register it or issue compensating deletion | No additional mutation after failure | Low data-loss risk; possible empty/orphaned lab root. | Verify the marker and remove the orphan manually from the dedicated account. |
-| Reset lab contents | Exact confirmation; root is non-root/top-level and has matching created-and-persisted ownership evidence; marker and registered lab domain match; complete bounded listing | Exclude root and marker; before each action re-fetch root, marker, and target parent; call reversible trash only for a still-immediate child | Trashes verified immediate children | Low. There remains an unavoidable request-time race after the final metadata fetch, but trash is reversible and the target stable ID was inside the verified lab root at preflight. | Restore an item from kDrive trash if the reset intent was wrong. |
+| Reset lab contents | Exact confirmation; root is a non-root child of its verified `Private` parent (or a historical top-level lab) and has matching created-and-persisted ownership evidence; marker and registered lab domain match; complete bounded listing | Exclude root and marker; before each action re-fetch root, marker, and target parent; call reversible trash only for a still-immediate child | Trashes verified immediate children | Low. There remains an unavoidable request-time race after the final metadata fetch, but trash is reversible and the target stable ID was inside the verified lab root at preflight. | Restore an item from kDrive trash if the reset intent was wrong. |
 | Missing/ordinary/unknown domain, wrong-profile runtime, encrypted domain, stale marker/root, partial/cyclic listing, moved target, or active run | Any safety predicate fails; registration is re-queried and the run lifecycle lock is held through reset | Reject before the affected mutation; never hard purge or permanently delete | No | Safe fail-closed behavior. | Use the documented dry-run plus safe uninstall path, repair registration/marker state, then retry. |
 | Finder Stability existing-item mutation | Explicit `--yes-live`; exact lab preflight is fresh; the user-visible URL resolves once immediately before the mutation to the expected stable item ID and configured domain, and that validated identifier is reused for eviction. A move also resolves its destination directory to the expected stable ID and domain. | Perform the scenario mutation only while both bindings match; otherwise fail the step before changing local or remote state. | Edit, rename, move, and trash use the normal File Provider callback path. Eviction is local only. Preserve-both setup deliberately combines a direct conditional remote replacement with a bound local write. | Low. Stable-ID/domain binding closes same-path replacement drift; a narrow request-time race remains after the final lookup, while trash remains reversible and content/version conflicts retain the existing preserve-both policy. | Correct the lab/Finder state and retry. Restore trash or compare preserved versions if a later callback fails. |
 | Finder Stability root-targeted create | Explicit `--yes-live`; immediately before each scenario the cached visible root URL still resolves as the File Provider root-container identifier in the configured lab domain, in addition to fresh saved/registered/remote lab evidence | Create the scenario file or directory only below that bound root URL; otherwise fail before the local write | Normal File Provider create callback path | Low. The repeated root-container/domain binding prevents a stale cached mount path from redirecting a write outside the lab; a narrow request-time race remains after resolution. | Repair File Provider registration/consent or the lab mount, then retry. |
-| Finder Stability restore/permanent-delete scenarios | Explicit `--yes-live`; exact saved/registered lab/root/marker preflight is fresh before every scenario; checkpoint reason must match the scenario | Keep the verified lab root selected and record a typed checkpoint. Never open the user-global Trash, direct a destructive action, call restore/permanent-delete APIs directly, or claim callback evidence. | No runner mutation | Safe runner boundary; the product's unconditional permanent-delete callback still has the high-impact request-time race tracked by `CR-013`. | Use a separately designed stable-ID, domain-scoped workflow before collecting restore/permanent-delete evidence; the current runner intentionally does not instruct the operator to act. |
+| Finder Stability restore/permanent-delete scenarios | Explicit live opt-in; generated run ownership and ancestry; trashed item resolves to the exact stable ID and provider domain; exact selected fixture confirmation before irreversible deletion and fresh binding afterward | Invoke Restore or selected-item Delete Immediately through Finder; retain a blocked/failed result when exact identity or control is unavailable. Never Empty Trash. | Provider restore action or `deleteItem` callback; no direct API substitute | `CR-013` remains open: a disposable-file success does not create a server-side conditional-delete guarantee. | Retain evidence and run fixtures on failure; inspect the exact item without broadening Trash selection. |
+| Stability conflict ordering barrier | macOS Stability lab only; active run/step and salted item alias match; local mutation has passed normal version preflight | Hold the real conditional replacement until the competing remote replacement completes; release on error/cancellation and enforce a deadline | Original real conditional request after release; normal preserve-both policy handles the response | No production policy change. Missing barrier arrival or missing two-version evidence cannot pass the live test. | Stop the run, retain staged/generated data, and inspect correlated spans. |
+| Ownership marker codec compatibility | Remote numeric dates and local ISO-8601 dates identify the same marker but differ below one second | Normalize only creation-time precision to the persisted seconds; continue exact UUID, root, drive, and parent matching | None for an existing marker | Fixes self-rejection without changing the mutation target or rewriting remote evidence. | Retry registration using the saved ownership record. |
 
 | Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
 | --- | --- | --- | --- | --- | --- |
@@ -376,6 +463,7 @@ pending and are never falsely acknowledged.
 
 | Fields in one callback | Branch executed | Applied remotely | Silently unhandled | Assessment |
 | --- | --- | --- | --- | --- |
+| Standalone directory content-modification date | Refetch authoritative directory metadata | No timestamp write; resolve the local date to the server's date | None; explicit server-wins policy | Return that date with no pending date field; the SDK propagates it to disk. No directory bytes or child identity change. |
 | Contents + filename | Rename, then contents | Both; content replaces the same stable file ID under the requested name | None | Automatic. Conditional content race still preserves both. |
 | Contents + parent | Move, then contents | Both; move-only preserves an independent remote rename | None | Automatic. |
 | Contents + filename + parent | Combined move/rename, then contents | All three | None | Automatic. |

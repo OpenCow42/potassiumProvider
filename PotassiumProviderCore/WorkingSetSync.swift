@@ -28,6 +28,14 @@ public struct KDriveWorkingSetContainerSnapshotUpdate: Equatable, Sendable {
     }
 }
 
+extension KDriveSnapshot {
+    func isSameAdvancedListingResult(as other: KDriveSnapshot) -> Bool {
+        usesAdvancedListing && other.usesAdvancedListing && isFullyEnumerated && other.isFullyEnumerated &&
+            serverCursor != nil && serverCursor == other.serverCursor &&
+            items.sorted { $0.id < $1.id } == other.items.sorted { $0.id < $1.id }
+    }
+}
+
 public struct KDrivePartialActivityResult: Equatable, Sendable {
     public let fileID: Int
     public let lastAction: String?
@@ -156,8 +164,18 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
 
     public func poll(
         now: Date = Date(),
-        minimumInterval: TimeInterval = Self.pollingInterval
+        minimumInterval: TimeInterval = Self.pollingInterval,
+        coalescePendingMaterializationPolls: Bool = false,
+        onSnapshotRetry: @Sendable () async -> Void = {}
     ) async throws -> KDriveWorkingSetPollOutcome {
+        try await WorkingSetPollScheduling.shared.withPermit(domainIdentifier: domainIdentifier,
+            coalescePending: coalescePendingMaterializationPolls) {
+            try await pollExclusively(now: now, minimumInterval: minimumInterval, onSnapshotRetry: onSnapshotRetry)
+        }
+    }
+
+    private func pollExclusively(now: Date, minimumInterval: TimeInterval,
+                                onSnapshotRetry: @Sendable () async -> Void) async throws -> KDriveWorkingSetPollOutcome {
         let claimed = try await stateStore.claimWorkingSetPoll(
             domainIdentifier: domainIdentifier,
             now: now,
@@ -171,6 +189,22 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
             )
         }
 
+        // Enumeration can commit a newer container while the remote poll is
+        // in flight. Retry the complete read/prepare/transaction, never the
+        // stale write. Failed transactions leave every cursor and watermark
+        // unchanged. Keep the original throttle claim and bound contention.
+        for attempt in 0...2 {
+            try Task.checkCancellation()
+            do { return try await pollClaimed(now: now) }
+            catch KDriveSnapshotStoreError.staleSnapshot where attempt < 2 {
+                await onSnapshotRetry()
+                try await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
+            }
+        }
+        preconditionFailure("The final poll attempt returns or throws")
+    }
+
+    private func pollClaimed(now: Date) async throws -> KDriveWorkingSetPollOutcome {
         let oldWorkingSet = try await stateStore.workingSetSnapshot(domainIdentifier: domainIdentifier)
         let lastSuccessfulPoll = try await stateStore.lastSuccessfulWorkingSetPoll(domainIdentifier: domainIdentifier)
         let materialized = try await stateStore.materializedItems(domainIdentifier: domainIdentifier)
@@ -418,6 +452,59 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
     private static func workingSetOrder(_ lhs: KDriveRemoteItem, _ rhs: KDriveRemoteItem) -> Bool {
         if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
         return lhs.id < rhs.id
+    }
+}
+
+/// Materialization notifications request an immediate poll while enumeration
+/// and the timer can also poll. The persisted interval is a throttle, not an
+/// in-flight lock (notably when the interval is zero). Serialize these callers
+/// per domain while retaining cancellation and the snapshot transaction guards.
+actor WorkingSetPollScheduling {
+    static let shared = WorkingSetPollScheduling()
+    private struct Entry {
+        let limiter = AsyncOperationLimiter(maxConcurrentOperations: 1)
+        var clients = 0
+        var requestNumber: UInt64 = 0
+        var completed: (coveredRequest: UInt64, outcome: KDriveWorkingSetPollOutcome)?
+    }
+    private var entries: [String: Entry] = [:]
+
+    func pendingRequestCount(domainIdentifier: String) -> Int { entries[domainIdentifier]?.clients ?? 0 }
+
+    func withPermit(domainIdentifier: String, coalescePending: Bool = false,
+                    operation: @Sendable () async throws -> KDriveWorkingSetPollOutcome) async throws -> KDriveWorkingSetPollOutcome {
+        var entry = entries[domainIdentifier] ?? Entry()
+        entry.clients += 1
+        entry.requestNumber += 1
+        let requestNumber = entry.requestNumber
+        entries[domainIdentifier] = entry
+        defer {
+            if var remaining = entries[domainIdentifier] {
+                remaining.clients -= 1
+                entries[domainIdentifier] = remaining.clients == 0 ? nil : remaining
+            }
+        }
+        return try await entry.limiter.withPermit {
+            try await self.perform(domainIdentifier: domainIdentifier, requestNumber: requestNumber,
+                                   coalescePending: coalescePending, operation: operation)
+        }
+    }
+
+    private func perform(domainIdentifier: String, requestNumber: UInt64, coalescePending: Bool,
+                         operation: @Sendable () async throws -> KDriveWorkingSetPollOutcome) async throws -> KDriveWorkingSetPollOutcome {
+        try Task.checkCancellation()
+        guard let entry = entries[domainIdentifier] else { throw CancellationError() }
+        if coalescePending, let completed = entry.completed, completed.coveredRequest >= requestNumber {
+            return KDriveWorkingSetPollOutcome(didPoll: false,
+                changes: KDriveSnapshotChangeSet(updatedItems: [], deletedItemIDs: []), snapshot: completed.outcome.snapshot)
+        }
+        // Every request in this batch persisted its materialized set before
+        // entering the queue. Only a successful poll which STARTS after those
+        // requests may satisfy them; arrivals during its I/O require another poll.
+        let coveredRequest = entry.requestNumber
+        let outcome = try await operation()
+        if outcome.didPoll { entries[domainIdentifier]?.completed = (coveredRequest, outcome) }
+        return outcome
     }
 }
 

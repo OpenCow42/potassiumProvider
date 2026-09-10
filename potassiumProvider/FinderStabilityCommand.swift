@@ -1,5 +1,6 @@
 #if os(macOS) && STABILITY
 import Darwin
+import AppKit
 import Foundation
 
 enum FinderStabilityCommandLine {
@@ -10,13 +11,22 @@ enum FinderStabilityCommandLine {
     }
 
     static func runInCurrentProcess(arguments: [String]) -> Int32 {
+        signal(SIGPIPE, SIG_IGN)
+        setvbuf(stdout, nil, _IOLBF, 0)
+        let application = NSApplication.shared
+        application.setActivationPolicy(.regular)
         var exitCode: Int32?
         Task { @MainActor in
             exitCode = await run(arguments: arguments)
+            application.stop(nil)
+            if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero,
+                modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
+                application.postEvent(wake, atStart: true)
+            }
         }
-        while exitCode == nil {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
-        }
+        // NSApplication dispatches panel and permission events while Swift
+        // concurrency drives the suite. A bare CFRunLoop cannot operate sheets.
+        application.run()
         return exitCode ?? 1
     }
 
@@ -53,6 +63,10 @@ enum FinderStabilityCommandLine {
                     )
                 case .recover:
                     result = await executor.recoverStaleRun()
+                case .provision:
+                    result = await executor.provision()
+                case .watch:
+                    result = await executor.watch()
                 }
                 print(result.safeConsoleDescription)
                 return result.exitCode
@@ -69,6 +83,8 @@ enum FinderStabilityCommandLine {
     nonisolated static var usage: String {
         """
         Usage:
+          potassiumProvider --finder-stability provision --yes-live
+          potassiumProvider --finder-stability watch
           potassiumProvider --finder-stability preflight [--request-permissions]
           potassiumProvider --finder-stability run --yes-live [--request-permissions]
           potassiumProvider --finder-stability recover --yes-recover
@@ -77,9 +93,9 @@ enum FinderStabilityCommandLine {
           preflight              Verify the Stability build, lab, File Provider domain, and macOS consent without Finder or remote mutation.
           run                    Execute the verified, lab-scoped Finder scenario sequence and seal its evidence bundle.
           recover                Preserve and abandon evidence owned by a Finder runner process that is no longer alive.
-          --yes-live             Required for run. Confirms use of the saved development account and disposable lab root.
+          --yes-live             Required for run or provision. Confirms use of the saved development account and disposable lab root.
           --yes-recover          Required for recover. Performs local evidence lifecycle recovery only.
-          --request-permissions  Ask macOS to present Accessibility and Finder Automation consent prompts when needed.
+          --request-permissions  Ask macOS to present Accessibility, screen recording, and Finder Automation consent prompts when needed.
         """
     }
 }
@@ -88,6 +104,8 @@ enum FinderStabilityCommandMode: String, Equatable, Sendable {
     case preflight
     case run
     case recover
+    case provision
+    case watch
 }
 
 struct FinderStabilityCommandOptions: Equatable, Sendable {
@@ -152,6 +170,12 @@ enum FinderStabilityArgumentParser {
         var confirmedRecovery = false
         for argument in commandArguments {
             switch argument {
+            case FinderStabilityCommandMode.provision.rawValue:
+                guard mode == nil else { throw FinderStabilityArgumentError.duplicateMode }
+                mode = .provision
+            case FinderStabilityCommandMode.watch.rawValue:
+                guard mode == nil else { throw FinderStabilityArgumentError.duplicateMode }
+                mode = .watch
             case FinderStabilityCommandMode.preflight.rawValue:
                 guard mode == nil else { throw FinderStabilityArgumentError.duplicateMode }
                 mode = .preflight
@@ -174,11 +198,15 @@ enum FinderStabilityArgumentParser {
 
         guard let mode else { throw FinderStabilityArgumentError.missingMode }
         switch mode {
+        case .watch where confirmedLiveRun || confirmedRecovery || requestPermissions:
+            throw FinderStabilityArgumentError.unknownOption
+        case .provision where confirmedRecovery || requestPermissions:
+            throw FinderStabilityArgumentError.unknownOption
         case .preflight where confirmedLiveRun:
             throw FinderStabilityArgumentError.liveConfirmationNotAllowedForPreflight
         case .preflight where confirmedRecovery:
             throw FinderStabilityArgumentError.recoveryConfirmationNotAllowed
-        case .run where confirmedLiveRun == false:
+        case .run where confirmedLiveRun == false, .provision where confirmedLiveRun == false:
             throw FinderStabilityArgumentError.liveConfirmationRequired
         case .run where confirmedRecovery:
             throw FinderStabilityArgumentError.recoveryConfirmationNotAllowed
@@ -242,5 +270,11 @@ protocol FinderStabilityCommandExecuting {
     func preflight(requestPermissions: Bool) async -> FinderStabilityCommandResult
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult
     func recoverStaleRun() async -> FinderStabilityCommandResult
+    func provision() async -> FinderStabilityCommandResult
+    func watch() async -> FinderStabilityCommandResult
+}
+extension FinderStabilityCommandExecuting {
+    func provision() async -> FinderStabilityCommandResult { .rejected }
+    func watch() async -> FinderStabilityCommandResult { .rejected }
 }
 #endif

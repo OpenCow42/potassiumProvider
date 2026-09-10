@@ -336,6 +336,7 @@ struct StabilityDiagnosticsTests {
             }
         }
         #expect(try await store.recentActivity(domainIdentifier: "domain", limit: 100).isEmpty == false)
+        #expect(FileManager.default.fileExists(atPath: run.directoryURL.appendingPathComponent("diagnostic-health.failed").path))
     }
 
     #if os(macOS)

@@ -106,7 +106,7 @@ struct StabilityLabRemoteCoordinatorTests {
         )
         let createdRoot = item(
             id: rootFileID,
-            parentID: driveRootFileID,
+            parentID: 2,
             type: "dir",
             etag: "root"
         )
@@ -125,7 +125,8 @@ struct StabilityLabRemoteCoordinatorTests {
             isInMaintenance: false
         )
         let remote = StabilityLabRemoteFake(
-            items: [driveRootFileID: driveRoot],
+            items: [driveRootFileID: driveRoot, 2: item(id: 2, parentID: driveRootFileID, type: "dir", name: "Private")],
+            pages: [StabilityLabRemoteFake.initialCursorKey: KDriveItemPage(items: [item(id: 2, parentID: driveRootFileID, type: "dir", name: "Private")], nextCursor: nil, hasMore: false)],
             createDirectoryResponse: createdRoot,
             uploadResponse: uploadedMarker
         )
@@ -510,11 +511,12 @@ struct StabilityLabRemoteCoordinatorTests {
         id: Int,
         parentID: Int,
         type: String,
-        etag: String? = "etag"
+        etag: String? = "etag",
+        name: String = "fixture"
     ) -> KDriveRemoteItem {
         KDriveRemoteItem(
             id: id,
-            name: "fixture",
+            name: name,
             type: type,
             status: "active",
             driveID: driveID,

@@ -413,7 +413,9 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         return try await performNetworkOperation(.listPartialActivities) {
             let response = try await service.listPartialFileActivities(
                 driveId: driveID,
-                with: "file,file.etag",
+                // Partial listing supports the file expansion. A nested etag
+                // expansion is not part of this route's upstream contract.
+                with: "file",
                 options: ListKDrivePartialFileActivitiesOptions(
                     actions: [
                         "file_create", "file_delete", "file_trash", "file_restore",

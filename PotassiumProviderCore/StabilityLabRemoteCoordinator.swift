@@ -121,6 +121,7 @@ public actor StabilityLabRemoteCoordinator {
     public func provision(
         driveID: Int,
         driveRootFileID: Int,
+        privateParentFileID: Int? = nil,
         registeredDomainsProvider: StabilityLabRegisteredDomainsProvider
     ) async throws -> StabilityLabRemoteConfiguration {
         try validateProvisioningDomains(try await registeredDomainsProvider())
@@ -139,17 +140,22 @@ public actor StabilityLabRemoteCoordinator {
             throw StabilityLabRemoteCoordinatorError.invalidDriveRootIdentity
         }
 
+        if let privateParentFileID {
+            try await verifyPrivateParent(driveID: driveID, fileID: privateParentFileID, driveRootFileID: driveRootFileID)
+        }
+        let parentID = privateParentFileID ?? driveRootFileID
         try validateProvisioningDomains(try await registeredDomainsProvider())
         let identifier = makeUUID()
         let root = try await remote.createDirectory(
             driveID: driveID,
-            parentID: driveRootFileID,
+            parentID: parentID,
             name: "\(Self.folderNamePrefix) \(identifier.uuidString)"
         )
         guard root.id > 0,
               root.id != driveRootFileID,
               root.driveID == driveID,
-              root.parentID == driveRootFileID,
+              root.parentID == parentID,
+              root.id != parentID,
               root.isDirectory else {
             throw StabilityLabRemoteCoordinatorError.invalidProvisionedRoot
         }
@@ -159,7 +165,8 @@ public actor StabilityLabRemoteCoordinator {
             identifier: identifier,
             driveID: driveID,
             rootFileID: root.id,
-            createdAt: now()
+            createdAt: now(),
+            parentFileID: privateParentFileID
         )
         let markerData = try encodeMarker(marker)
         let uploadedMarker = try await remote.uploadFile(
@@ -208,13 +215,17 @@ public actor StabilityLabRemoteCoordinator {
         guard configuration.driveRootFileID == ProviderConstants.defaultRootFileID else {
             throw StabilityLabRemoteCoordinatorError.invalidDriveRootIdentity
         }
+        if let parentID = configuration.ownershipMarker.parentFileID {
+            try await verifyPrivateParent(driveID: configuration.driveID, fileID: parentID, driveRootFileID: configuration.driveRootFileID)
+        }
         let root = try await remote.item(
             driveID: configuration.driveID,
             fileID: configuration.rootFileID
         )
         guard root.id == configuration.rootFileID,
               root.driveID == configuration.driveID,
-              root.parentID == configuration.driveRootFileID,
+              root.parentID == (configuration.ownershipMarker.parentFileID ?? configuration.driveRootFileID),
+              root.id != configuration.ownershipMarker.parentFileID,
               root.isDirectory else {
             throw StabilityLabRemoteCoordinatorError.invalidProvisionedRoot
         }
@@ -253,8 +264,18 @@ public actor StabilityLabRemoteCoordinator {
             parentFileID: root.parentID,
             driveRootFileID: configuration.driveRootFileID,
             hasVerifiedLabOwnership: hasInternalAccess,
-            ownershipMarker: observedMarker
+            ownershipMarker: observedMarker,
+            verifiedPrivateParentFileID: configuration.ownershipMarker.parentFileID
         )
+    }
+
+    private func verifyPrivateParent(driveID: Int, fileID: Int, driveRootFileID: Int) async throws {
+        let parent = try await remote.item(driveID: driveID, fileID: fileID)
+        guard fileID > 0, fileID != driveRootFileID, parent.id == fileID,
+              parent.driveID == driveID, parent.parentID == driveRootFileID,
+              parent.isDirectory, parent.name == KDrivePrivateDirectoryResolver.directoryName else {
+            throw StabilityLabRemoteCoordinatorError.invalidProvisionedRoot
+        }
     }
 
     /// Fully consumes ordinary directory-listing pagination. A missing or
