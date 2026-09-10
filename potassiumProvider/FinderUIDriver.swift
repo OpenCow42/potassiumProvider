@@ -45,6 +45,10 @@ enum FinderUIError: String, Error, Equatable {
     case editorUnavailable, automationFailed, finderBusy, evictionResourceBusy
 }
 
+private enum FinderAppleEventOperation: String {
+    case observe, navigate, createWindow, changeView, activate, select
+}
+
 /// Owns a dedicated Finder window. Apple Events address its stable window ID;
 /// Accessibility actions resolve fresh elements and never reuse row indices.
 @MainActor
@@ -98,13 +102,13 @@ final class SystemFinderUIDriver: FinderUIDriving {
 
     func navigate(to url: URL) async throws {
         if let windowID {
-            _ = try script("set target of Finder window id \(windowID) to POSIX file \(quote(url.path))")
+            _ = try script("set target of Finder window id \(windowID) to POSIX file \(quote(url.path))", operation: .navigate)
         } else {
             guard let owner = finderProcessIdentity() else { throw FinderUIError.finderUnavailable }
-            windowID = try script("set w to make new Finder window to POSIX file \(quote(url.path))\nreturn id of w").int32Value
+            windowID = try script("set w to make new Finder window to POSIX file \(quote(url.path))\nreturn id of w", operation: .createWindow).int32Value
             if let windowID { windowOwner = FinderWindowOwnership(windowID: windowID, process: owner) }
         }
-        if let windowID { _ = try script("set current view of Finder window id \(windowID) to list view") }
+        if let windowID { _ = try script("set current view of Finder window id \(windowID) to list view", operation: .changeView) }
         currentURL = url
         selectionURL = nil
         try await wait { try self.verifyWindow(url) }
@@ -136,7 +140,19 @@ final class SystemFinderUIDriver: FinderUIDriving {
         try await activateFinder()
         try await FinderSelectionSequence.execute(waitUntilVisible: {
             print("finder stability UI: waiting for generated selection row")
-            try await self.wait { try await self.contains(url) }
+            do { try await self.wait { try await self.contains(url) } }
+            catch {
+                // Closed observations only: never log a path, displayed name,
+                // unrelated row, or window title while diagnosing missing UI.
+                let window = self.finderWindowAX()
+                let displayed = try? self.displayedName(of: url)
+                let matches = window.map { window in
+                    self.elements(window).filter { self.string($0, kAXRoleAttribute) == kAXTextFieldRole &&
+                        self.string($0, kAXValueAttribute) == displayed }.count
+                } ?? 0
+                print("finder stability UI: row observation windowBound=\(window != nil) parentMatches=\((try? self.verifyWindow(parent)) == true) titleMatches=\(window.map { self.string($0, kAXTitleAttribute) == parent.lastPathComponent } ?? false) displayNameAvailable=\(displayed != nil) matchingRows=\(matches)")
+                throw error
+            }
         }, assignSelection: {
             guard let windowID = self.windowID, try self.verifyWindow(parent),
                   try self.script("get id of front Finder window").int32Value == windowID else {
@@ -145,7 +161,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
             // `select file` can reveal it in another Finder window. Assign the
             // selection of the already verified front window without revealing.
             print("finder stability UI: generated row visible; assigning selection")
-            _ = try self.script("set selection to {POSIX file \(self.quote(url.path)) as alias}")
+            _ = try self.script("set selection to {POSIX file \(self.quote(url.path)) as alias}", operation: .select)
             self.selectionURL = url
         }, waitUntilSelected: {
             try await self.wait { try self.verifySelection(url) }
@@ -501,7 +517,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
         try data.write(to: directory.appendingPathComponent(String(format: "%03d.png", sequence)), options: .withoutOverwriting)
     }
 
-    private func script(_ body: String) throws -> NSAppleEventDescriptor {
+    private func script(_ body: String, operation: FinderAppleEventOperation = .observe) throws -> NSAppleEventDescriptor {
         guard remainingTime() > .zero else { throw FinderUIError.timedOut }
         let source = "with timeout of 10 seconds\ntell application id \"com.apple.finder\"\n" + body + "\nend tell\nend timeout"
         var error: NSDictionary?
@@ -509,7 +525,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
         let value = script.executeAndReturnError(&error)
         guard error == nil else {
             if (error?[NSAppleScript.errorNumber] as? Int) == -15260 { throw FinderUIError.finderBusy }
-            print("finder stability UI: Apple Event failed; code \((error?[NSAppleScript.errorNumber] as? Int) ?? 0)")
+            print("finder stability UI: Apple Event failed; operation \(operation.rawValue); code \((error?[NSAppleScript.errorNumber] as? Int) ?? 0)")
             throw FinderUIError.automationFailed
         }
         return value
@@ -545,7 +561,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
 
     private func activateFinder() async throws {
         guard let windowID, let currentURL, try verifyWindow(currentURL) else { throw FinderUIError.windowMismatch }
-        _ = try script("set index of Finder window id \(windowID) to 1\nactivate")
+        _ = try script("set index of Finder window id \(windowID) to 1\nactivate", operation: .activate)
         try await wait { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" }
         if let selectionURL, try verifySelection(selectionURL) == false { throw FinderUIError.selectionMismatch }
     }
@@ -774,7 +790,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
     private func wait(_ predicate: () async throws -> Bool) async throws {
         guard remainingTime() > .zero else { throw FinderUIError.timedOut }
-        let deadline = ContinuousClock.now.advanced(by: min(.seconds(10), remainingTime()))
+        let deadline = ContinuousClock.now.advanced(by: remainingTime())
         repeat {
             try Task.checkCancellation()
             do { if try await predicate() { return } }

@@ -33,6 +33,46 @@ same item. The legacy global active-step pointer is not sufficient evidence.
 
 Current continuation evidence:
 
+- **Current Mac follow-up validation:** `potassium-live-stability-mac-13.xcresult`
+  finalized with 391 passed and zero failures/skips, covering the Restore observation
+  race and all current Mac-only timing/readiness changes. The previous shared-runtime
+  results below remain applicable; subsequent edits are guarded by macOS/STABILITY.
+  The next signed live run is in progress. Lifecycle acceptance also remains open:
+  source inspection confirms the first preflight can launch the extension before
+  the owned run recorder starts. Cold/warm certification must close that gap.
+
+- **Latest live result:** `dc49fe60-e9e5-45fe-8261-85fd4339f5cc` again passed
+  ten scenarios, now including all six added navigation captures and the remote
+  change proof. It verified the Trash metadata fallback and exact Finder selection,
+  then invoked Restore. The provider callback
+  `787D06E3-4F3F-4075-B44E-C48F6B144A31` and its remote mutation
+  `20B899BE-5186-4934-B886-8B4E33D2AD22` completed successfully. The runner's
+  active-item check `573C63B4-9FA9-4934-ABC9-755E89EB0CA1` raced the callback
+  and returned 404, prematurely failing verification. Classification: harness;
+  high confidence from callback/API ordering and source inspection. The focused
+  fix gates verification on the exact attested Restore callback, keeps 404 pending,
+  and still requires matching identity, parent, bytes, UI, and all diagnostic proof.
+  New regression tests cover absent callbacks, pending 404, operational errors,
+  and wrong identities/destinations. Complete Restore verification awaits rerun.
+  The report finalized with 10 passed, 1 failed, 5 skipped; its window closed.
+
+- **Navigation timing:** `983e7d51-38ba-4905-bdf2-7c9e19426d30` still
+  exhausted the driver's early 10-second row wait. After removing that cutoff,
+  `15a8d165-afae-446a-a337-0b2cc76dd68f` completed root, nested, Back,
+  Forward, and parent captures (`200.png` through `205.png`) and verified history
+  navigation. A read-only AX observer confirmed the generated folder's exact row
+  appearing and becoming selected. The remote-change portion then exhausted the
+  aggregate 90-second deadline, which had also included fixture preparation.
+  Preparation now has a separate bounded 90-second phase; it must complete before
+  the scenario budget starts. Its time and diagnostics remain in the report.
+  This change requires a rerun. No complete navigation or Restore pass is claimed.
+  The next run `947a40d9-6a97-45fb-9700-6a71fc6f3ca9` instead hit Apple Events
+  -10006 before selection, so closed command labels were added for diagnosis.
+  `0cf21c51-e88f-403c-9169-ad116c62c0b9` again completed all six navigation
+  captures but exhausted its budget before the remote-change proof. The five
+  read-only placeholder resolutions/domain bindings still preceded navigation
+  inside its budget; those now finish in the bounded preparation phase.
+
 - **Current finalized unit validation:** macOS Stability
   `potassium-live-stability-mac-11.xcresult`: 387 passed; standard macOS
   `potassium-live-standard-mac-03.xcresult`: 361 passed; iPhone 17/iOS 26.5

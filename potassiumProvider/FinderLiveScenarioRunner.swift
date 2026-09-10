@@ -33,7 +33,16 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                 ui.useDeadline { [weak session] in session?.deadline.remaining() ?? .zero }
                 let (proof, stepObservations) = try await ProviderDiagnosticCorrelationContext.withCorrelation(correlationID) { @MainActor in
                     var stepObservations: [StabilityFinderAPIObservation] = []
-                    if session.root == nil { try await session.setup() }
+                    if session.root == nil {
+                        print("finder stability: preparing fixtures with a 90-second budget")
+                        try await session.setup()
+                        guard session.deadline.remaining() > .zero else { throw StabilityDeadlineError.expired }
+                        // Preparation is a separate bounded operation. Keep its
+                        // evidence and elapsed time, then start the navigation
+                        // budget once the generated hierarchy is available.
+                        session.deadline = StabilityDeadline(budget: .seconds(90))
+                        print("finder stability: fixture preparation complete; starting scenario budget")
+                    }
                     let baseline = try await session.list(session.require(session.root))
                     stepObservations.append(StabilityFinderAPIObservation(scenario: scenario, correlationID: correlationID, phase: .baseline,
                         outcome: .passed, recordedAt: Date(), hasMore: false, itemCount: baseline.count))
@@ -122,9 +131,8 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
         let root = try s.require(s.root)
         switch scenario {
         case .enumerationAndChangeAnchors:
-            let a = try await s.visible(s.require(s.nested)), b = try await s.visible(s.require(s.deep))
-            let sibling = try await s.visible(s.require(s.sibling)), rootURL = try await s.visible(root)
-            let seedURL = try await s.visible(s.require(s.seed))
+            let urls = try s.require(s.navigationURLs)
+            let a = urls.nested, b = urls.deep, sibling = urls.sibling, rootURL = urls.root, seedURL = urls.seed
             try await FinderNavigationSequence.execute(using: ui, root: rootURL, nested: a, deep: b, sibling: sibling) { index, folder in
                 // Select only a known generated child of the verified current
                 // folder. This preserves history and keeps sidebars out of capture.
@@ -206,7 +214,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
         case .restore:
             let item = try s.require(s.file), url = try await s.visible(item, trashed: true)
             try await ui.contextAction("Restore from kDrive Trash", on: url)
-            s.file = try await s.waitMetadata(item) { $0.parentID == item.parentID }
+            s.file = try await s.waitRestored(item)
             try await s.waitBytes(item, expected: s.bytes)
             let restored = try await s.visible(s.require(s.file))
             try await ui.select(restored)

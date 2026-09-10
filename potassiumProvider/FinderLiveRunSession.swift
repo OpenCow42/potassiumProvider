@@ -27,6 +27,7 @@ final class FinderLiveRunSession {
     var workingSetMember = false
     var expectedWorkingSetMetadataAlias: UUID?
     var lastVisibleURL: URL?
+    var navigationURLs: (root: URL, nested: URL, deep: URL, sibling: URL, seed: URL)?
     var deadline = StabilityDeadline(budget: .seconds(90))
 
     init(context: FinderStabilityLiveContext, ui: any FinderUIDriving) throws {
@@ -71,6 +72,11 @@ final class FinderLiveRunSession {
         sibling = try await createDirectory(name: "Sibling", parent: item)
         seed = try await upload(name: "remote-seed.txt", parent: try require(deep), data: bytes)
         try await signal(.rootContainer)
+        // Resolving placeholders and verifying their provider identities is
+        // preparation; navigation starts after these read-only bindings finish.
+        navigationURLs = (root: try await visible(item), nested: try await visible(require(nested)),
+            deep: try await visible(require(deep)), sibling: try await visible(require(sibling)),
+            seed: try await visible(require(seed)))
     }
 
     func createDirectory(name: String, parent: KDriveRemoteItem) async throws -> KDriveRemoteItem {

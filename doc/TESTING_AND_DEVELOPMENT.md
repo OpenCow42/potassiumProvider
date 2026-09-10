@@ -219,6 +219,14 @@ ownership marker, and previous contents are preserved. The runner binds each
 mutation target to its stable File Provider item and domain and re-fetches the
 ancestry of generated sources and destinations. It owns one Finder window, resolves
 fresh Accessibility state, and fails when a unique expected control is unavailable.
+UI observations use the remaining scenario deadline (90 seconds for ordinary
+scenarios), including delayed row rendering; they do not impose an earlier
+10-second observation cutoff. Failed row observations record only binding flags
+and matching-row counts, never window titles or other row contents.
+Initial fixture preparation has its own 90-second budget. It must finish within
+that budget before the first scenario receives its 90 seconds; setup failures
+cannot advance to navigation. The first report interval retains both phases and
+their diagnostics, so its total duration can exceed one scenario budget.
 File creation uses Finder copy/paste; editing opens Finder's selection in TextEdit
 and saves only the verified document.
 
@@ -235,6 +243,10 @@ only after HTTP 404. The resolved drive/item identity must match exactly. Only
 absence from both endpoints becomes `noSuchItem`; the handled active 404 remains
 in diagnostics and needs successful correlated recovery evidence. This metadata
 fallback does not allow content or mutation preflight to operate on trashed items.
+Restore verification waits for the exact provider callback to complete, then polls
+active metadata within the existing deadline. A temporary 404 is pending; it cannot
+establish success. Identity, drive, parentage, contents, Finder visibility, and the
+final correlated diagnostic validation are still required.
 
 The Stability-only conflict barrier holds the exact local mutation after its real
 version preflight while the runner performs a competing typed remote replacement.

@@ -15,7 +15,7 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
-The latest live run passed ten scenarios through Trash, then failed Restore
+An earlier live run passed ten scenarios through Trash, then failed Restore
 because the metadata callback queried the active-item endpoint for a trashed
 identity (HTTP 404 mapped to `.cannotSynchronize`). Metadata lookup now falls
 back to the typed Trash endpoint only after active-item HTTP 404, validating the
@@ -23,10 +23,16 @@ same drive and item identity before returning a Trash parent. Only HTTP 404 from
 both identity endpoints becomes `.noSuchItem`; permissions, transport failures,
 cancellation, unavailable fallback, and mismatched identities fail closed.
 Content and mutation preflights continue to require active metadata. The
-`KDriveItemMetadataLookupTests` regressions cover these decisions; live validation
-is pending. The failure spans and preserved bundle are recorded in
-`STABILITY_LOOP_AUDIT.md`. No restore/permanent-delete acceptance or change to
-the open CR-013 server guarantee is claimed.
+`KDriveItemMetadataLookupTests` regressions cover these decisions. Live run
+`dc49fe60-e9e5-45fe-8261-85fd4339f5cc` verified successful Trash metadata
+fallback, exact Finder selection, and a completed Restore callback. Its independent
+active-item verification raced restoration and received 404. The harness now waits
+for the attested, item-specific Restore completion before checking active metadata;
+404 remains pending within the existing deadline, never success. Authentication,
+other operational failures, and wrong identity/drive/destination still fail.
+`FinderRestoreObservationTests` covers that boundary. Full Restore acceptance is
+pending the contents/UI rerun. The preserved spans are recorded in
+`STABILITY_LOOP_AUDIT.md`; no change to the open CR-013 guarantee is claimed.
 
 Immediate materialization notifications, working-set enumeration, and the timer
 can request overlapping polls; `minimumInterval: 0` is not an in-flight lock.

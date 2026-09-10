@@ -4,6 +4,31 @@ import FileProvider
 import PotassiumProviderCore
 
 extension FinderLiveRunSession {
+    func waitRestored(_ item: KDriveRemoteItem) async throws -> KDriveRemoteItem {
+        let alias = StabilityDiagnosticIdentity.alias(for: String(item.id), runID: run.runID)
+        var restored: KDriveRemoteItem?
+        try await poll {
+            let callbacks = try self.diagnostics().filter {
+                $0.source == .fileProviderExtension && $0.operation == .restoreTrashedItem &&
+                    $0.parentSpanID == nil && $0.subjectAlias == alias && $0.correlationID == self.correlationID
+            }
+            guard callbacks.allSatisfy({ $0.processCodeHash == self.expectedExtensionCodeHash && $0.processInstanceID != nil }) else {
+                throw StabilityLiveEvidenceError.wrongExtensionBuild
+            }
+            guard !callbacks.contains(where: { [.failed, .cancelled].contains($0.phase) }) else {
+                throw StabilityLiveEvidenceError.unexpectedFailure
+            }
+            restored = try await FinderRestoreObservation.observe(
+                callbackCompleted: callbacks.contains { $0.phase == .completed }, expected: item) {
+                    try await self.context.remote.item(driveID: self.context.domain.driveID, fileID: item.id)
+                }
+            return restored != nil
+        }
+        let result = try require(restored)
+        remember(result)
+        return result
+    }
+
     func waitTrashed(_ item: KDriveRemoteItem, exists: Bool) async throws {
         guard let actions = context.remote as? any KDriveContextActionProviding else { throw FinderLiveError.missingCapability }
         try await poll {
