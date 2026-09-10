@@ -462,6 +462,29 @@ both presenter-sequence regressions. This follow-up changes only the macOS
 Stability UI harness; standard macOS11, iOS15, visionOS Simulator14, and the generic
 visionOS10 build above remain the finalized validation for unchanged shared code.
 
+Rerun `60cd782a-c361-4580-a8dd-3153ee26d5fc` on `b1eeb79` sealed **ten
+passed, one failed, five skipped**. Remove Download now executed, its non-hydrating
+state checks passed, and Download Now produced a new successful content fetch with
+matching bytes. The installed provider CDHash remained identical to the twelve
+accepted conflict runs. This is live regression evidence for the presenter-release
+harness correction; it does not identify the earlier domain stabilization blocker.
+
+Restore failed before its context action. The exact trashed fixture was resolved
+and bound (two run-salted subject aliases), then Finder navigation timed out with
+zero completed UI actions. Correlation `B757FF17-F259-40CA-939D-69A9EB10591D`
+retains successful metadata fallback: active lookup `98142803-231F-49FD-AEFB-B7388197205F`
+returned expected 404, Trash lookup `DBF38023-F6E2-4407-94C8-0C487D01505B`
+and enclosing item lookup `EBCFA176-F8BA-47BF-8021-51AA0874B798` completed.
+No Restore callback occurred. Expected: navigate to the exact bound Trash parent,
+select the generated fixture, and invoke Restore. Observed: navigation did not
+finish before selection. Classification: UI automation; confidence high for the
+navigation boundary, low for the specific native transition. A closed stage trace
+now distinguishes activation, navigation-sheet availability, path assignment,
+submission, and destination verification without retaining paths or sheet text.
+The failure and fixtures remain preserved; owned windows closed and the owner lease
+released. No permanent deletion or warm original-suite run occurred. Reproduce with
+`--run --extension-state fresh --yes-live`; further diagnosis is pending.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on

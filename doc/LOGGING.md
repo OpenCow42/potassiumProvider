@@ -310,6 +310,11 @@ Local recorder settling uses a one-second quiet interval after every span has ex
 
 The fallback XPC-reply-invalid wrapper is inspected through at most four underlying errors for diagnostic classification. Known SQLite errors retain only their numeric result code and storage category; their message and statement are discarded. This uses existing version-3 fields, and historical opaque wrapper records remain readable. It changes diagnostics, not the error returned to File Provider.
 
+Go to Folder failure traces contain a closed UI stage, sheet count, and a Boolean
+indicating whether the owned window still has its previous destination. They never
+print entered paths, sheet text, or external error descriptions. These local traces
+support diagnosis; they do not replace required item binding or final report proof.
+
 Finder destination observation prints only a closed lookup phase (`resolveItemURL`
 or `bindDestinationParent`), diagnostic category, and numeric error code when a
 lookup fails. Local paths, error descriptions, and user-info are excluded. A logged

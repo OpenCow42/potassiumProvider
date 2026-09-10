@@ -134,6 +134,10 @@ final diagnostic settling are unchanged. `FinderHydrationSequenceTests` covers
 presenter release and failure gating. This is a macOS Stability harness correction,
 not a provider eviction or conflict-policy change; live rerun evidence is recorded
 in the audit and no new sixteen-scenario pass is inferred.
+The following live run verified eviction and a new download, then stopped at
+Restore navigation after successful exact trashed-item binding. Ten scenarios
+passed; no Restore action or permanent deletion occurred. Closed navigation-stage
+diagnostics support the next reproduction without weakening target assertions.
 
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot

@@ -174,25 +174,47 @@ final class SystemFinderUIDriver: FinderUIDriving {
         // Finder can acknowledge an Apple Event target change while its list
         // remains busy indefinitely. Exercise Finder's normal navigation sheet
         // and verify the original window identity after the UI accepts the path.
-        try await activateFinder()
-        guard let window = finderWindowAX() else { throw FinderUIError.windowMismatch }
-        try key(5, flags: [.maskCommand, .maskShift]) // Go to Folder
-        var field: AXUIElement?
-        try await wait {
-            let sheets = self.elements(window).filter { self.string($0, kAXRoleAttribute) == kAXSheetRole }
-            guard sheets.count == 1, let sheet = sheets.first else { return false }
-            let fields = self.elements(sheet).filter { self.string($0, kAXRoleAttribute) == kAXTextFieldRole }
-            guard fields.count == 1, let candidate = fields.first else { return false }
-            field = candidate
-            return true
+        var phase = "activateOwnedWindow"
+        do {
+            try await activateFinder()
+            guard let window = finderWindowAX() else { throw FinderUIError.windowMismatch }
+            phase = "openNavigationSheet"
+            try key(5, flags: [.maskCommand, .maskShift]) // Go to Folder
+            var field: AXUIElement?
+            try await wait {
+                let sheets = self.elements(window).filter { self.string($0, kAXRoleAttribute) == kAXSheetRole }
+                guard sheets.count == 1, let sheet = sheets.first else { return false }
+                let fields = self.elements(sheet).filter { self.string($0, kAXRoleAttribute) == kAXTextFieldRole }
+                guard fields.count == 1, let candidate = fields.first else { return false }
+                field = candidate
+                return true
+            }
+            phase = "setNavigationPath"
+            guard let field, AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, url.path as CFString) == .success else {
+                throw FinderUIError.controlUnavailable
+            }
+            try await wait { self.string(field, kAXValueAttribute) == url.path }
+            phase = "submitNavigationPath"
+            try key(36)
+            phase = "verifyNavigationDestination"
+            var reportedPendingDestination = false
+            try await wait {
+                let matches = try self.verifyWindow(url)
+                if !matches && !reportedPendingDestination {
+                    reportedPendingDestination = true
+                    let sheets = self.elements(window).filter { self.string($0, kAXRoleAttribute) == kAXSheetRole }
+                    let stillPrevious = self.currentURL.map { (try? self.verifyWindow($0)) == true } ?? false
+                    print("finder stability UI: navigation pending; sheetCount=\(sheets.count) stillPreviousDestination=\(stillPrevious)")
+                }
+                return matches
+            }
+            print("finder stability UI: Go to Folder navigation verified")
+        } catch {
+            // Closed stage labels only. Paths, sheet contents, and error
+            // descriptions can contain generated or unrelated private data.
+            print("finder stability UI: navigation failed; phase=\(phase)")
+            throw error
         }
-        guard let field, AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, url.path as CFString) == .success else {
-            throw FinderUIError.controlUnavailable
-        }
-        try await wait { self.string(field, kAXValueAttribute) == url.path }
-        try key(36)
-        try await wait { try self.verifyWindow(url) }
-        print("finder stability UI: Go to Folder navigation verified")
     }
 
     func navigateHistory(back: Bool, expectedURL: URL) async throws {
