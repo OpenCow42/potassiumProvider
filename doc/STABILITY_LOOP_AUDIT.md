@@ -1231,3 +1231,38 @@ The advanced-listing and `/2/drive/init` routes remain client/live-evidence
 adapters because the public documentation snapshot does not contain them.
 Permanent trash deletion and share update/delete remain marked unconditional;
 no conditional primitive is invented without authoritative evidence.
+
+
+### Navigation diagnostic rerun
+
+Mac34 finalized **447 passed**, zero failed/skipped/expected failures, after the
+closed navigation-stage trace. Ordinary signed build `a057b29` also succeeded.
+Cold reproduction `5cffad00-31d8-44d6-9add-409792a703c8` did not reach Restore:
+fixture preparation exceeded its unchanged 90-second budget. Navigation transitions
+that were initially pending subsequently verified, but the full preparation chain
+did not finish. Provider working-set spans `07AB759D-088D-43DE-8E05-52517EF21D3D`
+and `33EB5ED4-9330-4844-88B5-CB700F5AD53F` completed in 84,513 ms and 72,760 ms;
+enumerate-changes span `6D3DD105-385F-4F52-B65D-02ABB2BB2EE5` took 58,998 ms.
+These overlapping durations locate expensive background work; they do not by
+themselves prove which work delayed placeholder preparation. Classification:
+harness deadline with provider/environment latency unresolved. No assertion budget
+is extended, no scenario passes are inferred, and fixtures/evidence remain retained.
+An already-running original-suite reproduction is next to isolate Restore navigation
+without another cold preparation cycle. The accepted conflict profiles remain intact.
+
+The cold diagnostic run sealed **zero passed, one failed, fifteen skipped**, with
+all spans terminal and its owner lease released. The first long refresh above
+contained 359 advanced-directory requests; their completed child spans plus the
+other API children totaled 52,268 ms. The 72,760 ms refresh had no child request
+spans, consistent with waiting for the existing per-domain permit. A later refresh
+`2474E774-CEEB-4041-AA8D-5354536B7C03` took 119,600 ms and contained 360
+advanced-directory requests. The current coordinator polls every materialized
+container serially; no second concurrency mechanism is proposed without a focused
+regression and rate-limit analysis. Local-mutation journal delivery remains fixed,
+but cold preparation/settlement with the enlarged retained lab is unresolved.
+
+The warm-only follow-up refused before fixture setup because no already-running
+extension process survived after the cold bundle sealed. It created no passing
+result. A diagnostic original-suite command without `--extension-state` is used
+next to inspect the unresolved Restore UI transition; it cannot satisfy the fresh
+or already-running acceptance certificates.
