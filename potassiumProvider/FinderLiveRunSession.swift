@@ -51,7 +51,7 @@ final class FinderLiveRunSession {
     func subject(_ identifier: String) { subjects.insert(StabilityDiagnosticIdentity.alias(for: identifier, runID: run.runID)) }
     func require<T>(_ value: T?) throws -> T { guard let value else { throw FinderLiveError.missingFixture }; return value }
 
-    func setup() async throws {
+    func setup(scope: FinderFixtureNavigation.Scope) async throws {
         try await context.verifySafety()
         try await ui.navigate(to: context.rootURL)
         try await signal(.rootContainer)
@@ -68,26 +68,40 @@ final class FinderLiveRunSession {
         guard item.parentID == context.domain.rootFileID, item.id != context.domain.rootFileID, item.isDirectory else { throw FinderLiveError.unsafeTarget }
         root = item; remember(item)
         nested = try await createDirectory(name: "Nested", parent: item)
-        deep = try await createDirectory(name: "Deep", parent: try require(nested))
+        if scope == .fullSuite { deep = try await createDirectory(name: "Deep", parent: try require(nested)) }
         sibling = try await createDirectory(name: "Sibling", parent: item)
-        seed = try await upload(name: "remote-seed.txt", parent: try require(deep), data: bytes)
-        // Finder can enumerate a newly discovered directory while its children
-        // are still being provisioned remotely. Publish every changed container,
-        // not just the lab root, after all fixture writes have completed.
-        for container in [item, try require(nested), try require(deep), try require(sibling)] {
-            try await signal(NSFileProviderItemIdentifier(String(container.id)))
-        }
-        try await signal(.rootContainer)
+        if scope == .fullSuite { seed = try await upload(name: "remote-seed.txt", parent: try require(deep), data: bytes) }
+        // Replicated providers propagate remote changes through the working
+        // set. Signal the completed fixture batch once; native folder signals
+        // are ignored even when their acknowledgement reports success.
+        try await signalChanges(in: [.rootContainer] + [item, nested, deep, sibling].compactMap { $0 }
+            .map { NSFileProviderItemIdentifier(String($0.id)) })
         // Resolving placeholders and verifying their provider identities is
         // preparation; navigation starts after these read-only bindings finish.
-        navigationURLs = try await FinderFixtureNavigation.resolve(using: ui) { target in
-            switch target {
-            case .root: try await self.visible(item)
-            case .nested: try await self.visible(self.require(self.nested))
-            case .deep: try await self.visible(self.require(self.deep))
-            case .sibling: try await self.visible(self.require(self.sibling))
-            case .seed: try await self.visible(self.require(self.seed))
+        let bind: (FinderFixtureNavigation.Target) async throws -> URL = { target in
+            print("finder stability fixture: resolving \(target.rawValue)")
+            do {
+                let fixture: KDriveRemoteItem = switch target {
+                case .root: item
+                case .nested: try self.require(self.nested)
+                case .deep: try self.require(self.deep)
+                case .sibling: try self.require(self.sibling)
+                case .seed: try self.require(self.seed)
+                }
+                let url = try await self.visible(fixture)
+                print("finder stability fixture: resolved \(target.rawValue)")
+                return url
+            } catch {
+                print("finder stability fixture: failed \(target.rawValue)")
+                throw error
             }
+        }
+        if scope == .conflict {
+            // The selected race materializes its file and destinations itself.
+            // Deep navigation/hydration belongs to the original suite.
+            _ = try await FinderFixtureNavigation.resolveConflictRoot(using: ui, bind: bind)
+        } else {
+            navigationURLs = try await FinderFixtureNavigation.resolve(using: ui, bind: bind)
         }
     }
 
@@ -244,11 +258,18 @@ final class FinderLiveRunSession {
     }
 
     func signal(_ identifier: NSFileProviderItemIdentifier) async throws {
-        subject(identifier.rawValue)
+        try await signalChanges(in: [identifier])
+    }
+
+    private func signalChanges(in identifiers: [NSFileProviderItemIdentifier]) async throws {
+        for identifier in identifiers { subject(identifier.rawValue) }
+        subject(NSFileProviderItemIdentifier.workingSet.rawValue)
         let manager = context.fileProviderManager
-        try await StabilityCallbackWaiter<Void>().wait(timeout: deadline.remaining()) { completion in
-            manager.signalEnumerator(for: identifier) { error in
-                if let error { completion(.failure(error)) } else { completion(.success(())) }
+        try await FinderReplicatedRefresh.signal(changedContainers: identifiers) { identifier in
+            try await StabilityCallbackWaiter<Void>().wait(timeout: self.deadline.remaining()) { completion in
+                manager.signalEnumerator(for: identifier) { error in
+                    if let error { completion(.failure(error)) } else { completion(.success(())) }
+                }
             }
         }
     }

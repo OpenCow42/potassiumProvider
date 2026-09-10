@@ -115,6 +115,23 @@ struct FinderNavigationTests {
         }
         #expect(result.root == root && result.nested == nested && result.deep == deep && result.sibling == sibling && result.seed == seed)
     }
+    @Test func conflictPreparationDoesNotDependOnDeepNavigationOrSeedHydration() async throws {
+        let ui = NavigationFake(), root = URL(filePath: "/synthetic")
+        var targets: [FinderFixtureNavigation.Target] = []
+        let result = try await FinderFixtureNavigation.resolveConflictRoot(using: ui) { target in
+            targets.append(target)
+            guard target == .root else { throw FinderUIError.timedOut }
+            return root
+        }
+        #expect(result == root && targets == [.root] && ui.calls == [.navigate(root)])
+    }
+    @Test func conflictPreparationStillRequiresAValidRootBinding() async {
+        let ui = NavigationFake()
+        await #expect(throws: FinderUIError.selectionMismatch) {
+            try await FinderFixtureNavigation.resolveConflictRoot(using: ui) { _ in throw FinderUIError.selectionMismatch }
+        }
+        #expect(ui.calls.isEmpty)
+    }
     @Test func failedFixtureBindingCannotNavigateOrResolveDescendants() async {
         let ui = NavigationFake(), root = URL(filePath: "/synthetic")
         var attempts = 0

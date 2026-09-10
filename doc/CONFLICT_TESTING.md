@@ -119,6 +119,15 @@ existing authorized plaintext root under `Private`. No encrypted vault is provis
 | `edit-rename` | Remote rename commits while the Finder edit is held; edited bytes and the remote name both survive. |
 | `edit-move` | Remote move commits while the Finder edit is held; edited bytes and the remote destination both survive. |
 
+Targeted preparation creates a fresh run root and sibling destinations, then binds
+and opens the root. It does not depend on the original suite’s deep-folder seed.
+Each selected race still materializes its own file through Finder, binds every
+mutation target, and verifies its destinations. The original suite retains the
+full nested hierarchy, seed, and navigation assertions. Completed remote fixture
+batches request one `.workingSet` refresh; individual-folder native signals are
+ignored for replicated providers. Signal acknowledgement never satisfies UI,
+remote-state, or callback assertions.
+
 Every result is selected in Finder, captured locally, reopened through Finder in
 TextEdit, and byte-checked. Gate files are scoped to run, case, salted item alias,
 correlation, unique attempt, and scheduling point. An old release cannot satisfy a
@@ -164,3 +173,9 @@ independently, and late work cannot start in an invalidated scope. The live audi
 identified this separate lifecycle defect after the twelve accepted conflict runs.
 Those baseline bundles remain valid for their build; the subsequent provider lifetime
 change requires new platform and live validation before certifying the updated build.
+
+Mac38 finalized 462 Stability tests for the replicated-signaling and independent
+preparation correction. A retained failed-preparation trace separately verifies
+materialization-child cancellation during instance invalidation, so CR-024 is
+mitigated; the failure itself remains non-passing. Complete current-build conflict
+profiles are still required.

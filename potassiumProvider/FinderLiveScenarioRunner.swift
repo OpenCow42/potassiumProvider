@@ -43,7 +43,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                     var stepObservations: [StabilityFinderAPIObservation] = []
                     if session.root == nil {
                         print("finder stability: preparing fixtures with a 90-second budget")
-                        try await session.setup()
+                        try await session.setup(scope: conflictCase == nil ? .fullSuite : .conflict)
                         guard session.deadline.remaining() > .zero else { throw StabilityDeadlineError.expired }
                         // Preparation is a separate bounded operation. Keep its
                         // evidence and elapsed time, then start the navigation

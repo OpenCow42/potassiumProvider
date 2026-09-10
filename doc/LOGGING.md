@@ -336,3 +336,8 @@ stage/reason, safe error class and numeric code, and `eligibleForAcceptance: fal
 This diagnostic does not replace a Finder report or summary. Missing initial process,
 process replacement, and callback deadline failures remain distinct; payloads, error
 domains, URLs, and localized descriptions are excluded.
+
+Fixture preparation traces only the fixed roles `root`, `nested`, `deep`, `sibling`,
+and `seed`, with resolving/resolved/failed states. They exclude paths, file names,
+and raw item identifiers. These traces locate a failed placeholder binding without
+changing its 90-second deadline or treating native signal acknowledgement as proof.

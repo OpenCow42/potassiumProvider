@@ -86,7 +86,17 @@ enum FinderNavigationSequence {
 
 @MainActor
 enum FinderFixtureNavigation {
-    enum Target { case root, nested, deep, sibling, seed }
+    enum Scope { case fullSuite, conflict }
+    enum Target: String { case root, nested, deep, sibling, seed }
+
+    /// A targeted race owns its navigation and hydration. Preparation binds only
+    /// the run root so unrelated deep-hierarchy failures cannot block the race.
+    static func resolveConflictRoot(using ui: any FinderUINavigating,
+                                    bind: (Target) async throws -> URL) async throws -> URL {
+        let root = try await bind(.root)
+        try await ui.navigate(to: root)
+        return root
+    }
 
     /// Open each verified parent before asking File Provider to materialize its
     /// children. Resolving the entire unopened hierarchy can wait for separate

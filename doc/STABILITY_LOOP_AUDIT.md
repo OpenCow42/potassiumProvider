@@ -1400,3 +1400,59 @@ Mac37 finalized **457 passed**, zero failed/skipped/expected failures. This corr
 is confined to the macOS Stability harness; the latest shared-runtime standard macOS,
 iOS/visionOS Simulator, and generic visionOS results above remain applicable.
 The corrected complete live profiles are next.
+
+
+### Replicated refresh signaling and independent conflict preparation
+
+On `e774d08`, content-before-preflight (`72ff51b6-9a27-4b1c-b2be-2ad9ad0e5ba0`)
+sealed as passed. Content-after-preflight (`139a83cb-68fa-450b-8cd1-efd3559d160f`)
+sealed as failed after its 90-second fixture-preparation deadline, before the gate
+or competing mutation. Its windows closed; no failed provider/API span was recorded.
+The exact unresolved fixture role was not in that build’s trace and is not inferred
+from the generic timeout. Independent later cases continued. The failure preserves
+evidence that a targeted conflict could be blocked by the original suite’s unused
+deep hierarchy before exercising its own race.
+
+The harness called native `signalEnumerator` for the root and each generated folder.
+Apple’s replicated-provider contract explicitly ignores those identifiers and
+requires `.workingSet`. Production mutation/action paths already include a
+working-set signal; only the Finder harness omitted it. The correction signals
+once per completed fixture batch, retains all intended subject aliases, and keeps
+actual enumeration/UI/server assertions. Root/folder/duplicate batches and signal
+errors have regression tests. This corrects a documented API misuse; it does not
+establish that ignored signals were the sole cause of the observed deadline.
+
+Conflict preparation now provisions its root and sibling destinations and opens
+only the bound root. Each race still creates, hydrates, edits/moves, verifies, and
+reopens its own file. The original 16-scenario preparation retains both nested
+levels and the seed. Regressions require root binding and prove a conflict does not
+request the unrelated deep/seed bindings. Closed fixture-role traces identify
+future resolution failures. No deadline, conflict gate, byte/identity assertion,
+or callback requirement is relaxed. Validation and a new complete profile remain
+required; the active old-build profile is allowed to finish with evidence preserved.
+
+The old-build profile finished with **five passed and one failed**, all six bundles
+sealed, and no active owner. The conditional warm invocation did not run. The
+remaining passes were rename/rename `8905e0f1-a179-4952-95eb-6246cc4b65ea`,
+move/move `819d702a-a2be-42cc-aa91-d54d1d4c855b`, edit/rename
+`e3710396-4435-4743-8897-431922003165`, and edit/move
+`f5ff88a2-1297-42c7-b923-b1703a973636`. Mac38 finalized **462 passed**, zero
+failed/skipped/expected failures, including the five new signaling/preparation
+regressions. Shared-runtime platform results above are unchanged.
+
+### Materialization lifetime correction exercised live
+
+The failed-preparation bundle `139a83cb-68fa-450b-8cd1-efd3559d160f` also
+exercised the corrected provider lifetime. Acknowledgement
+`7D27532C-80DB-487D-8F8A-182CB146CED1` completed exactly once at 22:22:46 UTC.
+Its child refresh `6ADBD1EC-3F68-40C6-BC24-0490CB88B716` was still active when
+instance invalidation `1FB5887A-BBD6-4E78-92F7-280B09885858` began at
+22:23:52. The child recorded one cancellation terminal (65,492 ms), between
+invalidation start and completion. All 30 child operations completed before that
+invalidation; no child request started afterward and no success followed cancellation.
+This is actual materialization-child evidence, distinct from a periodic-poll
+cancellation. The whole failed run sealed with every diagnostic span terminal.
+CR-024 is **Mitigated**: deterministic and live evidence verify the specific task
+ownership/cancellation correction. The original process-exit cause remains
+unconfirmed, and this supporting trace does not turn the failed conflict case into
+a pass.
