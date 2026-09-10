@@ -656,6 +656,31 @@ public actor StabilityRunCoordinator {
         try StabilityRunLocator.activeRun(rootDirectoryURL: rootDirectoryURL)
     }
 
+    #if STABILITY
+    public func selectConflictProfile(_ selectedCase: StabilityLiveConflictCase, ownedRun: StabilityOwnedRunHandle,
+                                      extensionLaunchMode: StabilityExtensionLaunchMode? = nil) throws {
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard try Self.matchesOwnership(ownedRun, decoder: decoder),
+                  try StabilityRunLocator.activeRunUnlocked(rootDirectoryURL: rootDirectoryURL)?.runID == ownedRun.run.runID else {
+                throw ProviderDiagnosticStoreError.runNotFound(ownedRun.run.runID)
+            }
+            try SecurePOSIXFile.createExclusively(encoder.encode(StabilityConflictProfile(runID: ownedRun.run.runID, selectedCase: selectedCase, extensionLaunchMode: extensionLaunchMode)),
+                at: ownedRun.run.directoryURL.appendingPathComponent("conflict-profile.json"), permissions: 0o400)
+        }
+    }
+    public func recordExtensionLaunch(_ evidence: StabilityExtensionLaunchEvidence, ownedRun: StabilityOwnedRunHandle) throws {
+        try SecurePOSIXFile.withLock(at: coordinatorLockURL, operation: LOCK_EX) {
+            guard evidence.runID == ownedRun.run.runID, try Self.matchesOwnership(ownedRun, decoder: decoder),
+                  try StabilityRunLocator.activeRunUnlocked(rootDirectoryURL: rootDirectoryURL)?.runID == evidence.runID,
+                  SecurePOSIXFile.pathKind(ownedRun.run.finderReportURL) == .missing else {
+                throw ProviderDiagnosticStoreError.runNotFound(ownedRun.run.runID)
+            }
+            try SecurePOSIXFile.createExclusively(encoder.encode(evidence),
+                at: ownedRun.run.directoryURL.appendingPathComponent("extension-launch.json"), permissions: 0o400)
+        }
+    }
+    #endif
+
     /// Assembles closed Finder assertion and API-observation evidence. Each
     /// file replacement is atomic; the immutable report is the commit marker
     /// and can be written only once. Run summary sealing remains a separate
@@ -688,6 +713,28 @@ public actor StabilityRunCoordinator {
                 $0.occurredAt == $1.occurredAt ? $0.id.uuidString < $1.id.uuidString : $0.occurredAt < $1.occurredAt
             }
             try Self.validateFinderDiagnostics(timeline, report: report)
+            #if STABILITY
+            let profileURL = handle.directoryURL.appendingPathComponent("conflict-profile.json")
+            if SecurePOSIXFile.isRegularFile(profileURL) {
+                let profile = try decoder.decode(StabilityConflictProfile.self, from: SecurePOSIXFile.read(profileURL, maximumBytes: 4096))
+                guard profile.runID == handle.runID else { throw StabilityLiveEvidenceError.missingConflict }
+                let requestURL = handle.directoryURL.appendingPathComponent("conflict-request.json")
+                let ticket = SecurePOSIXFile.isRegularFile(requestURL)
+                    ? try JSONDecoder().decode(StabilityConflictBarrier.Ticket.self, from: SecurePOSIXFile.read(requestURL, maximumBytes: 4096)) : nil
+                let released = ticket.map { SecurePOSIXFile.isRegularFile(handle.directoryURL.appendingPathComponent("conflict-" + $0.attemptID.uuidString.lowercased() + "-release")) } ?? false
+                try profile.validate(report: report, ticket: ticket,
+                    reached: ticket.map { StabilityConflictBarrier.reached($0, run: handle) } ?? false,
+                    released: released, diagnostics: timeline)
+                if let mode = profile.extensionLaunchMode, report.stepSummary.passed > 0 {
+                    let launch = try decoder.decode(StabilityExtensionLaunchEvidence.self,
+                        from: SecurePOSIXFile.read(handle.directoryURL.appendingPathComponent("extension-launch.json"), maximumBytes: 4096))
+                    guard launch.mode == mode else { throw StabilityLiveEvidenceError.wrongExtensionBuild }
+                    try launch.validate(runID: handle.runID, report: report, diagnostics: timeline)
+                }
+            } else if report.stepResults.contains(where: { $0.outcome == .skipped(.notSelectedForConflictProfile) }) {
+                throw StabilityLiveEvidenceError.missingConflict
+            }
+            #endif
             if report.schemaVersion >= StabilityFinderRunReport.liveSchemaVersion {
                 try SecurePOSIXFile.replaceAtomically(try encoder.encode(timeline),
                     at: handle.directoryURL.appendingPathComponent("diagnostic-timeline.json"), permissions: 0o400)

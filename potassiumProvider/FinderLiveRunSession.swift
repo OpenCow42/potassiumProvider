@@ -71,6 +71,12 @@ final class FinderLiveRunSession {
         deep = try await createDirectory(name: "Deep", parent: try require(nested))
         sibling = try await createDirectory(name: "Sibling", parent: item)
         seed = try await upload(name: "remote-seed.txt", parent: try require(deep), data: bytes)
+        // Finder can enumerate a newly discovered directory while its children
+        // are still being provisioned remotely. Publish every changed container,
+        // not just the lab root, after all fixture writes have completed.
+        for container in [item, try require(nested), try require(deep), try require(sibling)] {
+            try await signal(NSFileProviderItemIdentifier(String(container.id)))
+        }
         try await signal(.rootContainer)
         // Resolving placeholders and verifying their provider identities is
         // preparation; navigation starts after these read-only bindings finish.

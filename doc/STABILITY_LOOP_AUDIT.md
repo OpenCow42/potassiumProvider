@@ -6,6 +6,94 @@ data, private identifiers, URLs containing identifiers, request/response
 bodies, or credentials. Historical milestone tables below describe their original
 validation. Current live execution and acceptance are recorded separately here.
 
+## 2026-09-10 — Conflict matrix continuation
+
+The same PR now contains a stable two-engine conflict catalog, two persistent
+synthetic plaintext clients, controlled preflight scheduling and failure injection,
+production callback executors/error mapping, and vault replay permutations with
+synthetic minimized reproducers. `doc/CONFLICT_TESTING.md` describes exact entry
+points, case ordering, assertions, and the distinction between model assumptions
+and real server guarantees.
+
+- Finalized deterministic validation: Stability macOS `potassium-conflict-mac-07.xcresult`
+  **414 passed**, standard macOS `potassium-conflict-standard-mac-01.xcresult`
+  **378 passed**, iPhone 17/iOS 26.5 `potassium-conflict-ios-02.xcresult`
+  **362 passed**, Apple Vision Pro/visionOS 26.5
+  `potassium-conflict-vision-sim-01.xcresult` **362 passed**; each has zero failed,
+  skipped, or expected failures. The signed generic visionOS build also succeeded
+  (`potassium-conflict-vision-build-01.log`). After strengthening returned-name
+  assertions, targeted Stability macOS `potassium-conflict-mac-08.xcresult`
+  finalized **19 passed**, zero failed/skipped.
+- The prior Mac06 and iOS01 bundles each retain one cancellation regression
+  failure: the synthetic scheduling gate could release between its last loop
+  cancellation check and return. Earliest divergence: the worker continued to the
+  remote mutation after release. Classification: harness, high confidence. The
+  gate now checks cancellation after release and the test waits for the actual
+  worker terminal before asserting no effects. Mac07/iOS02 are the passing reruns;
+  prior failing bundles remain available. No production cancellation guarantee
+  was inferred from that faulty test gate.
+- Callback inspection and the new regression exposed an encrypted contents+Trash
+  bug: the prior early branch acknowledged contents without applying them.
+  `VaultModificationExecutor` commits supported edits before Trash, uses the
+  committed revisions, preserves pending unsupported fields, and prevents Trash
+  on edit failure. Classification: provider; confidence high from source and
+  deterministic executor tests. The normative register was updated in this change.
+- `595b2e19-4d55-4813-a2bf-92af51b520cf`: targeted live content-after-preflight
+  case failed at the first generated Finder row before the gate. Report: zero
+  passed, one failed, fifteen deliberately unselected. The window closed and the
+  failed bundle was sealed. Explicitly signaling each generated container did not
+  resolve the intermittent empty listing. Root cause remains uncertain.
+- `f5124f0a-d40a-44cb-a362-1c4e9919c33d`: the same targeted case exercised the
+  real held conditional upload, competing remote edit, two preserved byte streams,
+  Finder selection/screenshots, and reopening both versions through TextEdit.
+  The report finalized with one passed and fifteen deliberately unselected;
+  `summary.json` sealed after pending enumeration settled. The read-only AX probe
+  observed the generated rows on this attempt. This is a targeted pass, not a
+  sixteen-scenario acceptance result. No initialization events were present, so
+  it does not establish a cold launch. Remaining live cases and cold/warm
+  acceptance remain open. CR-013 is unchanged.
+
+Latest checkpoint validation, after launch-evidence validation and additional replay
+cases: Stability macOS `potassium-conflict-mac-11.xcresult` **418 passed**;
+standard macOS `potassium-conflict-standard-mac-02.xcresult` **378 passed**;
+iOS `potassium-conflict-ios-03.xcresult` **362 passed**; visionOS Simulator
+`potassium-conflict-vision-sim-02.xcresult` **362 passed**. All are finalized with
+zero failed/skipped/expected failures. Mac09/Mac10 retain initial build failures
+from unavailable imported C/AX constants; Mac11 includes the corrected code.
+The Go to Folder and fresh/running live paths compile but still need live evidence.
+
+### Six-case live profile and remaining navigation failure
+
+The first serial six-case profile produced six immutable bundles; each selected
+case retains one result and fifteen deliberately unselected entries:
+
+| Run | Case | Result |
+| --- | --- | --- |
+| `1fa6de2b-357f-427c-9642-d24e5fb40e62` | content-before-preflight | Passed |
+| `62ba9b99-f444-4f0c-bf66-1178983435f2` | content-after-preflight | Passed |
+| `da404627-f436-4530-a18c-efb9dea2912f` | rename-rename | Passed |
+| `5482f043-e944-4bd9-9f6d-09ec45b7f978` | move-move | Failed before the scheduling gate; generated row absent |
+| `582be3ac-92b1-4293-8556-ef1a3a339f24` | edit-rename | Failed before the scheduling gate; generated row absent |
+| `8f4840b4-e63e-439d-b8d3-c83986bae5ac` | edit-move | Failed before the scheduling gate; generated row absent |
+
+The failures expected the exact generated file in the bound run folder. Observed:
+matching parent/window/list view, zero matching labels, and two AX busy indicators.
+Read-only snapshot inspection found the expected Nested/Sibling/conflict children.
+The run-folder enumeration spans `B61AAE52-078B-48AC-AE8A-8BD3E19AB715`
+(move-move) and `24C583DF-F7E1-4C1C-91B9-E25F4697DDEB` (edit-rename)
+completed in 363 ms and 159 ms respectively. These are supporting observations,
+not proof that Finder received or rendered the observer result. Classification:
+UI automation/environment remains unresolved; root-cause confidence low. Reproduce
+with `--conflicts --case move-move --yes-live`. No competing mutation was triggered
+in the failed cases. A native Go to Folder navigation path is being validated;
+no fix or complete live acceptance is claimed yet.
+
+All run-owned windows closed. Earlier bundles remain available. The invoking shell
+also reported a parse error after the app exited because the script was edited
+while that invocation was still reading it. The current script passes `bash -n`;
+this separate harness-development error does not alter the six sealed app reports.
+Do not edit the command script during a live invocation.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on

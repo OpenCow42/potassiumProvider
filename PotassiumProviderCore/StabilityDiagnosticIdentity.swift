@@ -26,6 +26,15 @@ public enum StabilityDiagnosticIdentity {
         return codeHash(code)
     }
 
+    public static func codeHash(forProcessIdentifier pid: Int32) -> String? {
+        var code: SecCode?
+        let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
+        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return nil }
+        return codeHash(staticCode)
+    }
+
     private static func codeHash(_ code: SecStaticCode) -> String? {
         var information: CFDictionary?
         guard SecCodeCopySigningInformation(code, [], &information) == errSecSuccess,

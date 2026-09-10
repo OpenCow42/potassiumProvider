@@ -112,17 +112,40 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         }
     }
 
+    func conflicts(requestPermissions: Bool, selectedCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult {
+        var failed = false
+        for conflict in selectedCase.map({ [$0] }) ?? StabilityLiveConflictCase.allCases {
+            print("finder conflict case: " + conflict.rawValue)
+            let result = await run(requestPermissions: requestPermissions, conflictCase: conflict, extensionLaunchMode: extensionLaunchMode)
+            if result != .completed { failed = true }
+            // An unsealed run still owns the recorder. Do not repurpose its
+            // evidence or recover it automatically while the owner is alive.
+            if (try? await runCoordinatorProvider().activeRun()) != nil { return .failed }
+        }
+        return failed ? .failed : .completed
+    }
+
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult {
+        await run(requestPermissions: requestPermissions, conflictCase: nil)
+    }
+
+    private func run(requestPermissions: Bool, conflictCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode? = nil) async -> FinderStabilityCommandResult {
         let reportStartedAt = Date()
         let runCoordinator: StabilityRunCoordinator
         let ownedRun: StabilityOwnedRunHandle
+        let launchController: StabilityExtensionProcessController?
         do {
             // Domain discovery or visible-root resolution may launch the
             // extension. Its first callback must already have a recorder.
             runCoordinator = try runCoordinatorProvider()
             ownedRun = try await runCoordinator.startOwnedRun()
             try statusWriter(StabilityLiveStatus(state: .preflight), ownedRun.run)
+            if let conflictCase {
+                try await runCoordinator.selectConflictProfile(conflictCase, ownedRun: ownedRun, extensionLaunchMode: extensionLaunchMode)
+            }
+            launchController = try extensionLaunchMode.map { try StabilityExtensionProcessController(mode: $0, run: ownedRun.run) }
         } catch {
+            print("finder conflict: extension launch preparation could not establish the requested initial state")
             return .failed
         }
         let preflightContext: FinderStabilityPreflightContext
@@ -161,6 +184,9 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         do {
             // Reconstruct after the run starts so typed network spans bind to
             // this run's active JSONL recorder instead of a cached nil sink.
+            if preflightCommandResult == .ready {
+                try await launchController?.prepare(verifySafety: preflightContext.verifySafety)
+            }
             context = try await contextLoader.load(
                 ownedRun: ownedRun,
                 runCoordinator: runCoordinator
@@ -174,7 +200,9 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
 
         let execution: FinderStabilityScenarioExecution
         if preflightCommandResult == .ready {
-            execution = await scenarioRunner.run(context: context)
+            if let conflictCase {
+                execution = await LiveFinderStabilityScenarioRunner(conflictCase: conflictCase).run(context: context)
+            } else { execution = await scenarioRunner.run(context: context) }
         } else {
             let skipReason: StabilityFinderStepSkipReason = preflightCommandResult == .checkpoint
                 ? .preflightCheckpoint
@@ -195,6 +223,10 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
                 preflightResults: preflight,
                 stepResults: execution.stepResults
             )
+            if report.stepSummary.passed > 0, let launchController {
+                let launch = try launchController.evidence(report: report)
+                try await runCoordinator.recordExtensionLaunch(launch, ownedRun: ownedRun)
+            }
             try await runCoordinator.writeFinderEvidence(
                 ownedRun: ownedRun,
                 report: report,
@@ -221,7 +253,11 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             if report.preflightSummary.checkpointed > 0 || report.stepSummary.checkpointed > 0 {
                 return .checkpoint
             }
-            guard report.stepSummary.passed == StabilityFinderScenario.allCases.count else { return .failed }
+            if let conflictCase {
+                guard report.stepResults.first(where: { $0.scenario == conflictCase.scenario })?.outcome == .passed else { return .failed }
+            } else {
+                guard report.stepSummary.passed == StabilityFinderScenario.allCases.count else { return .failed }
+            }
             return .completed
         } catch {
             // A report is the commit marker for the two evidence JSONL files.

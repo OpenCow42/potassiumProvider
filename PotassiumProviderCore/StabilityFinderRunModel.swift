@@ -128,6 +128,7 @@ public enum StabilityFinderStepSkipReason: String, Codable, Equatable, Hashable,
     case preflightCheckpoint
     case earlierStepFailure
     case earlierStepCheckpoint
+    case notSelectedForConflictProfile
 }
 
 /// Exactly one case is persisted for every planned step.

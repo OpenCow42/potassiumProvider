@@ -66,11 +66,53 @@ final class SystemFinderUIDriver: FinderUIDriving {
     private var actionPanelIdentifier: String?
     private var selectedDeletionRequested = false
     private var lastRowObservation: String?
+    private var ownedEditorDocuments: [URL: FinderProcessIdentity] = [:]
 
     func useDeadline(_ remaining: @escaping @MainActor () -> Duration) { remainingTime = remaining }
     func expectActionPanel(for alias: UUID) { actionPanelIdentifier = "provider.stability.action." + alias.uuidString }
 
     func closeOwnedWindows() async throws {
+        let deadline = StabilityDeadline(budget: .seconds(90))
+        remainingTime = { deadline.remaining() }
+        var failure: Error?
+        do { try await closeOwnedEditorDocuments() } catch { failure = error }
+        do { try await closeOwnedFinderWindows() } catch { failure = failure ?? error }
+        if let failure { throw failure }
+    }
+
+    private func closeOwnedEditorDocuments() async throws {
+        for (url, owner) in ownedEditorDocuments {
+            guard processIdentity(pid: owner.pid) == owner,
+                  let editor = NSRunningApplication(processIdentifier: owner.pid),
+                  editor.bundleIdentifier == "com.apple.TextEdit" else {
+                ownedEditorDocuments[url] = nil; continue
+            }
+            guard let document = editorDocument(url, editor: editor) else {
+                ownedEditorDocuments[url] = nil; continue
+            }
+            _ = AXUIElementPerformAction(document, kAXRaiseAction as CFString)
+            editor.activate()
+            try await wait { NSWorkspace.shared.frontmostApplication?.processIdentifier == editor.processIdentifier }
+            if let close = attribute(document, kAXCloseButtonAttribute), CFGetTypeID(close) == AXUIElementGetTypeID(),
+               (attribute(close as! AXUIElement, kAXEditedAttribute) as? Bool) == true {
+                // Preserve the generated document's current bytes on failure;
+                // never dismiss a save prompt by discarding or quitting TextEdit.
+                try await editorMenu("File", item: "Save", documentURL: url, editor: editor)
+                try await wait {
+                    guard let fresh = self.editorDocument(url, editor: editor),
+                          let button = self.attribute(fresh, kAXCloseButtonAttribute), CFGetTypeID(button) == AXUIElementGetTypeID() else { return false }
+                    return (self.attribute(button as! AXUIElement, kAXEditedAttribute) as? Bool) == false
+                }
+            }
+            guard let fresh = editorDocument(url, editor: editor),
+                  let button = attribute(fresh, kAXCloseButtonAttribute), CFGetTypeID(button) == AXUIElementGetTypeID(),
+                  AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success else { throw FinderUIError.editorUnavailable }
+            try await wait { self.editorDocument(url, editor: editor) == nil }
+            ownedEditorDocuments[url] = nil
+        }
+    }
+
+    private func closeOwnedFinderWindows() async throws {
         let cleanupDeadline = StabilityDeadline(budget: .seconds(90))
         remainingTime = { cleanupDeadline.remaining() }
         guard let ownership = windowOwner else { return }
@@ -92,18 +134,22 @@ final class SystemFinderUIDriver: FinderUIDriving {
 
     private func finderProcessIdentity() -> FinderProcessIdentity? {
         guard let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else { return nil }
-        // LaunchServices may omit Finder's launchDate when it started at login.
-        // The kernel's process start time still distinguishes PID reuse.
+        return processIdentity(pid: finder.processIdentifier)
+    }
+
+    private func processIdentity(pid: Int32) -> FinderProcessIdentity? {
+        // The kernel start time distinguishes PID reuse, even when
+        // LaunchServices omits the application's launch date.
         var info = proc_bsdinfo()
         let size = MemoryLayout<proc_bsdinfo>.stride
-        guard proc_pidinfo(finder.processIdentifier, PROC_PIDTBSDINFO, 0, &info, Int32(size)) == size else { return nil }
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(size)) == size else { return nil }
         let launchedAt = Date(timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000)
-        return FinderProcessIdentity(pid: finder.processIdentifier, launchedAt: launchedAt)
+        return FinderProcessIdentity(pid: pid, launchedAt: launchedAt)
     }
 
     func navigate(to url: URL) async throws {
-        if let windowID {
-            _ = try script("set target of Finder window id \(windowID) to (POSIX file \(quote(url.path)) as alias)", operation: .navigate)
+        if windowID != nil {
+            try await navigateWithGoToFolder(url)
         } else {
             guard let owner = finderProcessIdentity() else { throw FinderUIError.finderUnavailable }
             windowID = try script("set w to make new Finder window to (POSIX file \(quote(url.path)) as alias)\nreturn id of w", operation: .createWindow).int32Value
@@ -114,6 +160,31 @@ final class SystemFinderUIDriver: FinderUIDriving {
         selectionURL = nil
         try await wait { try self.verifyWindow(url) }
         actionCount += 1
+    }
+
+    private func navigateWithGoToFolder(_ url: URL) async throws {
+        // Finder can acknowledge an Apple Event target change while its list
+        // remains busy indefinitely. Exercise Finder's normal navigation sheet
+        // and verify the original window identity after the UI accepts the path.
+        try await activateFinder()
+        guard let window = finderWindowAX() else { throw FinderUIError.windowMismatch }
+        try key(5, flags: [.maskCommand, .maskShift]) // Go to Folder
+        var field: AXUIElement?
+        try await wait {
+            let sheets = self.elements(window).filter { self.string($0, kAXRoleAttribute) == kAXSheetRole }
+            guard sheets.count == 1, let sheet = sheets.first else { return false }
+            let fields = self.elements(sheet).filter { self.string($0, kAXRoleAttribute) == kAXTextFieldRole }
+            guard fields.count == 1, let candidate = fields.first else { return false }
+            field = candidate
+            return true
+        }
+        guard let field, AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, url.path as CFString) == .success else {
+            throw FinderUIError.controlUnavailable
+        }
+        try await wait { self.string(field, kAXValueAttribute) == url.path }
+        try key(36)
+        try await wait { try self.verifyWindow(url) }
+        print("finder stability UI: Go to Folder navigation verified")
     }
 
     func navigateHistory(back: Bool, expectedURL: URL) async throws {
@@ -317,6 +388,8 @@ final class SystemFinderUIDriver: FinderUIDriving {
         }
         guard documents.count == 1, let document = documents.first,
               AXUIElementPerformAction(document, kAXRaiseAction as CFString) == .success else { throw FinderUIError.editorUnavailable }
+        guard let owner = processIdentity(pid: editor.processIdentifier) else { throw FinderUIError.editorUnavailable }
+        ownedEditorDocuments[url] = owner
         editor.activate()
         try await wait { NSWorkspace.shared.frontmostApplication?.processIdentifier == editor.processIdentifier }
         guard let focused = attribute(editorAX, kAXFocusedWindowAttribute), CFEqual(focused, document) else { throw FinderUIError.editorUnavailable }
@@ -361,6 +434,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
                 FinderUIURLIdentity.matches(self.string($0, kAXDocumentAttribute).flatMap(URL.init(string:)), url)
             }
         }
+        ownedEditorDocuments[url] = nil
         actionCount += 1
     }
 

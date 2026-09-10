@@ -230,6 +230,12 @@ their diagnostics, so its total duration can exceed one scenario budget.
 File creation uses Finder copy/paste; editing opens Finder's selection in TextEdit
 and saves only the verified document.
 
+For independent two-client conflict testing, use `--conflicts --yes-live`, optionally
+with `--case content-after-preflight` (or another case listed in
+[Conflict testing](CONFLICT_TESTING.md)). Each selected case owns fresh fixtures and
+an immutable profile manifest. Unrelated scenarios are explicitly unselected; a
+conflict-profile pass never satisfies the original sixteen-scenario acceptance.
+
 The 16 scenarios cover navigation/change anchors, hydration, eviction, download,
 file/directory creation, edit/upload, rename, move, trash, restore, permanent
 selected-item deletion, concurrent preserve-both, cancellation/progress, actual

@@ -1,0 +1,119 @@
+# Conflict testing
+
+The conflict suite exercises production resolution code with two isolated
+persistent clients, production callback executors, and separately opted-in Finder
+races. `CONFLICT_RESOLUTION_TRUTH_TABLE.md` remains normative. Passing a model test
+is not proof of a live server guarantee or a complete Finder acceptance run.
+
+## Deterministic coverage
+
+`ConflictCase` assigns stable IDs, engine, ordering, expected resolution, and
+recovery assertions. `ConflictMatrixTests` uses a stateful typed service with
+persistent metadata/bytes, conditional versions, parent validation, collision
+allocation, and idempotency tokens. Each client retains its own cached version and
+staged bytes across reconstruction. The service double's idempotency is a specified
+model assumption; it is not new evidence of a kDrive guarantee. The catalog records
+competing operations and unresolved finding IDs as well as expected policy. Lost
+replacement responses and lost directory-create responses deliberately assert the
+current conservative duplicate behavior and keep CR-009 unresolved; these are
+policy regressions, not proof of exactly-once effects.
+
+The plaintext matrix covers stale and missing versions, a competing write after
+preflight, fail-on-conflict, rename/move combinations, normalized collisions,
+edit versus Trash, stale deletion, lost create/conflict-copy responses, same-name identity replacement, repeated
+metadata delivery, and parent
+movement/removal. Failure injection covers offline, authentication, permissions,
+throttling, quota, and cancellation. Assertions inspect identities, parentage,
+versions, bytes, staged recovery contents, and subsequent reads.
+
+Both callback executors are called by the real extension. Parameterized tests
+cover combined contents/name/parent changes, contents plus Trash, and unsupported
+fields. The vault executor now applies supported changes before Trash, uses the
+committed revisions, and leaves unsupported fields pending. Missing content URLs
+fail before mutation. Lifecycle tests run the plaintext executor under actual
+`FileProviderOperationLifecycle` cancellation and check retained bytes, absence of
+server mutation, and no late success. Error tests call the production mapper.
+
+Vault matrix entries reuse the normative journal/service regressions. Additional
+coverage runs 32 deterministic seeds, six competing writers, reverse delivery and
+12 shuffled orders per seed. It checks preserved content revisions, canonical
+results, conflict copies, and two encrypted SQLite stores reopened after persistence.
+Metadata conflicts, stale purge, duplicate journal records, and causally valid
+reproducer reduction have dedicated tests. Divergent replay writes a synthetic
+seed and minimized journal under the local temporary `potassium-conflict-failures`
+directory; no live data or credential is included.
+
+Run the unit target through Xcode, for example:
+
+```sh
+xcodebuild test -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability -destination 'platform=macOS' \
+  -only-testing:potassiumProviderTests
+```
+
+Use the standard scheme and the documented iPhone 17/iOS 26.5 and Apple Vision
+Pro/visionOS 26.5 destinations for shared-runtime regression validation. Do not run
+hosted tests or simulators during live Finder execution: they can register another
+extension build or steal UI focus.
+
+## Independent live cases
+
+```sh
+# One focused reproduction, reusing the ordinary signed app:
+scripts/run-finder-stability.sh --conflicts --case content-after-preflight --yes-live
+
+# All six cases, serially; each gets a new run and generated subtree:
+scripts/run-finder-stability.sh --conflicts --yes-live
+
+# Acceptance profiles require explicit process lifecycle evidence:
+scripts/run-finder-stability.sh --conflicts --extension-state fresh --yes-live
+scripts/run-finder-stability.sh --conflicts --extension-state running --yes-live
+```
+
+The fresh profile verifies the lab first, waits for recorded work to settle, then
+terminates only the exact signed embedded provider process. Domain access launches
+the replacement while the recorder is active. It never terminates Finder, TextEdit,
+or the system File Provider daemon. The running profile requires the existing
+process to survive from before preflight until sealing; it does not start a process
+and call that a warm run. Failed lifecycle evidence cannot certify a case.
+
+Use `--build` to explicitly rebuild/install. Consent handling and `--watch` are
+shared with the Finder runner. Credentials remain in Keychain; the lab is the
+existing authorized plaintext root under `Private`. No encrypted vault is provisioned.
+
+| Case | Controlled ordering and required result |
+| --- | --- |
+| `content-before-preflight` | Hold after staging but before metadata lookup; competing remote edit commits; both byte streams must survive under distinct identities. |
+| `content-after-preflight` | Hold after matching version preflight; competing replacement commits; the real conditional write conflicts and both versions survive. |
+| `rename-rename` | Remote rename commits while the Finder rename is held after preflight; local rename intent wins on the same identity. |
+| `move-move` | Remote move commits while the Finder move is held after preflight; local destination wins and bytes stay unchanged. |
+| `edit-rename` | Remote rename commits while the Finder edit is held; edited bytes and the remote name both survive. |
+| `edit-move` | Remote move commits while the Finder edit is held; edited bytes and the remote destination both survive. |
+
+Every result is selected in Finder, captured locally, reopened through Finder in
+TextEdit, and byte-checked. Gate files are scoped to run, case, salted item alias,
+correlation, unique attempt, and scheduling point. An old release cannot satisfy a
+later case. Cancellation/expiry ends the held attempt; overlapping claims fail
+instead of bypassing the gate. Direct API calls perform the competing mutation and
+verification only.
+
+`conflict-profile.json` declares the narrower selection. The ordinary immutable
+Finder report still has all 16 entries; unrelated scenarios are explicitly
+`notSelectedForConflictProfile`. Sealing validates the selected case's exact gate
+and callback evidence. One targeted success never becomes a 16-scenario pass.
+Failed fixtures, screenshots, and diagnostics remain available. Finder and TextEdit
+cleanup addresses only owned windows/documents; dirty generated documents are saved,
+never silently discarded. An unavailable cleanup control leaves incomplete evidence.
+
+## Acceptance and remaining limitations
+
+Live acceptance requires finalized evidence for all selected cases with a freshly
+launched and an already-running extension. Missing initialization telemetry cannot
+prove a cold run. The original sixteen-scenario suite and its acceptance gate are
+unchanged. Live results and platform validation are recorded in
+`STABILITY_LOOP_AUDIT.md`; implementation alone does not establish live acceptance.
+
+Keep permanent-delete CR-013 open. These six live cases do not permanently delete
+fixtures. Permanent deletion in the original suite still requires exact generated
+item confirmation. Directory-create reconciliation, ambiguous replacement success,
+and server-dependent guarantees must not be inferred from the controlled service.

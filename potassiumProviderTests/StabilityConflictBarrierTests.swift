@@ -11,6 +11,40 @@ struct StabilityConflictBarrierTests {
         return StabilityRunHandle(runID: UUID(), directoryURL: directory)
     }
 
+    @Test func oldAttemptCannotReleaseNextCaseAndWrongPointCannotArrive() async throws {
+        let run = try makeRun(), correlation = UUID()
+        defer { try? FileManager.default.removeItem(at: run.directoryURL) }
+        let old = try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation, activeRunID: run.runID)
+        try StabilityConflictBarrier.release(old, run: run, activeRunID: run.runID)
+        let next = try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation,
+            caseID: .renameRename, activeRunID: run.runID)
+        #expect(old.attemptID != next.attemptID)
+        #expect(throws: CancellationError.self) { try StabilityConflictBarrier.release(old, run: run, activeRunID: run.runID) }
+        try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: "fixture", correlationID: correlation,
+            point: .afterContentPreflight, activeRun: { run })
+        #expect(!StabilityConflictBarrier.reached(next, run: run))
+        #expect(throws: CancellationError.self) {
+            try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation, activeRunID: run.runID)
+        }
+        try StabilityConflictBarrier.release(next, run: run, activeRunID: run.runID)
+    }
+
+    @Test func expiredAttemptDoesNotBlockTheNextCase() async throws {
+        let run = try makeRun(), correlation = UUID()
+        defer { try? FileManager.default.removeItem(at: run.directoryURL) }
+        let first = try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation, activeRunID: run.runID)
+        await #expect(throws: CancellationError.self) {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: "fixture", correlationID: correlation,
+                budget: .milliseconds(5), activeRun: { run })
+        }
+        await #expect(throws: CancellationError.self) {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: "fixture", correlationID: correlation, activeRun: { run })
+        }
+        let second = try StabilityConflictBarrier.arm(run: run, itemIdentifier: "fixture", correlationID: correlation, activeRunID: run.runID)
+        #expect(first.attemptID != second.attemptID)
+        #expect(!StabilityConflictBarrier.reached(second, run: run))
+    }
+
     @Test func unrelatedItemsAndCorrelationsNeverReachTheBarrier() async throws {
         let run = try makeRun(), correlation = UUID()
         defer { try? FileManager.default.removeItem(at: run.directoryURL) }

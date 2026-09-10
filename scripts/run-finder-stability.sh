@@ -11,11 +11,13 @@ MODE="preflight"
 REQUEST_PERMISSIONS=0
 CONFIRMED_LIVE=0
 CONFIRMED_RECOVERY=0
+CONFLICT_CASE=""
+EXTENSION_STATE=""
 
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/run-finder-stability.sh [--app PATH | --build] [--preflight] [--provision --yes-live] [--run --yes-live] [--watch] [--recover-stale-run --yes-recover] [--request-permissions]
+  scripts/run-finder-stability.sh [--app PATH | --build] [--preflight] [--provision --yes-live] [--run --yes-live] [--conflicts [--case CASE] --yes-live] [--watch] [--recover-stale-run --yes-recover] [--request-permissions]
 
 Options:
   --app PATH              Use a specific existing macOS Stability app.
@@ -24,8 +26,11 @@ Options:
   --provision             Create or resume the isolated lab inside Private using the saved Keychain account.
   --watch                 Show sanitized active-run diagnostics without mutation.
   --run                   Execute the verified disposable-root scenario sequence.
+  --conflicts             Run independent conflict cases, each with fresh fixtures and evidence.
+  --case CASE             Select one conflict case; requires --conflicts.
+  --extension-state MODE  Require fresh or running extension evidence for --conflicts.
   --recover-stale-run     Preserve and abandon a local run whose owner process has exited.
-  --yes-live              Required with --run or --provision; confirms the saved development account and lab may be mutated.
+  --yes-live              Required with --run, --provision, or --conflicts; confirms the saved development account and lab may be mutated.
   --yes-recover           Required with --recover-stale-run; confirms local evidence recovery.
   --request-permissions   Ask macOS to present Accessibility/Finder Automation consent prompts.
   --help                  Show this help.
@@ -65,6 +70,20 @@ while [[ $# -gt 0 ]]; do
       MODE="run"
       shift
       ;;
+    --conflicts)
+      MODE="conflicts"
+      shift
+      ;;
+    --extension-state)
+      if [[ $# -lt 2 || -z "$2" || -n "$EXTENSION_STATE" ]]; then exit 2; fi
+      EXTENSION_STATE="$2"
+      shift 2
+      ;;
+    --case)
+      if [[ $# -lt 2 || -z "$2" ]]; then exit 2; fi
+      CONFLICT_CASE="$2"
+      shift 2
+      ;;
     --recover-stale-run)
       MODE="recover"
       shift
@@ -93,12 +112,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ( "$MODE" == "run" || "$MODE" == "provision" ) && "$CONFIRMED_LIVE" -ne 1 ]]; then
-  echo "error: --run and --provision require --yes-live" >&2
+if [[ -n "$EXTENSION_STATE" && ( "$MODE" != "conflicts" || ( "$EXTENSION_STATE" != "fresh" && "$EXTENSION_STATE" != "running" ) ) ]]; then
+  echo "error: --extension-state requires --conflicts and fresh or running" >&2
   exit 2
 fi
-if [[ "$MODE" != "run" && "$MODE" != "provision" && "$CONFIRMED_LIVE" -eq 1 ]]; then
-  echo "error: --yes-live is accepted only with --run or --provision" >&2
+if [[ ( "$MODE" == "run" || "$MODE" == "provision" || "$MODE" == "conflicts" ) && "$CONFIRMED_LIVE" -ne 1 ]]; then
+  echo "error: --run, --provision, and --conflicts require --yes-live" >&2
+  exit 2
+fi
+if [[ "$MODE" != "run" && "$MODE" != "provision" && "$MODE" != "conflicts" && "$CONFIRMED_LIVE" -eq 1 ]]; then
+  echo "error: --yes-live is accepted only with --run, --provision, or --conflicts" >&2
   exit 2
 fi
 if [[ "$MODE" == "recover" && "$CONFIRMED_RECOVERY" -ne 1 ]]; then
@@ -116,6 +139,17 @@ fi
 if [[ "$MODE" == "recover" && "$REQUEST_PERMISSIONS" -eq 1 ]]; then
   echo "error: --request-permissions is not accepted with --recover-stale-run" >&2
   exit 2
+fi
+
+if [[ -n "$CONFLICT_CASE" && "$MODE" != "conflicts" ]]; then
+  echo "error: --case requires --conflicts" >&2
+  exit 2
+fi
+if [[ -n "$CONFLICT_CASE" ]]; then
+  case "$CONFLICT_CASE" in
+    content-before-preflight|content-after-preflight|rename-rename|move-move|edit-rename|edit-move) ;;
+    *) echo "error: unknown conflict case" >&2; exit 2 ;;
+  esac
 fi
 
 if [[ -n "$APP_PATH" && "$BUILD_APP" -eq 1 ]]; then
@@ -186,7 +220,9 @@ if [[ ! -x "$EXECUTABLE_PATH" ]]; then
 fi
 
 COMMAND_ARGS=(--finder-stability "$MODE")
-if [[ "$MODE" == "run" || "$MODE" == "provision" ]]; then
+if [[ -n "$EXTENSION_STATE" ]]; then COMMAND_ARGS+=(--extension-state "$EXTENSION_STATE"); fi
+if [[ -n "$CONFLICT_CASE" ]]; then COMMAND_ARGS+=(--case "$CONFLICT_CASE"); fi
+if [[ "$MODE" == "run" || "$MODE" == "provision" || "$MODE" == "conflicts" ]]; then
   COMMAND_ARGS+=(--yes-live)
 fi
 if [[ "$MODE" == "recover" ]]; then

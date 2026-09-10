@@ -8,6 +8,42 @@ import Testing
 @MainActor
 @Suite("Finder Stability command")
 struct FinderStabilityCommandTests {
+    @Test func conflictProfileRequiresLiveOptInAndExactCaseSelection() throws {
+        #expect(throws: FinderStabilityArgumentError.liveConfirmationRequired) {
+            try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability", "conflicts"])
+        }
+        let parsed = try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability", "conflicts", "--yes-live", "--case", "edit-move"])
+        #expect(parsed == .execute(FinderStabilityCommandOptions(mode: .conflicts, requestPermissions: false, conflictCase: .editMove)))
+        for arguments in [
+            ["run", "--yes-live", "--case", "edit-move"],
+            ["conflicts", "--yes-live", "--case", "unknown"],
+            ["conflicts", "--yes-live", "--case"],
+            ["conflicts", "--yes-live", "--case", "edit-move", "--case", "edit-move"]
+        ] {
+            #expect(throws: FinderStabilityArgumentError.unknownOption) {
+                try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability"] + arguments)
+            }
+        }
+    }
+
+    @Test func launchStateSelectionIsClosedAndConflictOnly() throws {
+        for mode in [StabilityExtensionLaunchMode.fresh, .running] {
+            let parsed = try FinderStabilityArgumentParser.parse(arguments:
+                ["app", "--finder-stability", "conflicts", "--yes-live", "--extension-state", mode.rawValue])
+            #expect(parsed == .execute(.init(mode: .conflicts, requestPermissions: false, extensionLaunchMode: mode)))
+        }
+        for arguments in [
+            ["run", "--yes-live", "--extension-state", "fresh"],
+            ["conflicts", "--yes-live", "--extension-state", "unknown"],
+            ["conflicts", "--yes-live", "--extension-state"],
+            ["conflicts", "--yes-live", "--extension-state", "fresh", "--extension-state", "running"]
+        ] {
+            #expect(throws: FinderStabilityArgumentError.unknownOption) {
+                try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability"] + arguments)
+            }
+        }
+    }
+
     @Test func recorderStartsBeforePreflightCanEmitItsFirstCallback() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -15,6 +15,28 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+2026-09-10 conflict-matrix continuation: the production plaintext and vault
+`modifyItem` sequences now run through shared injected executors. Regression
+coverage checks combined contents/name/parent changes, pending fields, contents
+plus Trash, invalid missing-content requests, cancellation, and the production
+error mapper. The vault callback previously took an early Trash branch and returned
+no pending fields, silently ignoring combined edits. It now commits supported
+edits first, then trashes using the returned revisions; a failed edit never invokes
+Trash. Unsupported fields, including currently unsupported standalone vault dates,
+remain pending. This is a callback correctness fix, not a new vault conflict policy.
+`ModificationCallbackTests` records the affected decision cells below.
+
+Permanent-delete preflight now uses the typed Trash metadata endpoint when supplied
+by the remote service, instead of treating active-item 404 as authoritative absence
+of a trashed identity. `ConflictDeletionTests` keeps active metadata unavailable
+while verifying deletion against the exact Trash identity and repeated authoritative
+absence. Existing version guards and the open CR-013 server race remain unchanged.
+
+The deterministic matrix and independent live conflict profile are documented in
+`CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot
+certify the original sixteen-scenario suite. Current validation and preserved live
+failure/rerun evidence are in `STABILITY_LOOP_AUDIT.md`.
+
 An earlier live run passed ten scenarios through Trash, then failed Restore
 because the metadata callback queried the active-item endpoint for a trashed
 identity (HTTP 404 mapped to `.cannotSynchronize`). Metadata lookup now falls
@@ -120,6 +142,8 @@ open; no underlying server permanent-delete guarantee has changed.
 
 | Scenario | Required deterministic result | Destructive action permitted? | Regression evidence |
 |---|---|---:|---|
+| File Provider callback combines supported edits and Trash | Commit supported edits first; trash only after success using the committed content and metadata revisions. Failed edits prevent Trash; unsupported fields remain pending. | Reversible Trash only after successful edit | `ModificationCallbackTests.vaultCombinedTrashUsesCommittedRevisionsAndPreservesUnsupportedFields`, `vaultMissingContentsCannotTrashOrModify` |
+| File Provider callback contains unsupported fields or standalone vault modification date | Return those fields pending; never acknowledge a mutation the vault service did not perform. | No | `ModificationCallbackTests.vaultUnsupportedFieldsAndDateAreNotFalselyAcknowledged` |
 | Concurrent edits change the same file content from one base | Canonical winner retains the logical UUID; every loser becomes a stable conflict copy with independently authenticated metadata. Replay order cannot change the result. | No | `VaultJournalTests.concurrentContentEditsConvergeForEveryReplayOrder` |
 | One concurrent edit changes content and another changes metadata | Merge both independent changes. | No | `VaultJournalTests.independentConcurrentContentAndMetadataEditsMerge` |
 | Concurrent metadata edits disagree | Canonical transaction ordering selects the visible metadata and emits an opaque metadata conflict. | No | Existing randomized reducer coverage; dedicated expansion remains desirable. |
@@ -423,7 +447,7 @@ implementation audit for updated run/test results. `CR-013` is still **Open**.
 | Finder Stability existing-item mutation | Explicit `--yes-live`; exact lab preflight is fresh; the user-visible URL resolves once immediately before the mutation to the expected stable item ID and configured domain, and that validated identifier is reused for eviction. A move also resolves its destination directory to the expected stable ID and domain. | Perform the scenario mutation only while both bindings match; otherwise fail the step before changing local or remote state. | Edit, rename, move, and trash use the normal File Provider callback path. Eviction is local only. Preserve-both setup deliberately combines a direct conditional remote replacement with a bound local write. | Low. Stable-ID/domain binding closes same-path replacement drift; a narrow request-time race remains after the final lookup, while trash remains reversible and content/version conflicts retain the existing preserve-both policy. | Correct the lab/Finder state and retry. Restore trash or compare preserved versions if a later callback fails. |
 | Finder Stability root-targeted create | Explicit `--yes-live`; immediately before each scenario the cached visible root URL still resolves as the File Provider root-container identifier in the configured lab domain, in addition to fresh saved/registered/remote lab evidence | Create the scenario file or directory only below that bound root URL; otherwise fail before the local write | Normal File Provider create callback path | Low. The repeated root-container/domain binding prevents a stale cached mount path from redirecting a write outside the lab; a narrow request-time race remains after resolution. | Repair File Provider registration/consent or the lab mount, then retry. |
 | Finder Stability restore/permanent-delete scenarios | Explicit live opt-in; generated run ownership and ancestry; trashed item resolves to the exact stable ID and provider domain; exact selected fixture confirmation before irreversible deletion and fresh binding afterward | Invoke Restore or selected-item Delete Immediately through Finder. Restore requires the completed item-specific callback, matching remote identity/parent/bytes, and exact local destination parent/name before UI selection. A stale Trash URL cannot pass. Retain a blocked/failed result when exact identity or control is unavailable. Never Empty Trash. | Provider restore action or `deleteItem` callback; no direct API substitute | `CR-013` remains open: a disposable-file success does not create a server-side conditional-delete guarantee. | Retain evidence and run fixtures on failure; inspect the exact item without broadening Trash selection. |
-| Stability conflict ordering barrier | macOS Stability lab only; active run/step and salted item alias match; local mutation has passed normal version preflight | Hold the real conditional replacement until the competing remote replacement completes; release on error/cancellation and enforce a deadline | Original real conditional request after release; normal preserve-both policy handles the response | No production policy change. Missing barrier arrival or missing two-version evidence cannot pass the live test. | Stop the run, retain staged/generated data, and inspect correlated spans. |
+| Stability conflict ordering barrier | macOS Stability lab only; active run/case/step, attempt, scheduling point, and salted item alias match | Hold content before/after preflight or metadata after preflight until the competing remote operation completes; release on error/cancellation and enforce a deadline | Original real conditional request after release; normal preserve-both policy handles the response | No production policy change. Missing barrier arrival or missing two-version evidence cannot pass the live test. | Stop the run, retain staged/generated data, and inspect correlated spans. |
 | Ownership marker codec compatibility | Remote numeric dates and local ISO-8601 dates identify the same marker but differ below one second | Normalize only creation-time precision to the persisted seconds; continue exact UUID, root, drive, and parent matching | None for an existing marker | Fixes self-rejection without changing the mutation target or rewriting remote evidence. | Retry registration using the saved ownership record. |
 
 | Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
@@ -440,6 +464,8 @@ implementation audit for updated run/test results. `CR-013` is still **Open**.
 | Staging fails | Stage write fails before any server mutation | Propagate local storage failure. | No | High: provider could not obtain its own durable copy, though File Provider still owns the callback URL. | Free local space and retry; no provider copy exists. |
 | Preflight lookup fails after staging | `item(...)` fails | Return mapped retryable error and retain deterministic staged bytes. | No | Medium: bytes survive, but an event cannot always be indexed without authoritative parent metadata. | Let File Provider retry; unindexed copies require support/developer recovery. |
 | Replace/conflict upload fails after staging | `!U` | Return mapped retryable error; retain stage; indexed conflict failures appear in Activities. | No confirmed success | Low immediate loss risk; provider-owned scheduling is still absent. | File Provider retries; Activities can reveal/export indexed recovery bytes. |
+| Replacement committed but response lost | Restart still has the old base ETag; current remote bytes may already equal the attempted edit | Conservatively take stale-content preserve-both path. Do not infer remote success solely from equal bytes | May create a redundant conflict copy | Bytes are preserved, but no-duplicate-effect acceptance is not met. `ConflictMatrixTests` records this CR-009 limitation; the model does not establish a server retry guarantee. | Compare the two preserved versions before removing an unwanted duplicate. |
+| Directory create committed but response lost | Restart retries parent/name without a persisted server-assigned identity | Existing collision policy creates a second conflict-named directory | May create a second directory | No byte loss, but child placement/reconciliation remains a CR-009 limitation. Deterministic tests verify both original and retry directory remain usable. | Merge or rename after inspecting both directories. |
 | Rename vs remote rename/move | Stable file ID exists | Local name intent wins. Retry a recognized collision with a unique conflict name, then refetch. | Renames item | Low byte-loss risk. The remote same-field name loses by explicit policy. | Inspect final unique name; no byte merge required. |
 | Retried rename already reflected remotely | `D` | Return latest item without another mutation. | No | Safe idempotent success. | None. |
 | Move-only vs remote rename | Destination differs; local name unchanged | Move stable ID with `name=nil`, preserving the remote rename; kDrive uses `conflict=rename`. | Moves item | Low. Independent fields merge automatically. | None. |
@@ -447,7 +473,7 @@ implementation audit for updated run/test results. `CR-013` is still **Open**.
 | Trash vs remote content/metadata | Stable file ID exists | Apply local trash intent after other requested fields. Remote bytes remain recoverable in trash. | Trashes item | Low immediate risk; trash is reversible. | Restore from trash if the intent was wrong. |
 | Permanent delete; remote matches base | `C && B` | Delete trashed item by stable ID. | Destructive delete | Residual high-impact race: Infomaniak documents no conditional delete token. | None after accepted deletion. |
 | Permanent delete vs remote change | `!(C && B)` | Do not delete; return `.deletionRejected` containing latest trashed item. | No | Low. File Provider can recreate the item locally. | Review the recreated item and retry deletion if still desired. |
-| Permanent delete already completed | Latest lookup returns 404 | Return idempotent success. | No | Safe; prevents ghost/stuck deletion. | None. |
+| Permanent delete already completed | Authoritative Trash identity lookup returns 404 | Return idempotent success. | No | Safe; prevents ghost/stuck deletion. | None. |
 | Favorite or unfavorite | Stable item ID exists; no conditional favorite version is documented | Apply the explicit local favorite intent, refetch authoritative metadata, and invalidate both the old and returned parent containers | Changes favorite state only | Low. A same-field remote race is last-writer-wins, but no file bytes or hierarchy are changed. | Toggle the favorite state again if the final value is not desired. |
 | Duplicate contextual action | Source metadata refetch succeeds | Derive an explicit extension-preserving `copy` name, send it in the duplicate body, then refetch the returned stable ID; never rely on `{}` or server-selected naming | Creates one new item | Low. The source is unchanged. A destination-name collision may reject the operation without a confirmed mutation. | Choose another name or remove the colliding copy, then retry. |
 | Restore from trash | Trashed metadata is fresh; original parent still exists, otherwise configured drive root is used | Restore stable ID to the explicit verified destination and invalidate trash plus destination | Moves one item out of trash | Low and reversible. The original item bytes are not replaced; destination choice may fall back to root. | Move the restored item to the desired folder or trash it again. |
@@ -492,7 +518,7 @@ pending and are never falsely acknowledged.
 
 | ID | Severity | Finding | Consequence | State |
 | --- | --- | --- | --- | --- |
-| `CR-001` | Critical | Combined `changedFields` were mutually exclusive and falsely reported complete. | The implementation now applies move/rename, content/date, and trash in order and returns unsupported fields pending. End-to-end extension callback coverage is still required. | **Mitigated** |
+| `CR-001` | Critical | Combined `changedFields` were mutually exclusive and falsely reported complete. | The production callback executor now has deterministic combined-field regression coverage for both engines, including the corrected vault early-Trash defect. OS-driven combined callback delivery and full live coverage remain required. | **Mitigated** |
 | `CR-002` | High | Existing-item mutations had a fetch-then-mutate race. | Content now uses ETag/`If-Match`; permanent delete still lacks a documented conditional server primitive. | **Mitigated** |
 | `CR-003` | High | Content replacement addressed latest parent/name instead of stable ID. | Replacement now uses `file_id`, authoritative ETag, and `If-Match`; conditional races preserve both. | **Resolved** |
 | `CR-004` | High | Content versions used only `modifiedAt`, and the first ETag implementation did not persist ETags through SQLite snapshot round trips. | Versions now contain stable item ID plus ETag; snapshot schemas and in-place migrations retain ETag/revision metadata; legacy/missing ETags fail closed. | **Resolved** |
@@ -500,7 +526,7 @@ pending and are never falsely acknowledged.
 | `CR-006` | High | Contents+trash ignored the new bytes. | Content is replaced/preserved before trash; conflict item and original are both trashed when required. | **Resolved** |
 | `CR-007` | Medium | Failed uploads stranded private staged bytes. | Indexed failures have Activities reveal/export and deterministic replay; provider-owned scheduling and Retry Now remain absent. | **Mitigated** |
 | `CR-008` | Medium | Stale delete/collision errors caused avoidable soft locks. | Stale permanent delete returns `.deletionRejected`; recognized collisions auto-rename. No `filenameCollision` bounce is needed for handled cases. | **Resolved** |
-| `CR-009` | Medium | Mutation replay was not idempotent. | Direct file create/replace/conflict copy use deterministic client tokens and hashes; directory create and `.mayAlreadyExist` identity reconciliation remain gaps. | **Mitigated** |
+| `CR-009` | Medium | Mutation replay was not idempotent. | Direct file create/replace/conflict copy use deterministic client tokens and hashes; directory create, ambiguous replacement success, and `.mayAlreadyExist` identity reconciliation remain gaps. | **Mitigated** |
 | `CR-010` | Medium | Recoverable errors had no resolution signal. | Successful metadata/content/mutation operations signal authentication, quota, reachability, and synchronization errors resolved. | **Resolved** |
 | `CR-011` | Low | Listing cursor, action, and snapshot anomalies fail closed. | Folder availability can be temporarily blocked, but ambiguous snapshots are not committed and remote data is not mutated. | **Mitigated** |
 | `CR-012` | Low | Stale content edits use staged renamed preserve-both. | Both byte streams are preserved, including a 409/412 race after preflight. | **Resolved** |

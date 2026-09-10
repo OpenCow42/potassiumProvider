@@ -252,3 +252,24 @@ log and cannot be used to recover omitted secrets or private URLs.
   remote account information, or customer data to either logging layer.
 - Add a migration and redaction test whenever a new durable diagnostic field is
   introduced.
+
+### Targeted conflict profile evidence
+
+`conflict-profile.json` schema 2 declares the run ID, selected closed conflict
+case, and optional required extension launch mode. Historical schema 1 is readable. `conflict-request.json` carries only run/case/correlation identifiers, a salted
+subject alias, scheduling point, and unique attempt UUID. Attempt-specific arrival,
+release, and cancellation files prevent an earlier release from satisfying a later
+case. Report sealing verifies the selected case and gate against its actual
+callback evidence. Other entries are `notSelectedForConflictProfile`; the full
+sixteen-scenario certificate is unchanged. Failures and local screenshots retain
+the existing privacy and immutability boundaries.
+
+Conflict profiles may require `--extension-state fresh|running`. The immutable
+`extension-launch.json` (schema 1) records the kernel process birth time, signed
+build hash, diagnostic process UUID, and preparation fence. Fresh evidence requires
+an initialization terminal before the tested mutation in a newly born process.
+Running evidence requires an earlier callback, an unchanged kernel process, and no
+initialization or invalidation during the run. Missing or mixed process evidence
+prevents certification; a historical profile without this requirement remains a
+targeted result without cold/warm certification. No PID, path, account, or raw
+item identifier is exported by this record.

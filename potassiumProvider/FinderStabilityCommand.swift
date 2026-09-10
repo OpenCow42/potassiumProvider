@@ -2,6 +2,7 @@
 import Darwin
 import AppKit
 import Foundation
+import PotassiumProviderCore
 
 enum FinderStabilityCommandLine {
     nonisolated static let commandFlag = "--finder-stability"
@@ -61,6 +62,8 @@ enum FinderStabilityCommandLine {
                     result = await executor.run(
                         requestPermissions: options.requestPermissions
                     )
+                case .conflicts:
+                    result = await executor.conflicts(requestPermissions: options.requestPermissions, selectedCase: options.conflictCase, extensionLaunchMode: options.extensionLaunchMode)
                 case .recover:
                     result = await executor.recoverStaleRun()
                 case .provision:
@@ -87,13 +90,14 @@ enum FinderStabilityCommandLine {
           potassiumProvider --finder-stability watch
           potassiumProvider --finder-stability preflight [--request-permissions]
           potassiumProvider --finder-stability run --yes-live [--request-permissions]
+          potassiumProvider --finder-stability conflicts --yes-live [--case CASE] [--extension-state fresh|running] [--request-permissions]
           potassiumProvider --finder-stability recover --yes-recover
 
         Options:
           preflight              Verify the Stability build, lab, File Provider domain, and macOS consent without Finder or remote mutation.
           run                    Execute the verified, lab-scoped Finder scenario sequence and seal its evidence bundle.
           recover                Preserve and abandon evidence owned by a Finder runner process that is no longer alive.
-          --yes-live             Required for run or provision. Confirms use of the saved development account and disposable lab root.
+          --yes-live             Required for run, provision, or conflicts. Confirms use of the saved development account and disposable lab root.
           --yes-recover          Required for recover. Performs local evidence lifecycle recovery only.
           --request-permissions  Ask macOS to present Accessibility, screen recording, and Finder Automation consent prompts when needed.
         """
@@ -106,11 +110,14 @@ enum FinderStabilityCommandMode: String, Equatable, Sendable {
     case recover
     case provision
     case watch
+    case conflicts
 }
 
 struct FinderStabilityCommandOptions: Equatable, Sendable {
     let mode: FinderStabilityCommandMode
     let requestPermissions: Bool
+    var conflictCase: StabilityLiveConflictCase? = nil
+    var extensionLaunchMode: StabilityExtensionLaunchMode? = nil
 }
 
 enum FinderStabilityArgumentParseResult: Equatable, Sendable {
@@ -133,13 +140,13 @@ enum FinderStabilityArgumentError: Error, Equatable, Sendable {
     var safeDescription: String {
         switch self {
         case .missingMode:
-            "choose preflight or run"
+            "choose preflight, run, conflicts, provision, watch, or recover"
         case .duplicateMode:
             "choose exactly one mode"
         case .liveConfirmationRequired:
-            "run requires --yes-live"
+            "run, provision, and conflicts require --yes-live"
         case .liveConfirmationNotAllowedForPreflight:
-            "--yes-live is accepted only with run"
+            "--yes-live is accepted only with run, provision, or conflicts"
         case .liveConfirmationNotAllowedForRecovery:
             "--yes-live is not accepted with recover"
         case .recoveryConfirmationRequired:
@@ -168,7 +175,19 @@ enum FinderStabilityArgumentParser {
         var requestPermissions = false
         var confirmedLiveRun = false
         var confirmedRecovery = false
+        var conflictCase: StabilityLiveConflictCase?
+        var expectsCase = false
+        var extensionLaunchMode: StabilityExtensionLaunchMode?
+        var expectsLaunchMode = false
         for argument in commandArguments {
+            if expectsLaunchMode {
+                guard let value = StabilityExtensionLaunchMode(rawValue: argument), extensionLaunchMode == nil else { throw FinderStabilityArgumentError.unknownOption }
+                extensionLaunchMode = value; expectsLaunchMode = false; continue
+            }
+            if expectsCase {
+                guard let value = StabilityLiveConflictCase(rawValue: argument), conflictCase == nil else { throw FinderStabilityArgumentError.unknownOption }
+                conflictCase = value; expectsCase = false; continue
+            }
             switch argument {
             case FinderStabilityCommandMode.provision.rawValue:
                 guard mode == nil else { throw FinderStabilityArgumentError.duplicateMode }
@@ -185,6 +204,13 @@ enum FinderStabilityArgumentParser {
             case FinderStabilityCommandMode.recover.rawValue:
                 guard mode == nil else { throw FinderStabilityArgumentError.duplicateMode }
                 mode = .recover
+            case "--extension-state":
+                expectsLaunchMode = true
+            case "--case":
+                expectsCase = true
+            case FinderStabilityCommandMode.conflicts.rawValue:
+                guard mode == nil else { throw FinderStabilityArgumentError.duplicateMode }
+                mode = .conflicts
             case "--request-permissions":
                 requestPermissions = true
             case "--yes-live":
@@ -197,7 +223,13 @@ enum FinderStabilityArgumentParser {
         }
 
         guard let mode else { throw FinderStabilityArgumentError.missingMode }
+        guard !expectsCase, !expectsLaunchMode,
+              (conflictCase == nil && extensionLaunchMode == nil) || mode == .conflicts else { throw FinderStabilityArgumentError.unknownOption }
         switch mode {
+        case .conflicts where !confirmedLiveRun:
+            throw FinderStabilityArgumentError.liveConfirmationRequired
+        case .conflicts where confirmedRecovery:
+            throw FinderStabilityArgumentError.recoveryConfirmationNotAllowed
         case .watch where confirmedLiveRun || confirmedRecovery || requestPermissions:
             throw FinderStabilityArgumentError.unknownOption
         case .provision where confirmedRecovery || requestPermissions:
@@ -221,7 +253,7 @@ enum FinderStabilityArgumentParser {
         }
         return .execute(FinderStabilityCommandOptions(
             mode: mode,
-            requestPermissions: requestPermissions
+            requestPermissions: requestPermissions, conflictCase: conflictCase, extensionLaunchMode: extensionLaunchMode
         ))
     }
 }
@@ -269,11 +301,13 @@ enum FinderStabilityCommandResult: Equatable, Sendable {
 protocol FinderStabilityCommandExecuting {
     func preflight(requestPermissions: Bool) async -> FinderStabilityCommandResult
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult
+    func conflicts(requestPermissions: Bool, selectedCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult
     func recoverStaleRun() async -> FinderStabilityCommandResult
     func provision() async -> FinderStabilityCommandResult
     func watch() async -> FinderStabilityCommandResult
 }
 extension FinderStabilityCommandExecuting {
+    func conflicts(requestPermissions: Bool, selectedCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult { .rejected }
     func provision() async -> FinderStabilityCommandResult { .rejected }
     func watch() async -> FinderStabilityCommandResult { .rejected }
 }

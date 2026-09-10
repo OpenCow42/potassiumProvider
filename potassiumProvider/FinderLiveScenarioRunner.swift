@@ -6,7 +6,11 @@ import PotassiumProviderCore
 @MainActor
 struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
     let ui: any FinderUIDriving
-    init(ui: (any FinderUIDriving)? = nil) { self.ui = ui ?? SystemFinderUIDriver() }
+    let conflictCase: StabilityLiveConflictCase?
+    init(ui: (any FinderUIDriving)? = nil, conflictCase: StabilityLiveConflictCase? = nil) {
+        self.ui = ui ?? SystemFinderUIDriver()
+        self.conflictCase = conflictCase
+    }
 
     func run(context: FinderStabilityLiveContext) async -> FinderStabilityScenarioExecution {
         var session: FinderLiveRunSession?
@@ -16,6 +20,10 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
         for (index, scenario) in StabilityFinderScenario.allCases.enumerated() {
             let startedAt = Date(), correlationID = UUID()
             let actionStart = ui.actionCount
+            if let conflictCase, scenario != conflictCase.scenario {
+                steps.append(step(index, scenario, correlationID, startedAt, .skipped(.notSelectedForConflictProfile)))
+                continue
+            }
             if failed {
                 steps.append(step(index, scenario, correlationID, startedAt, .skipped(.earlierStepFailure)))
                 continue
@@ -48,7 +56,8 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                         outcome: .passed, recordedAt: Date(), hasMore: false, itemCount: baseline.count))
                     try await context.verifySafety()
                     print("finder stability step \(index + 1)/16: \(scenario.rawValue)")
-                    try await execute(scenario, session: session)
+                    if let conflictCase { try await session.executeConflict(conflictCase) }
+                    else { try await execute(scenario, session: session) }
                     print("finder stability: UI interaction complete; recording evidence")
                     if let url = session.lastVisibleURL, ![.trash, .permanentDeletion].contains(scenario) {
                         try await ui.select(url)
