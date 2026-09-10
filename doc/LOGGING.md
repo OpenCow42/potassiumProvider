@@ -305,3 +305,8 @@ Live step validation selects callbacks by run-local subject, step correlation, a
 Local recorder settling uses a one-second quiet interval after every span has exactly one start and terminal, sampled every 500 ms within the existing deadline. It does not use server Retry-After/backoff. New events reset the interval; missing or duplicate span records cannot settle. Extension lifecycle validation remains strict through sealing.
 
 The fallback XPC-reply-invalid wrapper is inspected through at most four underlying errors for diagnostic classification. Known SQLite errors retain only their numeric result code and storage category; their message and statement are discarded. This uses existing version-3 fields, and historical opaque wrapper records remain readable. It changes diagnostics, not the error returned to File Provider.
+
+Finder destination observation prints only a closed lookup phase (`resolveItemURL`
+or `bindDestinationParent`), diagnostic category, and numeric error code when a
+lookup fails. Local paths, error descriptions, and user-info are excluded. A logged
+lookup failure is not evidence of a remote API failure or a successful move.

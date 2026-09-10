@@ -62,6 +62,11 @@ Pro/visionOS 26.5 destinations for shared-runtime regression validation. Do not 
 hosted tests or simulators during live Finder execution: they can register another
 extension build or steal UI focus.
 
+`SnapshotInitializationContentionTests` covers an environment exposed by the live
+matrix: opening the production snapshot store during a temporary exclusive WAL
+lock must wait, preserve existing data, and permit subsequent snapshot reads and
+writes. The audit retains the failing old-order result and corrected platform runs.
+
 ## Independent live cases
 
 ```sh

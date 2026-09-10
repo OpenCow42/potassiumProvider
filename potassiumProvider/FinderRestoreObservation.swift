@@ -18,10 +18,27 @@ enum FinderRestoreObservation {
 
     static func observeVisibleDestination(name: String, readVisible: () async throws -> URL,
                                           matchesParent: (URL) async throws -> Bool) async throws -> URL? {
-        let candidate = try await readVisible()
-        guard candidate.lastPathComponent.precomposedStringWithCanonicalMapping == name.precomposedStringWithCanonicalMapping,
-              try await matchesParent(candidate.deletingLastPathComponent()) else { return nil }
+        let candidate: URL
+        do { candidate = try await readVisible() }
+        catch {
+            recordLookupFailure(error, phase: "resolveItemURL")
+            throw error
+        }
+        guard candidate.lastPathComponent.precomposedStringWithCanonicalMapping == name.precomposedStringWithCanonicalMapping else { return nil }
+        let parentMatches: Bool
+        do { parentMatches = try await matchesParent(candidate.deletingLastPathComponent()) }
+        catch {
+            recordLookupFailure(error, phase: "bindDestinationParent")
+            throw error
+        }
+        guard parentMatches else { return nil }
         return candidate
+    }
+
+    private static func recordLookupFailure(_ error: any Error, phase: String) {
+        // Closed call-site labels and numeric codes only: a lookup error can
+        // carry the local URL in its description or user-info.
+        print("finder stability: destination lookup failed; phase=\(phase) class=\(ProviderDiagnosticErrorClassifier.classify(error).rawValue) code=\((error as NSError).code)")
     }
 
     /// A completed UI-originated callback gates verification. Active-item 404

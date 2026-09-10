@@ -52,6 +52,21 @@ struct FinderRestoreObservationTests {
         #expect(wrongName == nil)
     }
 
+    @Test(arguments: [401, 403, 404, 429, 500])
+    func visibleDestinationDoesNotSuppressRemoteLookupFailures(_ status: Int) async {
+        let candidate = URL(filePath: "/synthetic/run/Sibling/conflict.txt")
+        await #expect(throws: APIClientError.self) {
+            try await FinderRestoreObservation.observeVisibleDestination(name: "conflict.txt", readVisible: {
+                throw APIClientError.unacceptableStatusCode(status, body: "synthetic")
+            }, matchesParent: { _ in true })
+        }
+        await #expect(throws: APIClientError.self) {
+            try await FinderRestoreObservation.observeVisibleDestination(name: "conflict.txt", readVisible: { candidate }) { _ in
+                throw APIClientError.unacceptableStatusCode(status, body: "synthetic")
+            }
+        }
+    }
+
     private func item(id: Int = 42, drive: Int = 7, parent: Int = 3) -> KDriveRemoteItem {
         KDriveRemoteItem(id: id, name: "Synthetic.txt", type: "file", status: "ok", driveID: drive,
             parentID: parent, path: nil, size: 4, mimeType: "text/plain", createdAt: nil,

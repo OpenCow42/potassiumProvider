@@ -103,6 +103,17 @@ validation still rejects an invalidated/restarted or mismatched extension during
 the monitored run. Rejected candidates remain ineligible for acceptance; CR-013
 stays open.
 
+Fresh live content races subsequently identified SQLite `BUSY` (primary code 5)
+while opening the snapshot store for `currentSyncAnchor`. Snapshot connections now
+install their existing five-second busy timeout before requesting WAL, so the
+initial database query can wait for transient cleanup/recovery contention.
+`SnapshotInitializationContentionTests` opens the production store under a real
+exclusive WAL lock, releases the lock, and checks retained data plus subsequent
+snapshot use. The regression failed on the previous order and passed after the
+correction on both macOS profiles and the iOS/visionOS simulators. Live reruns are
+pending. No transaction guard, schema, conflict policy, or remote
+mutation retry is changed. The precise lock owner in the live run is unobserved.
+
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot
 certify the original sixteen-scenario suite. Current validation and preserved live
@@ -611,7 +622,7 @@ pending and are never falsely acknowledged.
 | `CR-020` | Medium | HTTP 408/429 were treated as nonretryable synchronization failures and Retry-After recovery metadata was dropped. | They now map to `.serverUnreachable`; only parsed delta seconds survive. Provider-owned retry cadence remains absent. | **Mitigated** |
 | `CR-021` | Medium | Share update/delete have no documented ETag or conditional version and can race another editor. | Request bodies and response access now fail closed, but accepted share mutations remain last-writer-wins until the API exposes a conditional primitive. | **Open** |
 | `CR-022` | Medium | Working-set change delivery waited behind long materialized-folder crawls despite confirmed local mutation results. | Live callbacks exceeded 90 seconds. Confirmed results now enter the journal with per-item comparison; poll-anchor comparison prevents an older crawl from overwriting them. Available deltas are delivered before polling. Deterministic regressions pass; live verification remains required. | **Mitigated** |
-| `CR-023` | Medium | A live current-sync-anchor callback failed with an opaque fallback error wrapper. | Original cause is unconfirmed. Bounded cause inspection now retains known SQLite numeric codes and closed storage/validation categories without private error text; the failed bundle remains evidence and no storage fix is claimed. | **Open** |
+| `CR-023` | Medium | Live current-sync-anchor callbacks fail immediately on SQLite `BUSY` while opening the snapshot store. | Bounded cause inspection identified primary code 5 in two fresh content races. A real-lock production-store regression failed with the old initialization order and passed after installing the existing timeout before WAL setup. Both macOS profiles and iOS/visionOS regression targets pass; live reruns remain required. The precise live lock owner is unobserved. Failed bundles remain evidence. | **Mitigated** |
 
 ## Legacy Plaintext User-Recovery Matrix
 

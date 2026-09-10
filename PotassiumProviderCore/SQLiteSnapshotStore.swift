@@ -881,8 +881,10 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
     }
 
     private static func configure(_ database: Connection) throws {
-        try database.execute("PRAGMA journal_mode=WAL")
+        // Opening an existing WAL database can overlap another connection's
+        // exclusive cleanup/recovery lock. Cover the first database query too.
         try database.execute("PRAGMA busy_timeout=5000")
+        try database.execute("PRAGMA journal_mode=WAL")
     }
 
     private static func createTables(on database: Connection) throws {

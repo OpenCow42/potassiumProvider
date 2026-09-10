@@ -286,6 +286,51 @@ Targeted run `26985b87-5beb-44ef-b9ca-e1c263384316` completed the controlled mov
 
 Diagnostic classification now inspects only the bounded cause chain of that fallback wrapper. Known SQLite failures retain their numeric primary/extended result code and storage category; configuration storage and decoding failures get closed categories. SQL statements, error messages, private paths, and user-info remain excluded. A regression passes a wrapped SQLite error containing a fresh canary and verifies only category/code survive. Callback error mapping and conflict policy remain unchanged. The next live reproduction can identify a storage result without inferring it from the wrapper. Earlier failed bundles remain untouched. Focused diagnostic/evidence validation finalized **22 passed** on Mac27 and **22 passed** on standard macOS09; diagnostic tests finalized **8 passed** on iOS13 and **8 passed** on visionOS12. Every result has zero failed/skipped/expected failures. Generic visionOS08 succeeded. These supplement the complete matrix runs recorded above.
 
+Fresh conflict profile Live17 reproduced CR-023 with the new sanitized diagnostics.
+The before-preflight content case (`17805594-eb35-441b-9213-0668838a7189`)
+recorded SQLite primary code **5 (`BUSY`)** in `currentSyncAnchor` span
+`F123ED16-B575-4AB8-9215-D5DC4A0DDC89`, after 4 ms. The after-preflight
+case (`af0412de-1c3d-40a7-b56d-b2fab11be0df`) recorded the same code in
+span `12C82AA9-79E2-4A15-AD76-1EB9B9F3E85D`, after 2 ms. Both content
+races produced and reopened the expected preserved versions, but correctly sealed
+as failed because of the unexpected provider failure. Their expected conditional
+HTTP 412 is a separate conflict event, not the SQLite defect. The complete fresh
+profile finished with **three selected cases passed and three failed**. Every case
+sealed its own report, with the other fifteen scenarios explicitly unselected.
+Rename/rename, move/move, and edit/rename passed. Edit/move
+(`cc9c048e-d389-4b7b-b06c-60f75acf0543`) verified the server bytes and matching
+callback metadata, then failed with a not-found category during local destination
+observation. There were no failed provider spans in that case. Its first observed
+parent was still the old parent; a later lookup threw. The exact lookup boundary
+and numeric code were not retained, so the next build records closed lookup phases
+and numeric errors without descriptions. Regressions require remote lookup errors
+to remain failures at either observation boundary. All owned windows were closed;
+no fixture cleanup was performed and no active recorder owner remains.
+
+Earliest relevant divergence: a fresh snapshot connection requests WAL mode before
+installing its five-second busy timeout. SQLite documents transient exclusive WAL
+locks during cleanup and recovery. High confidence: these live failures are storage
+contention. The exact lock owner and failing initialization statement remain an
+inference until the controlled regression and correction are validated. Reproduce
+with the fresh conflict profile; retain the two failed bundles. No remote policy,
+schema migration, or CR-013 guarantee has changed. An isolated synthetic SQLite
+experiment reproduced immediate code 5 with the existing order and successful
+opening after a 200 ms lock release when the timeout was installed first, preserving
+the existing row. This is preparatory evidence; the production Swift regression
+and live correction are still pending at this checkpoint. References:
+[SQLite WAL contention](https://www.sqlite.org/wal.html#sometimes_queries_return_sqlite_busy_in_wal_mode),
+[busy timeout](https://www.sqlite.org/c3ref/busy_timeout.html).
+
+The production-store Swift regression finalized as **one failed test** in Mac28
+with `database is locked (code: 5)` against the old order. After installing the
+existing timeout before WAL setup, the same regression passed and retained the
+synthetic row. Full unit-target results finalized: Mac29 **440 passed**, standard
+macOS10 **392 passed**, iOS14 **376 passed**, and visionOS Simulator13 **376 passed**.
+Every corrected bundle has zero failed/skipped/expected failures; generic visionOS09
+built successfully. The earlier red result is preserved as regression evidence.
+CR-023 is mitigated by the tested initialization correction; live acceptance is
+still pending. The original transaction guards and remote policies remain unchanged.
+
 ## 2026-09-10 — Live Finder implementation in progress
 
 PR #22 now targets `main`; all stability work continues on
