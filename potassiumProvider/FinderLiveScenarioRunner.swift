@@ -223,7 +223,9 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
             try await s.waitTrashed(item, exists: true)
         case .restore:
             let item = try s.require(s.file), url = try await s.visible(item, trashed: true)
-            try await ui.contextAction("Restore from kDrive Trash", on: url)
+            try await FinderTrashedItemSequence.execute(reveal: { try await ui.revealTrashedItem(url) },
+                revalidate: { try await s.bind(url, item: item, trashed: true) },
+                action: { try await ui.contextAction("Restore from kDrive Trash", on: url) })
             s.file = try await s.waitRestored(item)
             try await s.waitBytes(item, expected: s.bytes)
             let restored = try await s.waitRestoredLocation(s.require(s.file))
@@ -233,7 +235,9 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
             try await ui.trash(url)
             try await s.waitTrashed(item, exists: true)
             let trashed = try await s.visible(item, trashed: true)
-            try await ui.select(trashed)
+            try await FinderTrashedItemSequence.execute(reveal: { try await ui.revealTrashedItem(trashed) },
+                revalidate: { try await s.bind(trashed, item: item, trashed: true) },
+                action: { try await ui.select(trashed) })
             try await ui.capture(in: s.run.directoryURL.appendingPathComponent("visual-evidence"), sequence: 12)
             s.deadline.pause()
             try await ui.confirmPermanentDeletion(trashed, fixtureAlias: StabilityDiagnosticIdentity.alias(for: String(item.id), runID: s.run.runID))

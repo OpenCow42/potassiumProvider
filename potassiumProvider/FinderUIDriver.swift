@@ -25,6 +25,7 @@ protocol FinderUIDriving: FinderUINavigating, FinderDocumentUIDriving {
     func expectActionPanel(for alias: UUID)
     func closeOwnedWindows() async throws
     func select(_ url: URL) async throws
+    func revealTrashedItem(_ url: URL) async throws
     func contains(_ url: URL) async throws -> Bool
     func createFolder(named name: String, in parent: URL) async throws
     func copy(_ source: URL, to parent: URL) async throws
@@ -215,6 +216,22 @@ final class SystemFinderUIDriver: FinderUIDriving {
             print("finder stability UI: navigation failed; phase=\(phase)")
             throw error
         }
+    }
+
+    func revealTrashedItem(_ url: URL) async throws {
+        guard let windowID, let ownership = windowOwner,
+              ownership.process == finderProcessIdentity() else { throw FinderUIError.windowMismatch }
+        let parent = url.deletingLastPathComponent()
+        selectionURL = nil
+        // Go to Folder can submit a provider Trash path without producing the
+        // requested target. Address the exact existing window through Finder's
+        // native target command, as used before navigation-sheet automation.
+        _ = try script("set target of Finder window id \(windowID) to (POSIX file \(quote(parent.path)) as alias)", operation: .navigate)
+        _ = try script("set current view of Finder window id \(windowID) to list view", operation: .changeView)
+        currentURL = parent
+        try await wait { try self.verifyWindow(parent) }
+        actionCount += 1
+        print("finder stability UI: bound Trash parent navigation verified")
     }
 
     func navigateHistory(back: Bool, expectedURL: URL) async throws {

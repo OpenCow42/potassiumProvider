@@ -138,6 +138,14 @@ The following live run verified eviction and a new download, then stopped at
 Restore navigation after successful exact trashed-item binding. Ten scenarios
 passed; no Restore action or permanent deletion occurred. Closed navigation-stage
 diagnostics support the next reproduction without weakening target assertions.
+The diagnostic reproduction located that timeout at Go to Folder destination
+verification. Bound trashed fixtures now use the existing-window native Finder
+target command, retaining exact parent verification and fresh item/domain binding
+after navigation. `FinderTrashedItemSequenceTests` rejects identity replacement
+during navigation and prevents actions after an unavailable parent. Restore still
+requires its provider callback and complete remote/local destination proof;
+permanent deletion retains its separate exact-item confirmation and subsequent
+revalidation. This UI route is pending live verification and changes no server policy.
 
 The deterministic matrix and independent live conflict profile are documented in
 `CONFLICT_TESTING.md`. Targeted runs explicitly skip unrelated scenarios and cannot

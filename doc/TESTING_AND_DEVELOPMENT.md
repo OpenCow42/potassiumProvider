@@ -248,6 +248,11 @@ working-set membership, and contextual actions. Trash expects `modifyItem`;
 permanent deletion expects `deleteItem`. Restore and deletion require an exactly
 identified provider-managed trashed fixture. Deletion additionally pauses for
 confirmation of that generated fixture, then rebinds it. Empty Trash is never used.
+For a bound trashed fixture, the runner navigates its owned Finder window to the
+exact parent with Finder's native Apple Events target command, verifies that
+destination, and rebinds the item/domain before selecting its contextual action.
+Ordinary folder navigation continues to use Go to Folder. The native target path
+does not broaden Trash selection or bypass the destination/identity guards.
 Unavailable UI or inaccessible trash identity is incomplete coverage, never a pass.
 Metadata lookup checks the active endpoint first, then the typed Trash endpoint
 only after HTTP 404. The resolved drive/item identity must match exactly. Only

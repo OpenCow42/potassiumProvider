@@ -1261,8 +1261,39 @@ container serially; no second concurrency mechanism is proposed without a focuse
 regression and rate-limit analysis. Local-mutation journal delivery remains fixed,
 but cold preparation/settlement with the enlarged retained lab is unresolved.
 
-The warm-only follow-up refused before fixture setup because no already-running
-extension process survived after the cold bundle sealed. It created no passing
-result. A diagnostic original-suite command without `--extension-state` is used
-next to inspect the unresolved Restore UI transition; it cannot satisfy the fresh
+The warm-only follow-up refused during launch preparation, before fixture setup.
+Its generic message does not establish the precise failed initial-state check.
+Run `3d6d382c-1692-4c0b-b0e7-3ecd3fa4c7b4` retained a preflight-only bundle
+and an exited owner lease; a subsequent diagnostic launch also refused until
+`--recover-stale-run --yes-recover` preserved the abandoned bundle and released
+that lease. No remote cleanup occurred. A diagnostic original-suite command without
+`--extension-state` then started to inspect Restore; it cannot satisfy the fresh
 or already-running acceptance certificates.
+
+
+### Restore navigation transition isolated
+
+Diagnostic run `905e0eae-bf1d-4f0d-b277-f399ab575a7c` sealed **ten passed,
+one failed, five skipped**, with all owned windows closed and the owner released.
+Restore correlation `277F476B-58F7-4B90-BA39-C1D591FBE030` failed specifically
+at `verifyNavigationDestination`: the Go to Folder path had been assigned and
+submitted, but the expected parent did not verify within the scenario deadline.
+No Restore action occurred. This isolates the UI transition with high confidence;
+it does not identify the exact alternative target presented by macOS. The local
+trace and immutable report are retained. This diagnostic run has no launch-state
+certificate and is not counted toward fresh/running acceptance.
+
+The focused candidate restores Finder's existing-window Apple Events target command
+only for an already-bound trashed fixture, the navigation route used by the earlier
+run that reached the real Restore callback. It verifies the exact parent and current
+Finder process/window ownership, then rebinds the exact item/domain before the
+contextual action. It never opens or selects an arbitrary Trash item. Ordinary
+navigation keeps Go to Folder; no generic fallback skips failed destination checks.
+`FinderTrashedItemSequenceTests` covers ordering, identity replacement during
+navigation, and unavailable-parent failure without a later action. Permanent-delete
+confirmation/rebinding remains mandatory. The candidate still requires a live rerun.
+
+Mac35 finalized **450 passed**, zero failed/skipped/expected failures, including
+the three new Trash navigation/rebinding regressions. The candidate changes only
+the macOS Stability harness; prior finalized standard macOS and simulator results
+remain the shared-runtime validation. A fresh-extension full-suite rerun is next.
