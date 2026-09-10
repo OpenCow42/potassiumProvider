@@ -1297,3 +1297,61 @@ Mac35 finalized **450 passed**, zero failed/skipped/expected failures, including
 the three new Trash navigation/rebinding regressions. The candidate changes only
 the macOS Stability harness; prior finalized standard macOS and simulator results
 remain the shared-runtime validation. A fresh-extension full-suite rerun is next.
+
+
+Fresh attempt `7d06262e-93fb-4700-b480-bb37e43f1138` on `e80999e` again
+exceeded the unchanged fixture-preparation budget before any scenario completed;
+it did not exercise the new Trash route. The owned Finder window closed. Completed
+working-set spans `50A055EF-28AF-4D7A-AC05-40CE00556C0C` and
+`0456AC1E-E595-4045-ACDB-00A46C77E6B9` took 76,902 ms and 68,736 ms.
+During settling, the installed provider process subsequently became absent while
+a working-set refresh and a child directory listing remained without terminals.
+The recorder's last write was 21:26:16 UTC; no writer-failure marker was present.
+This is observed process loss with incomplete telemetry, not proof of a crash cause.
+The runner retains its bounded settling wait; no terminal is fabricated and no
+acceptance is inferred. The Trash candidate is unit-tested and ordinarily built,
+but remains unverified live because this attempt never reached it. The twelve
+accepted conflict bundles and unchanged provider/shared runtime remain separate.
+
+The final candidate for `7d06262e-93fb-4700-b480-bb37e43f1138` was rejected
+with `incompleteRun` and `eligibleForAcceptance: false`. After its owner exited,
+explicit stale-run recovery preserved the candidate and released only the local
+lease. The conditional warm invocation did not run. No fixture was deleted.
+
+### Invalidated-instance materialization work
+
+Object invalidation span `21E2DE11-B3FA-4033-8FC9-E9F209D36766` completed
+at 21:26:01 UTC. Materialization acknowledgement `51C14976-49EE-491C-96EF-68EA012A4F1B`
+had already completed at 21:24:59; its child refresh
+`18EF5FFF-C7FE-4234-A24B-B8F8F21D6731` continued and started directory request
+`0BC42058-387A-4617-91F4-676A67AE645F` at 21:26:16, fifteen seconds after
+invalidation. Both child spans remained open when the process became absent.
+
+Source inspection found the acknowledged materialization task was untracked and
+retained its provider instance, while `invalidate()` cancelled only the periodic
+poll. Apple's installed `NSFileProviderReplicatedExtension.h` lines 256–264 require
+invalidation to release references so the discarded instance can deallocate;
+[Apple's invalidate documentation](https://developer.apple.com/documentation/fileprovider/nsfileproviderreplicatedextension/invalidate())
+is the corresponding contract. Classification: provider lifecycle; confidence high
+for unowned work continuing after invalidation, unconfirmed for the process-exit cause.
+Reproduce the retained cold original-suite workload and inspect child requests after
+instance invalidation; ordinary object replacement within a live process remains valid.
+
+The correction adds a per-instance cancellable task scope. Registration/invalidation
+uses a short `Synchronization.Mutex` because the system callback is synchronous;
+operations and cancellation handlers run outside the mutex. Acknowledgement remains
+prompt and exactly once, even if invalidation rejects later work. New instances use
+independent scopes. Existing remote poll/cursor/transaction policy is unchanged.
+`FileProviderBackgroundWorkTests` checks cancellation before another request,
+replacement-instance independence, repeated invalidation, late-start rejection,
+and 100 immediately finishing registrations. Mac36 finalized **453 passed**, zero
+failed/skipped/expected failures. Other platform validation and live reruns are
+pending; CR-024 remains open. The previously accepted twelve conflict bundles are
+preserved as baseline evidence for their unchanged historical build.
+
+Finalized validation for the lifecycle correction: Mac36 **453 passed**, standard
+macOS12 **395 passed**, iOS16 **379 passed**, and visionOS Simulator15 **379 passed**;
+all have zero failed/skipped/expected failures. The signed generic visionOS11 build
+succeeded. Complete fresh and already-running conflict profiles will be rerun on
+the ordinary signed build because the provider runtime changed. Earlier accepted
+bundles remain baseline evidence; CR-024 awaits live verification.

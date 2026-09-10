@@ -149,3 +149,11 @@ Keep permanent-delete CR-013 open. These six live cases do not permanently delet
 fixtures. Permanent deletion in the original suite still requires exact generated
 item confirmation. Directory-create reconciliation, ambiguous replacement success,
 and server-dependent guarantees must not be inferred from the controlled service.
+
+
+`FileProviderBackgroundWorkTests` covers refresh lifetime across replicated-instance
+invalidation: cancellation prevents another request, a replacement instance continues
+independently, and late work cannot start in an invalidated scope. The live audit
+identified this separate lifecycle defect after the twelve accepted conflict runs.
+Those baseline bundles remain valid for their build; the subsequent provider lifetime
+change requires new platform and live validation before certifying the updated build.

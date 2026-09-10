@@ -19,6 +19,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
         FileProviderRuntime.makeEventStore() as? any ProviderDiagnosticRecording
     }
     private var remotePollingTask: Task<Void, Never>?
+    private let materializedWork = FileProviderBackgroundWork()
 
     var fileProviderDomain: NSFileProviderDomain {
         domain
@@ -44,6 +45,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
     }
 
     public func invalidate() {
+        materializedWork.invalidate()
         remotePollingTask?.cancel()
         remotePollingTask = nil
         if let diagnosticRecorder {
@@ -61,68 +63,78 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
 
     public func materializedItemsDidChange(completionHandler: @escaping () -> Void) {
         FileProviderLog.replicatedExtension.debug("materialized items changed for domain(\(self.domain.identifier.rawValue, privacy: .public))")
-        Task {
+        Task { [diagnosticRecorder, materializedWork, weak self] in
             let span = await ProviderDiagnosticSpan.start(
                 source: .fileProviderExtension,
                 operation: .materializedItemsChanged,
                 recorder: diagnosticRecorder
             )
-            // This callback is an acknowledgement, not a barrier for remote
-            // refresh. Persist its terminal evidence first, acknowledge the
-            // system promptly, then keep background child spans correlated.
+            // Acknowledge once even if invalidation already rejected new work.
+            // The acknowledged callback must not retain the provider instance.
             await span.complete(statusClass: .success)
             completionHandler()
-            await span.withCorrelation {
-            do {
-                let runtime = try await FileProviderRuntime.load(domain: domain)
-                if let vault = runtime.encryptedVault {
-                    _ = try await vault.synchronize()
-                    await signalWorkingSet(runtime: runtime)
-                    return
-                }
-                let systemItems = try await MaterializedSetReader.read(using: manager)
-                #if STABILITY
-                let previousMaterializedIDs = Set(try await runtime.workingSetStateStore.materializedItems(
-                    domainIdentifier: runtime.configuration.domainIdentifier).map(\.fileID))
-                #endif
-                let materializedItems = systemItems.compactMap { item -> KDriveMaterializedItem? in
-                    let fileID: Int
-                    if item.itemIdentifier == .rootContainer {
-                        fileID = runtime.configuration.rootFileID
-                    } else {
-                        guard let parsed = try? KDriveItemIdentifier(rawValue: item.itemIdentifier.rawValue),
-                              let parsedFileID = parsed.fileID(rootFileID: runtime.configuration.rootFileID) else {
-                            return nil
+            materializedWork.start { [weak self] in
+                guard let self else { return }
+                await span.withCorrelation {
+                    do { try await self.refreshMaterializedItems() }
+                    catch {
+                        let errorClass = ProviderDiagnosticErrorClassifier.classify(error)
+                        if errorClass != .cancellation {
+                            FileProviderLog.replicatedExtension.error("refresh materialized items failed: class=\(errorClass.rawValue, privacy: .public) code=\((error as NSError).code, privacy: .public)")
                         }
-                        fileID = parsedFileID
                     }
-                    return KDriveMaterializedItem(
-                        fileID: fileID,
-                        isContainer: item.contentType?.conforms(to: .folder) == true
-                    )
                 }
-                try await runtime.workingSetStateStore.replaceMaterializedItems(
-                    materializedItems,
-                    domainIdentifier: runtime.configuration.domainIdentifier
-                )
-                #if STABILITY
-                // Attribute only identifiers actually added/removed by this
-                // system observation. A global materialization notification
-                // alone cannot prove eviction of the intended fixture.
-                for identifier in previousMaterializedIDs.symmetricDifference(Set(materializedItems.map(\.fileID))).sorted() {
-                    let itemSpan = await ProviderDiagnosticSpan.start(itemIdentifier: String(identifier), source: .fileProviderExtension,
-                        operation: .materializedItemsChanged, recorder: diagnosticRecorder)
-                    await itemSpan.complete(statusClass: .success)
-                }
-                #endif
-                let outcome = try await pollWorkingSet(runtime: runtime, minimumInterval: 0,
-                    coalescePendingMaterializationPolls: true)
-                if outcome.didPoll { await signalWorkingSet(runtime: runtime) }
-            } catch {
-                FileProviderLog.replicatedExtension.error("refresh materialized items failed: \(error.localizedDescription, privacy: .public)")
-            }
             }
         }
+    }
+
+    private func refreshMaterializedItems() async throws {
+        try Task.checkCancellation()
+        let runtime = try await FileProviderRuntime.load(domain: domain)
+        if let vault = runtime.encryptedVault {
+            _ = try await vault.synchronize()
+            await signalWorkingSet(runtime: runtime)
+            return
+        }
+        let systemItems = try await MaterializedSetReader.read(using: manager)
+        try Task.checkCancellation()
+        #if STABILITY
+        let previousMaterializedIDs = Set(try await runtime.workingSetStateStore.materializedItems(
+            domainIdentifier: runtime.configuration.domainIdentifier).map(\.fileID))
+        #endif
+        let materializedItems = systemItems.compactMap { item -> KDriveMaterializedItem? in
+            let fileID: Int
+            if item.itemIdentifier == .rootContainer {
+                fileID = runtime.configuration.rootFileID
+            } else {
+                guard let parsed = try? KDriveItemIdentifier(rawValue: item.itemIdentifier.rawValue),
+                      let parsedFileID = parsed.fileID(rootFileID: runtime.configuration.rootFileID) else {
+                    return nil
+                }
+                fileID = parsedFileID
+            }
+            return KDriveMaterializedItem(
+                fileID: fileID,
+                isContainer: item.contentType?.conforms(to: .folder) == true
+            )
+        }
+        try await runtime.workingSetStateStore.replaceMaterializedItems(
+            materializedItems,
+            domainIdentifier: runtime.configuration.domainIdentifier
+        )
+        #if STABILITY
+        // Attribute only identifiers actually added/removed by this
+        // system observation. A global materialization notification
+        // alone cannot prove eviction of the intended fixture.
+        for identifier in previousMaterializedIDs.symmetricDifference(Set(materializedItems.map(\.fileID))).sorted() {
+            let itemSpan = await ProviderDiagnosticSpan.start(itemIdentifier: String(identifier), source: .fileProviderExtension,
+                operation: .materializedItemsChanged, recorder: diagnosticRecorder)
+            await itemSpan.complete(statusClass: .success)
+        }
+        #endif
+        let outcome = try await pollWorkingSet(runtime: runtime, minimumInterval: 0,
+            coalescePendingMaterializationPolls: true)
+        if outcome.didPoll { await signalWorkingSet(runtime: runtime) }
     }
 
     public func item(
@@ -1067,7 +1079,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
             await span.complete(statusClass: .success)
             return outcome
         } catch {
-            await span.fail(error: error)
+            if ProviderDiagnosticErrorClassifier.classify(error) == .cancellation { await span.cancel() }
+            else { await span.fail(error: error) }
             throw error
         }
     }

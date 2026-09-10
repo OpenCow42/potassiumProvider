@@ -319,3 +319,11 @@ Finder destination observation prints only a closed lookup phase (`resolveItemUR
 or `bindDestinationParent`), diagnostic category, and numeric error code when a
 lookup fails. Local paths, error descriptions, and user-info are excluded. A logged
 lookup failure is not evidence of a remote API failure or a successful move.
+
+
+Provider-instance invalidation cancels its owned materialization refresh tasks;
+the already-completed acknowledgement is not completed a second time. A cancelled
+working-set refresh records one `cancelled` terminal, separately from the successful
+instance-invalidation span. Object invalidation still does not imply process exit.
+A missing background terminal after observed process disappearance prevents sealing;
+never synthesize a terminal from process absence.

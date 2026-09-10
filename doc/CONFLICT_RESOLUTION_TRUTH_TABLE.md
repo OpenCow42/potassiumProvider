@@ -192,6 +192,22 @@ polls retain their original behavior. `WorkingSetPollSchedulingTests` covers
 coalescing, failed-first-poll recovery, arrivals during I/O, and cancellation.
 No snapshot transaction guard or successful watermark is bypassed.
 
+An additional live failure identified materialization work continuing after its
+replicated instance was invalidated. The acknowledged callback launched an
+untracked task that retained the instance; `invalidate()` cancelled only its
+periodic poll. An instance-owned `FileProviderBackgroundWork` scope now rejects
+new work and synchronously requests cancellation of registered refresh tasks on
+invalidation. A short registration mutex bridges the synchronous system callback;
+task bodies and cancellation handlers execute outside it. A replacement instance
+owns a separate scope. The materialization acknowledgement still completes once
+before background refresh; it is never held for remote work or repeated on cancel.
+Cancellation is checked before loading refresh state and after reading materialized
+items, while existing poll checks and transaction guards remain in force. Cancelled
+working-set refreshes receive a cancellation terminal. `FileProviderBackgroundWorkTests`
+covers no subsequent request after cancellation, repeated invalidation, rejected
+late work, independent replacement instances, and immediate-completion registration.
+Live rerun is required; this does not establish why the prior process exited.
+
 `StabilityConflictBarrierTests` isolates the Stability-only conflict barrier from
 the live active-run pointer and covers exact item/correlation matching, wrong-run
 release rejection, successful release, cancellation, and deadline expiry. This
@@ -656,6 +672,7 @@ pending and are never falsely acknowledged.
 | `CR-021` | Medium | Share update/delete have no documented ETag or conditional version and can race another editor. | Request bodies and response access now fail closed, but accepted share mutations remain last-writer-wins until the API exposes a conditional primitive. | **Open** |
 | `CR-022` | Medium | Working-set change delivery waited behind long materialized-folder crawls despite confirmed local mutation results. | Live callbacks exceeded 90 seconds. Confirmed results now enter the journal with per-item comparison; poll-anchor comparison prevents an older crawl from overwriting them. Available deltas are delivered before polling. Deterministic regressions and complete fresh/already-running conflict profiles pass within the existing deadlines. A later cold original-suite run exposed 359–360-directory serial crawls and a preparation deadline; large materialized-set latency remains unresolved. | **Mitigated** |
 | `CR-023` | Medium | Live current-sync-anchor callbacks failed immediately on SQLite `BUSY` while opening the snapshot store. | Bounded cause inspection identified primary code 5 in two fresh content races. A real-lock production-store regression failed with the old initialization order and passed after installing the existing timeout before WAL setup. Both macOS profiles and iOS/visionOS targets pass, followed by all six fresh and six already-running conflict cases without recurrence. The precise live lock owner is unobserved. Failed bundles remain evidence. | **Mitigated** |
+| `CR-024` | Medium | Acknowledged materialization callbacks launched untracked work that retained invalidated provider instances. | Live background requests continued after object invalidation; process disappearance later left incomplete spans. Instance-scoped cancellation and registration regressions pass on both macOS profiles and iOS/visionOS simulators; generic visionOS also builds. Live validation is pending. Process-exit cause is unconfirmed. | **Open** |
 
 ## Legacy Plaintext User-Recovery Matrix
 
