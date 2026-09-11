@@ -380,3 +380,7 @@ can dismiss its known transient menu, then revalidate the exact selected row bef
 capturing it; unrelated windows and broader screenshot regions remain excluded.
 Closed numeric menu observations identify anchor lookup, event posting, popup count
 and exact enabled-command count without exporting file names or URLs.
+
+Native pointer dispatch records the boolean result of the read-only event-posting
+permission check before emitting input. Denial fails immediately without presenting
+a consent dialog; the trace does not conflate a denied event with a missing command.

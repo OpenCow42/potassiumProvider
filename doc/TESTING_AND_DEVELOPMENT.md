@@ -635,3 +635,7 @@ registration-only repair. This does not replace final Actions code-hash evidence
 Finder contextual command selection is confined to the single visible transient
 root menu and its direct commands. Expanded submenus are subordinate to that root;
 application menu-bar commands and ambiguous independent popups are excluded.
+
+Native Finder clicks move before pressing and revalidate the bound target after
+that movement. Ordinary menu/control observations retain a 90-second limit inside
+a transfer scenario; only transfer progress/completion waits use the longer budget.

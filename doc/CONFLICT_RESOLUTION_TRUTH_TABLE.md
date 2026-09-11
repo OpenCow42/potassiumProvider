@@ -15,6 +15,12 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+A later trace narrowed the menu failure to posted pointer input with no visible
+popup, before any mutation. Native input now clears modifiers, moves before clicking
+and revalidates the target, with cancellation/release regressions. Ordinary UI waits
+remain capped at 90 seconds inside transfer scenarios. These harness changes need
+live verification and do not alter conflict policies or CR-013.
+
 A later fresh run failed before eviction/contextual command dispatch, with no
 current Actions callback. Its bundle stays failed; native cancellation was not
 exercised. Sanitized menu observations now distinguish anchor, popup and command

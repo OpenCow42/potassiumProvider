@@ -420,12 +420,10 @@ final class SystemFinderUIDriver: FinderUIDriving {
                       NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
                     throw FinderUIError.selectionMismatch
                 }
-                for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-                    guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
-                        throw FinderUIError.controlUnavailable
-                    }
-                    event.post(tap: .cghidEventTap)
-                }
+                guard try await FinderPointerClick.perform(at: point, button: .left, mayClick: {
+                    self.remainingTime() > .zero && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" &&
+                    self.contextMenu().map { CFEqual($0, menu) } == true && self.rect(item)?.contains(point) == true
+                }) else { throw FinderUIError.selectionMismatch }
             }, waitForDismissal: {
                 try await self.wait { self.contextMenu() == nil }
             }, waitForResult: {
@@ -598,13 +596,18 @@ final class SystemFinderUIDriver: FinderUIDriving {
                             .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
                         }) else { return false }
                 guard try whilePending() else { return true }
-                for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                guard try await FinderPointerClick.perform(at: point, button: .left, mayClick: {
+                    guard try whilePending() else { return false }
                     guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder",
-                          let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
-                        throw FinderUIError.controlUnavailable
-                    }
-                    event.post(tap: .cghidEventTap)
-                }
+                          let fresh = self.selectedElement(), CFEqual(fresh, selected),
+                          let freshWindow = self.finderWindowAX(), let freshWindowBounds = self.rect(freshWindow),
+                          let freshRowBounds = self.rect(fresh) else { throw FinderUIError.selectionMismatch }
+                    let freshPoint = FinderTransferCancellationTarget.point(window: freshWindowBounds, row: freshRowBounds,
+                        indicators: self.elements(fresh).filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
+                            .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
+                        })
+                    return freshPoint.map { abs($0.x - point.x) < 1 && abs($0.y - point.y) < 1 } == true
+                }) else { return true }
                 print("finder stability UI: active generated transfer indicator clicked; awaiting cancellation callback")
             }
             invoked = true
@@ -848,17 +851,14 @@ final class SystemFinderUIDriver: FinderUIDriving {
         // routing needs only the unique name field of the verified selection,
         // with fresh geometry confined to the bound window.
         menuIsOpen = true
-        for type in [CGEventType.rightMouseDown, .rightMouseUp] {
-            guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .right) else {
-                throw FinderUIError.controlUnavailable
-            }
-            // Mouse routing needs WindowServer hit testing. postToPid does not
-            // reliably open Finder's contextual menu on current macOS.
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == finder.processIdentifier else {
+        guard try await FinderPointerClick.perform(at: point, button: .right, mayClick: {
+            guard self.remainingTime() > .zero,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == finder.processIdentifier,
+                  let fresh = self.selectedMenuPoint(), abs(fresh.x - point.x) < 1, abs(fresh.y - point.y) < 1 else {
                 throw FinderUIError.windowMismatch
             }
-            event.post(tap: .cghidEventTap)
-        }
+            return true
+        }) else { throw FinderUIError.controlUnavailable }
         print("finder stability UI: context-menu mouse request posted")
     }
 
@@ -1014,13 +1014,15 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
     private func wait(_ predicate: () async throws -> Bool) async throws {
         guard remainingTime() > .zero else { throw FinderUIError.timedOut }
-        let deadline = ContinuousClock.now.advanced(by: remainingTime())
+        // Transfer callbacks have their own ten-minute budget. An ordinary UI
+        // control lookup must still stop within 90 seconds.
+        let deadline = FinderUIObservationDeadline.make(remaining: remainingTime())
         repeat {
             try Task.checkCancellation()
             do { if try await predicate() { return } }
             catch FinderUIError.finderBusy { /* Menu tracking is transient; retry only the bounded observation. */ }
             try await Task.sleep(for: .milliseconds(100))
-        } while ContinuousClock.now < deadline
+        } while deadline.remaining() > .zero
         throw FinderUIError.timedOut
     }
 }

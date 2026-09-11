@@ -2002,3 +2002,39 @@ zero failures/skips, in `potassium-popup-root-stability-mac-01.xcresult`; the st
 Mac build passed (`potassium-popup-root-standard-mac-01.log`). This follow-up changes
 only the macOS Stability harness; shared-runtime simulator validation remains the
 previous finalized evidence.
+
+### Native input dispatch continuation (2026-09-11)
+
+Fresh run `2c4581d7-db8c-45d6-ac3d-b4e0a7eb4116` reached eviction and posted
+the confined secondary-click events, but observed zero popup menus. Read-only
+computer use independently found no popup. The trace narrows the first divergence
+to native input dispatch, before a provider mutation. It does not establish whether
+event timing, inherited input state or another WindowServer condition suppressed
+the menu. The separately budgeted failure screenshot was retained for the exact
+generated row. The run sealed **four passed, three failed, nine skipped**. Navigation,
+hydration, independent preserve-both and working-set refresh passed. Eviction,
+cancellation and contextual actions failed before command dispatch; dependent
+steps including deletion skipped. All four advanced cases were attempted, the owned
+windows closed, and the failed evidence/fixtures remain preserved.
+
+Native clicks now explicitly move the pointer, clear inherited modifiers, request
+a single click and allow a short event-delivery interval. The target is revalidated
+after movement, and a pressed button is released even on cancellation. Transfer
+completion during hover prevents cancellation input. Root-menu and exact-row
+confinement remain mandatory; actual callbacks still prove the action. This is a
+focused input-dispatch correction requiring live verification, not a declared
+provider fix. Ordinary UI observations are capped at 90 seconds even inside the
+600-second transfer scenario. Regression coverage checks post-hover revalidation,
+modifier/click semantics, cancellation release and deadline bounds.
+
+The native sequence additionally checks `CGPreflightPostEventAccess` before input
+and emits only its boolean outcome. A denial fails before movement or target
+lookup, without a permission prompt. This provides evidence to distinguish denied
+input from an absent menu in the next signed run.
+
+Native pointer/ordinary-deadline regressions finalized in
+`potassium-pointer-sequence-stability-mac-02.xcresult` with zero failures/skips; the
+standard Mac build passed (`potassium-pointer-sequence-standard-mac-01.log`). The
+first test build required an explicit core-module import in the new test file; its
+failed bundle remains retained. The preceding commit's CI `34591774207` passed all
+three platform jobs. Live verification of the new pointer sequence is next.
