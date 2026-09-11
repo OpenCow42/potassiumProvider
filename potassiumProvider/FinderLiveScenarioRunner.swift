@@ -75,13 +75,13 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                 try await context.endStep(correlationID)
                 pointerActive = false
             } catch {
-                if let session {
+                if let session, (error as? FinderUIError) != .pointerTargetObstructed {
                     // The driver only captures its previously verified single
                     // generated selection; failure never broadens the region.
                     try? await ui.captureFailure(in: session.run.directoryURL.appendingPathComponent("visual-evidence"), sequence: 100 + index)
                 }
                 if pointerActive { try? await context.endStep(correlationID) }
-                let origin: StabilityFailureOrigin = (error as? FinderUIError) == .evictionResourceBusy ? .environment :
+                let origin: StabilityFailureOrigin = (error as? FinderUIError)?.isEnvironmental == true ? .environment :
                     (error as? StabilityLiveEvidenceError) == .unexpectedFailure ? .provider : error is FinderUIError ? .automation :
                     (error is FinderLiveError || error is StabilityLiveEvidenceError || error is StabilityRunConfinementError || error is StabilityDeadlineError || error is StabilityDiagnosticTailError || error is ProviderDiagnosticStoreError ? .harness : .api)
                 let reason = failureReason(error)

@@ -38,6 +38,19 @@ struct FinderPointerClickTests {
         #expect(events == [.mouseMoved])
     }
 
+    @Test(arguments: [0, 1])
+    func obstructedHitBeforeOrAfterHoverNeverPostsButtonDown(afterMoves: Int) async {
+        var events: [CGEventType] = []
+        await #expect(throws: FinderUIError.pointerTargetObstructed) {
+            _ = try await FinderPointerClick.perform(at: .zero, button: .right,
+                mayClick: {
+                    if events.count == afterMoves { throw FinderUIError.pointerTargetObstructed }
+                    return true
+                }, canPostEvents: { true }, post: { events.append($0.type) }, settle: {})
+        }
+        #expect(events == (afterMoves == 0 ? [] : [.mouseMoved]))
+    }
+
     @Test(arguments: [(600, 90), (20, 20), (0, 0), (-1, 0)])
     func transferBudgetDoesNotExtendOrdinaryUIWait(seconds: Int, expected: Int) {
         let now = ContinuousClock.now

@@ -2261,3 +2261,46 @@ Mac02 finalized with `-enableCodeCoverage NO`; no coverage claim is made for it.
 Inspection of the new signed products confirms explicit profiles authorizing the
 existing shared group for all three executables. Live verification remains pending.
 CR-013 stays open.
+
+
+### Native pointer obstruction and retained provisioning retry (2026-09-11)
+
+CI for `27e5dc9` finalized green for macOS, iOS Simulator and visionOS. The first
+ordinary install attempt rejected a refreshed profile with a stale cached resource
+signature before replacing the installed app. Cleaning only that ordinary build's
+DerivedData through `xcodebuild clean`, then rebuilding, produced valid signatures
+and authorized shared-group profiles for the app and both extensions. Installed
+preflight passed; no group migration, credential extraction or privacy reset occurred.
+
+Fresh `27e5dc9` run `b8c89033-2685-4812-ac9b-f8e9a1280a7c` sealed
+**12 passed, three failed, one deferred** and closed its owned Finder/TextEdit
+windows. Restore and contextual actions timed out before any context popup appeared;
+cancellation observed real progress but no cancelled fetch. The run never launched
+the Actions panel, so it does not yet prove the provisioning correction's live
+panel behavior. A later settling `workingSetRefresh` also recorded storage code 5
+(span `18787735-BEE5-4026-BD61-ED69EC4484F1`); its cause remains unconfirmed.
+Earlier failing bundles and all generated remote fixtures remain retained.
+
+A separate local generated-file probe reproduced the earlier divergence: Finder
+was frontmost and Accessibility/event-posting permission checks were true, yet the
+system-wide AX hit at its exact filename field belonged to a different process.
+An independent on-screen window-owner check agreed. The probe stopped before
+posting clicks and closed only its own window. It did not inspect another app's
+UI or identify the obstructing window. Classification: environment; high confidence
+in the observed obstruction, not proof of the owner or every earlier click failure.
+The operator was asked whether a remaining permission/error dialog was visible;
+Computer Use cannot inspect the macOS notification-alert app.
+
+Native clicks now require the hit's process and bounded AX ancestry to reach the
+exact selected row or popup item, both before moving and after hover. Another app,
+another Finder window, missing hit, crossed process or cyclic ancestry fails closed.
+The harness records the existing environment/uiUnavailable evidence classification
+and a local `pointerTargetObstructed` reason; no report schema/field changes occur.
+It omits a failure screenshot for obstruction so other apps' content cannot be
+captured. Missing visual evidence cannot turn this failure into acceptance.
+Regressions prove that another app is never traversed and no mouse-down is posted
+when obstruction appears before or after hover. `potassium-pointer-ownership-stability-mac-01.xcresult`
+finalized **19 passed**, zero failures/skips. The standard Mac build also passed
+(`potassium-pointer-ownership-standard-mac-01.log`). The signed ordinary `27e5dc9` install
+is retained while awaiting resolution; the pointer guard still needs a live rerun.
+CR-013 remains open. No full fresh/warm acceptance is claimed.

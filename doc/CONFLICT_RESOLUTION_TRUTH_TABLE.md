@@ -15,6 +15,14 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The provisioning-corrected `27e5dc9` retry sealed 12 passed, three failed and
+deletion deferred. Mouse-driven menus failed before the Actions panel launched;
+a separate confined probe found another process receiving the intended Finder hit.
+Native input now verifies exact process/scope ancestry before mouse-down and treats
+obstruction as an environment failure, without traversing or capturing the other
+app. Nineteen focused regressions passed; complete live verification remains open.
+No mutation/conflict policy changes or CR-013 closure follow from this UI diagnosis.
+
 Actions access in the sealed `a961bf5` retry remained blocked before API work
 (13 passed, two failed, deletion deferred). Its embedded profile lacked the shared
 App Groups grant despite claiming it in the signature. Both extensions now enable

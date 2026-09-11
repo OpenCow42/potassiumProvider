@@ -50,6 +50,9 @@ enum FinderUIError: String, Error, Equatable {
     case finderUnavailable, permissionRequired, windowMismatch, selectionMismatch
     case controlUnavailable, timedOut, operatorCancelled, screenshotUnavailable
     case editorUnavailable, automationFailed, finderBusy, evictionResourceBusy
+    case pointerTargetObstructed
+
+    var isEnvironmental: Bool { self == .evictionResourceBusy || self == .pointerTargetObstructed }
 }
 
 private enum FinderAppleEventOperation: String {
@@ -427,8 +430,11 @@ final class SystemFinderUIDriver: FinderUIDriving {
                     throw FinderUIError.selectionMismatch
                 }
                 guard try await FinderPointerClick.perform(at: point, button: .left, mayClick: {
-                    self.remainingTime() > .zero && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" &&
-                    self.contextMenu().map { CFEqual($0, menu) } == true && self.rect(item)?.contains(point) == true
+                    guard self.remainingTime() > .zero,
+                          let front = NSWorkspace.shared.frontmostApplication, front.bundleIdentifier == "com.apple.finder",
+                          self.contextMenu().map({ CFEqual($0, menu) }) == true, self.rect(item)?.contains(point) == true else { return false }
+                    try FinderPointerTarget.verify(at: point, processIdentifier: front.processIdentifier, scope: item)
+                    return true
                 }) else { throw FinderUIError.selectionMismatch }
             }, waitForDismissal: {
                 try await self.wait { self.contextMenu() == nil }
@@ -612,7 +618,10 @@ final class SystemFinderUIDriver: FinderUIDriving {
                         indicators: self.elements(fresh).filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
                             .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
                         })
-                    return freshPoint.map { abs($0.x - point.x) < 1 && abs($0.y - point.y) < 1 } == true
+                    guard freshPoint.map({ abs($0.x - point.x) < 1 && abs($0.y - point.y) < 1 }) == true,
+                          let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else { return false }
+                    try FinderPointerTarget.verify(at: point, processIdentifier: finder.processIdentifier, scope: fresh)
+                    return true
                 }) else { return true }
                 print("finder stability UI: active generated transfer indicator clicked; awaiting cancellation callback")
             }
@@ -904,6 +913,8 @@ final class SystemFinderUIDriver: FinderUIDriving {
                   let fresh = self.selectedMenuPoint(), abs(fresh.x - point.x) < 1, abs(fresh.y - point.y) < 1 else {
                 throw FinderUIError.windowMismatch
             }
+            guard let row = self.selectedElement() else { throw FinderUIError.selectionMismatch }
+            try FinderPointerTarget.verify(at: point, processIdentifier: finder.processIdentifier, scope: row)
             return true
         }) else { throw FinderUIError.controlUnavailable }
         print("finder stability UI: context-menu mouse request posted")

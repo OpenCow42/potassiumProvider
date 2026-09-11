@@ -685,3 +685,12 @@ Xcode's normal automatic provisioning refresh using its saved developer account.
 See [Apple's container authorization guidance](https://developer.apple.com/documentation/xcode/accessing-app-group-containers).
 Repeated data-access prompts require inspecting provisioning before requesting
 another permission grant; do not reset TCC or migrate the app/Keychain group.
+
+
+A frontmost Finder process and valid event-posting permission do not prove that
+Finder receives a mouse click. Native pointer actions now require a system-wide
+AX hit belonging to the exact selected Finder row or popup item. Verification runs
+before moving and again after hover. An obstructed target records environment /
+uiUnavailable with local reason `pointerTargetObstructed`, without reading the
+other app's UI. Its failure screenshot is omitted to exclude unrelated content.
+The failed result remains unaccepted; clear the obstruction before rerunning.
