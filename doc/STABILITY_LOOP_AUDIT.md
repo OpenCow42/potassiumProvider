@@ -1529,3 +1529,38 @@ generic visionOS11 build succeeded, all accepted test bundles with zero
 failed/skipped/expected failures. The last corrections affect only macOS Stability.
 The separate original sixteen-scenario suite remains incomplete and is next.
 CR-013 remains open; CR-022 retains its large-materialized-set latency limitation.
+
+
+### Original-suite continuation: deep seed preparation remains blocked
+
+Fresh original-suite run `79693887-95c6-48da-9fb0-464e246aaf6c` on
+`d4b5323` sealed with **zero passed, one failed, and fifteen skipped**. The
+90-second preparation began at 23:58:03 UTC on September 10 and expired at
+23:59:33. Closed fixture traces verified the run root, nested directory, and deep
+directory, then identified seed resolution as the failing operation. No scenario
+completed, no permanent deletion occurred, and the conditional warm command did
+not run. Run-owned Finder windows closed. All 2,834 diagnostic spans have exactly
+one start and terminal, with no failed provider/API diagnostic; the final report,
+summary, and timeline are retained. No safe selected-item screenshot was available
+at this preparation failure, so none was captured. This is failed evidence, never
+an acceptance bundle.
+
+Expected: resolve and bind the generated hierarchy within the existing preparation
+budget, then begin verified navigation. Observed: preparation expired while
+resolving the seed. The earliest long callback was working-set change enumeration
+`C235C29A-BB19-418E-A7BD-30F17F04E669`: 61,235 ms, including 423 advanced
+folder-list requests and four partial-activity requests. Subsequent materialization
+refresh `9BE3ABEB-24FF-462C-BDA6-95D3332EB0FC` took 77,704 ms; another
+`D3D6BE0D-98E3-4099-AF9E-5B96DF6EA204` took 124,180 ms including queued
+work. Later callbacks settled successfully before sealing.
+
+Classification: harness deadline with observed provider refresh latency. Confidence
+is high in the measured crawl cost and seed-resolution timeout; the trace does not
+establish the precise dependency blocking the system's visible-URL callback.
+CR-022's large-materialized-set latency limitation remains unresolved. No focused
+runtime correction or successful rerun is claimed for this failure. Reproduce with
+`scripts/run-finder-stability.sh --run --extension-state fresh --yes-live` using the
+preserved lab and the ordinary signed build. Investigate refresh scheduling and
+visible-URL delivery before changing policy; keep the deadline, fixture confinement,
+retained evidence, and complete-span requirements intact. The independently
+verified six fresh and six already-running conflict passes remain valid.
