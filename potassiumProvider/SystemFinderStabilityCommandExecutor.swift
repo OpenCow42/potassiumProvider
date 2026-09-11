@@ -13,6 +13,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
     private let scenarioRunner: any FinderStabilityScenarioRunning
     private let runCoordinatorProvider: () throws -> StabilityRunCoordinator
     private let statusWriter: (StabilityLiveStatus, StabilityRunHandle) throws -> Void
+    private let registrationChecker: () async throws -> Void
 
     init() {
         self.contextLoader = FinderStabilityContextLoader()
@@ -20,6 +21,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         self.scenarioRunner = LiveFinderStabilityScenarioRunner()
         self.runCoordinatorProvider = { try StabilityRunCoordinator() }
         self.statusWriter = { try $0.write(to: $1) }
+        self.registrationChecker = { try await StabilityActionRegistration.verify(appURL: Bundle.main.bundleURL) }
     }
 
     init(
@@ -27,13 +29,15 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         permissionChecker: any FinderStabilityPermissionChecking,
         scenarioRunner: any FinderStabilityScenarioRunning,
         runCoordinatorProvider: @escaping () throws -> StabilityRunCoordinator = { try StabilityRunCoordinator() },
-        statusWriter: @escaping (StabilityLiveStatus, StabilityRunHandle) throws -> Void = { try $0.write(to: $1) }
+        statusWriter: @escaping (StabilityLiveStatus, StabilityRunHandle) throws -> Void = { try $0.write(to: $1) },
+        registrationChecker: @escaping () async throws -> Void = { try await StabilityActionRegistration.verify(appURL: Bundle.main.bundleURL) }
     ) {
         self.contextLoader = contextLoader
         self.permissionChecker = permissionChecker
         self.scenarioRunner = scenarioRunner
         self.runCoordinatorProvider = runCoordinatorProvider
         self.statusWriter = statusWriter
+        self.registrationChecker = registrationChecker
     }
 
     func provision() async -> FinderStabilityCommandResult {
@@ -97,6 +101,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
 
     func preflight(requestPermissions: Bool) async -> FinderStabilityCommandResult {
         do {
+            try await registrationChecker()
             let context = try await contextLoader.loadPreflight()
             let results = FinderStabilityPreflightEvaluator.results(
                 permissions: permissionChecker.check(requestPermissions: requestPermissions),
@@ -166,6 +171,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         }
         let preflightContext: FinderStabilityPreflightContext
         do {
+            try await registrationChecker()
             preflightContext = try await contextLoader.loadPreflight()
         } catch {
             try? statusWriter(StabilityLiveStatus(state: .failed), ownedRun.run)

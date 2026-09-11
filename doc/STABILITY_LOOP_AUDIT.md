@@ -1928,3 +1928,40 @@ Favorite-state validation finalized **73 Stability Mac tests** and **78 standard
 Mac tests**, zero failed/skipped; the generic visionOS build passed. CI for the
 preceding `a525f87` cursor/continuation change finalized green on all destinations
 (run `34586472123`). The next signed favorite-state build still needs live evidence.
+
+### Native transfer ring and wrong Actions installation (2026-09-11)
+
+Run `67e2885c-8102-4b41-91eb-32bdb39fa750` on `765a651` sealed **13 passed,
+two failed, one deferred**. The favorite metadata correction is now supported live:
+two successful favorite root/child span pairs and duplicate root/child spans were
+recorded, with each typed remote check passing. The full contextual scenario still
+failed, so none of its partial success is promoted to a scenario pass. The final
+share panel was observed at Loading kDrive; the runner timed out before finding
+its Stability item identifier. All owned Finder windows closed and evidence settled.
+
+Process inspection identified the Actions process from a separate older installed
+app, while the replicated instance ran the selected Stability build. PlugInKit listed
+three physical Actions copies with the same identifier: an older DerivedData copy,
+the separate installation, and the selected Stability app. No Actions diagnostics
+came from the expected build. This is high-confidence environment/registration
+mismatch; the loading behavior cannot establish a defect in the current Actions
+implementation. Two positively inspected duplicate registrations were removed,
+leaving bundles, domains, credentials and fixtures intact. The stale Actions process
+had already exited when its run-bounded identity was checked. Preflight now uses
+bounded read-only discovery and rejects missing, duplicate, wrong-path and malformed
+Actions registration. Exact source-code-hash checks at certification are unchanged.
+
+During the larger transfer, computer use observed the generated selected row's
+AXProgressIndicator at fraction 0.950928, with no labeled Cancel control. The runner
+had observed real progress before either transfer completed but never pressed a
+cancel control. A narrowly confined native click on that active indicator is now an
+attempted fallback, with finite 0 < progress < 1, one indicator, and row/window
+geometry checks. A click is not cancellation evidence; the same strict callback
+terminal/recovery assertions decide the result. Tests reject missing/terminal values,
+multiple indicators, and absent or out-of-row/window geometry.
+
+Favorite-state tests finalized **78 passed on each simulator** in addition to 73
+Stability Mac and 78 standard Mac; the generic visionOS build passed. The new
+registration/native-control selection finalized **29 Stability tests**, zero failed
+or skipped, in `potassium-native-cancel-stability-mac-01.xcresult`. No shared runtime
+or mutation semantics changed in this follow-up. Its signed live rerun is pending.

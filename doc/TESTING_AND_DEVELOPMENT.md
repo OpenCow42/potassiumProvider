@@ -617,3 +617,16 @@ the scenario, item alias, extension build, process, and parent span. Intermediat
 progress excludes 0% and 100%. A completed transfer ends the cancel-control search
 and triggers the larger-fixture retry; it never counts as cancellation. Recovery
 uses another pre-dispatch cursor and requires a new successful fetch.
+
+The cancellation driver also recognizes Finder's active AX progress indicator in
+the exact bound row. It can send one native click to its fresh, confined center
+when no labeled Cancel control exists. A click is only an attempted UI action;
+actual cancellation, exactly one terminal and a subsequent successful fetch remain
+mandatory. Empty/completed/nonfinite progress and ambiguous or unconfined geometry
+are rejected.
+
+Actions extension registration is checked separately during preflight. Finder can
+launch an older Actions copy while the replicated instance uses the correct build.
+Discovery must contain exactly the selected app's Actions extension; missing,
+duplicate or malformed discovery is rejected. See `FILE_PROVIDER_CLEANUP.md` for
+registration-only repair. This does not replace final Actions code-hash evidence.

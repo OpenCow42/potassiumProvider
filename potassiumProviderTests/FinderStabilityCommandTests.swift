@@ -122,7 +122,7 @@ struct FinderStabilityCommandTests {
             visibleDomainResolver: { _ in throw FinderPreflightProbeError.stopAfterFirstCallback })
         let executor = SystemFinderStabilityCommandExecutor(contextLoader: loader,
             permissionChecker: FinderPreflightPermissionProbe(), scenarioRunner: FinderPreflightScenarioProbe(),
-            runCoordinatorProvider: { coordinator }, statusWriter: { _, _ in })
+            runCoordinatorProvider: { coordinator }, statusWriter: { _, _ in }, registrationChecker: {})
         #expect(await executor.run(requestPermissions: false) == .rejected)
         let run = try #require(await coordinator.activeRun())
         #expect(try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL).map(\.id) == [callback.id])

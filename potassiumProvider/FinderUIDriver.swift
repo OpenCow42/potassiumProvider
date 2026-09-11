@@ -572,12 +572,30 @@ final class SystemFinderUIDriver: FinderUIDriving {
         var invoked = false
         try await wait {
             guard try whilePending() else { return true }
-            guard let selected = self.selectedElement(), let cancel = self.elements(selected).first(where: {
+            guard let selected = self.selectedElement() else { return false }
+            let nodes = self.elements(selected)
+            if let cancel = nodes.first(where: {
                 let label = self.string($0, kAXDescriptionAttribute) ?? self.string($0, kAXTitleAttribute) ?? ""
                 return label.localizedCaseInsensitiveContains("cancel")
-            }) else { return false }
-            guard try whilePending() else { return true }
-            guard AXUIElementPerformAction(cancel, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
+            }) {
+                guard try whilePending() else { return true }
+                guard AXUIElementPerformAction(cancel, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
+            } else {
+                guard let window = self.finderWindowAX(), let windowBounds = self.rect(window), let rowBounds = self.rect(selected),
+                      let point = FinderTransferCancellationTarget.point(window: windowBounds, row: rowBounds,
+                        indicators: nodes.filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
+                            .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
+                        }) else { return false }
+                guard try whilePending() else { return true }
+                for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                    guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder",
+                          let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
+                        throw FinderUIError.controlUnavailable
+                    }
+                    event.post(tap: .cghidEventTap)
+                }
+                print("finder stability UI: active generated transfer indicator clicked; awaiting cancellation callback")
+            }
             invoked = true
             return true
         }

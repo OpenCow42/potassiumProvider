@@ -15,6 +15,18 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+Fresh `765a651` evidence confirms favorite, unfavorite and duplicate UI/server
+operations after adding the optional metadata include. The final share panel was
+observed loading; the runner timed out without the Stability panel identifier.
+Process inspection identified an older Actions binary from a separate installed
+app, despite correct replicated-provider evidence. Preflight now rejects ambiguous
+Actions registrations; final code-hash validation remains mandatory. The next run
+must verify the current UI extension before attributing a panel defect to this
+branch. Cancellation's active progress ring was observed in Finder without a
+labeled Cancel button; a confined native click is now attempted only at actual
+intermediate progress and must still produce real cancellation evidence. Conflict
+policies, full acceptance requirements and CR-013 are unchanged.
+
 Fresh run `fdaa23ad-7080-4463-9cf0-456982831b03` sealed with 13 passed, two failed
 (cancellation and contextual actions), and deletion deferred. Working-set refresh
 passed. Computer use observed Share/History/Duplicate but no favorite actions for
