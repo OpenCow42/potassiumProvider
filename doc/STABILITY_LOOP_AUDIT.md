@@ -1664,7 +1664,53 @@ verified lab/domain ownership, Accessibility, Finder automation, screen recordin
 and extension registration. Fresh run `9b684af4-ca17-4795-8c79-74195aeee299`
 cleared fixture preparation and verified scenarios 1–11, including Remove Download,
 TextEdit editing, Trash, and the strengthened Restore callback/bytes/destination
-checks. It remains monitored at the operator's exact-fixture permanent-deletion
-confirmation. This is an incomplete active run, not a certified 16-scenario pass.
-No permanent deletion or warm-run acceptance is claimed. Failed earlier bundles
-remain preserved; CR-013 stays open.
+checks. After the exact-fixture confirmation, Finder's Delete Immediately command
+was invoked, but the runner timed out waiting for its native confirmation dialog.
+The sealed result is **11 passed, one failed, four skipped**, classified as UI
+automation/deadline. No `deleteItem` callback was recorded. All 7,464 diagnostic
+spans have exactly one start and terminal; report, timeline, and selected-row
+screenshots remain preserved. Owned Finder windows closed. Neither permanent
+deletion nor complete fresh/warm acceptance is proven; CR-013 stays open.
+
+### Hidden-extension deletion dialog and finalized CI diagnosis
+
+The earliest deletion divergence is after the native contextual command press:
+`selectedDeletionDialog()` required the full URL filename in the message, while
+the retained step-12 screenshot shows Finder hiding its extension. An independent
+synthetic local fixture on the same Mac reproduced the native prompt using only
+its display name. That prompt was cancelled, the fixture retained, and its Finder
+window closed. Confidence is high in the display-name mismatch; the failed live
+run did not retain the native dialog itself, so the rerun remains necessary.
+
+The driver now reads Finder's display name for the exact bound URL before invoking
+Delete Immediately and matches its complete quoted prompt. It does not derive
+identity from that display string. New-window/owned-sheet scope, URL matching,
+exact controls, one distinct matching dialog, operator confirmation, and fresh
+provider/domain binding remain mandatory. Repeated references to the same AX
+object are deduplicated; two distinct dialogs remain ambiguous. Safe candidate
+counts and a match Boolean aid future failures without logging names or URLs.
+`FinderDeletionDialogTests`, Trash rebinding, and poll-scheduling coverage finalized
+10 selected tests with zero failed/skipped in
+`potassium-deletion-dialog-tests-01.xcresult`. Full Mac and live reruns are pending.
+
+CI `34576895561` on `fe763b6` finalized the Stability profile with 465 passing tests;
+iOS and visionOS also succeeded, including the gated poll-scheduling regression.
+The standard Mac result has 414 passed and one failure: its launch-signpost metric
+again omitted a sample despite successful launches and window assertions. Changing
+the responsive-launch boundary did not resolve the instrumentation failure. The
+retained bundles are available as that run's platform artifacts.
+
+The benchmark is now named `testLaunchToSetupReadinessPerformance`. `XCTClockMetric`
+measures the explicit launch, activation, Setup navigation, and enabled Add Account
+observation. It includes automation overhead and must not be compared with the
+old system first-frame metric. Every iteration still requires timing and successful
+UI assertions; there is no skip, retry, or fabricated missing sample. Validation is
+pending. This changes benchmark scope, not provider or conflict policy.
+
+The updated standard Mac suite finalized **415 passed, zero failed/skipped** in
+`potassium-finish-mac-03.xcresult`. All five measured readiness samples were present
+(mean 3.507 s, relative standard deviation 4.698%); this validates the new benchmark
+locally, not its comparability with the former launch signpost. The full Stability
+profile then finalized **470 passed, zero failed/skipped** in
+`potassium-finish-stability-mac-03.xcresult`, including the deletion-dialog regressions.
+The ordinary signed app and live rerun are next.

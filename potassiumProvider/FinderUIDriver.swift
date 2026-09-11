@@ -71,6 +71,8 @@ final class SystemFinderUIDriver: FinderUIDriving {
     private var remainingTime: @MainActor () -> Duration = { .seconds(90) }
     private var actionPanelIdentifier: String?
     private var selectedDeletionRequested = false
+    private var deletionDialogExpectation: FinderDeletionDialogExpectation?
+    private var lastDeletionDialogObservation: String?
     private var lastRowObservation: String?
     private var ownedEditorDocuments: [URL: FinderProcessIdentity] = [:]
 
@@ -372,6 +374,13 @@ final class SystemFinderUIDriver: FinderUIDriving {
         windowBeforeAction = finderWindowAX()
         awaitingEvictionResult = title == "Remove Download"
         selectedDeletionRequested = title == "Delete Immediately…"
+        deletionDialogExpectation = nil
+        lastDeletionDialogObservation = nil
+        if selectedDeletionRequested {
+            guard let displayName = try displayedName(of: url), !displayName.isEmpty else { throw FinderUIError.selectionMismatch }
+            deletionDialogExpectation = FinderDeletionDialogExpectation(selectedURL: url, displayName: displayName)
+            print("finder stability UI: deletion display name bound; differsFromFilename=\(displayName != url.lastPathComponent)")
+        }
         try await showSelectedContextMenu()
         do {
             try await wait {
@@ -582,6 +591,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
             guard buttons.count == 1, let button = buttons.first,
                   AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
             selectedDeletionRequested = false
+            deletionDialogExpectation = nil
         }
         actionCount += 1
     }
@@ -611,16 +621,28 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
 
     private func selectedDeletionDialog() -> AXUIElement? {
-        guard selectedDeletionRequested, let selectionURL else { return nil }
+        guard selectedDeletionRequested, let selectionURL, let expectation = deletionDialogExpectation else { return nil }
         let windows = attribute(finderAX(), kAXWindowsAttribute) as? [AXUIElement] ?? []
         var candidates = windows.filter { candidate in !windowsBeforeAction.contains { CFEqual($0, candidate) } }
         if let windowBeforeAction { candidates += elements(windowBeforeAction).filter { string($0, kAXRoleAttribute) == kAXSheetRole } }
-        let matches = candidates.filter { candidate in
+        // A sheet can also occur in AXWindows. Deduplicate the same AX object;
+        // two distinct matching dialogs remain ambiguous and must be rejected.
+        var uniqueCandidates: [AXUIElement] = []
+        for candidate in candidates where !uniqueCandidates.contains(where: { CFEqual($0, candidate) }) {
+            uniqueCandidates.append(candidate)
+        }
+        let observations = uniqueCandidates.map { candidate in
             let values = elements(candidate).flatMap { [string($0, kAXTitleAttribute), string($0, kAXValueAttribute)] }.compactMap { $0 }
             let buttons = elements(candidate).filter { string($0, kAXRoleAttribute) == kAXButtonRole }.compactMap { string($0, kAXTitleAttribute) }
-            return values.contains { $0.contains(selectionURL.lastPathComponent) } && buttons.contains("Delete") && buttons.contains("Cancel")
+            return FinderDeletionDialogObservation(texts: values, buttonTitles: buttons)
         }
-        return matches.count == 1 ? matches.first : nil
+        let match = expectation.uniqueMatchIndex(selection: selectionURL, dialogs: observations)
+        let observation = "candidateCount=\(uniqueCandidates.count) exactMatch=\(match != nil)"
+        if observation != lastDeletionDialogObservation {
+            print("finder stability UI: deletion dialog observation; " + observation)
+            lastDeletionDialogObservation = observation
+        }
+        return match.map { uniqueCandidates[$0] }
     }
 
     func capture(in directory: URL, sequence: Int) async throws {

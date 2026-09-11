@@ -398,17 +398,23 @@ final class potassiumProviderUITests: XCTestCase {
     #endif
 
     @MainActor
-    func testLaunchPerformance() throws {
+    func testLaunchToSetupReadinessPerformance() throws {
         let app = UITestApplication.make(for: self)
         let options = XCTMeasureOptions()
         options.invocationOptions = [.manuallyStart]
-        // Termination belongs outside the measured launch interval. Reuse the
-        // same application controller and require a launch ready for input.
-        measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)], options: options) {
+        // Measure the complete launch-to-interaction interval. XCTest's system
+        // launch signposts intermittently omit samples on the hosted Mac even
+        // when every app launch and window assertion succeeds. This benchmark
+        // includes automation overhead and is not a first-frame measurement.
+        measure(metrics: [XCTClockMetric()], options: options) {
             app.terminate()
             startMeasuring()
             app.launch()
-            XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+            app.activate()
+            openSetup(in: app)
+            let addAccount = app.buttons["setup.addAccount"]
+            XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+            XCTAssertTrue(addAccount.isEnabled)
         }
     }
 

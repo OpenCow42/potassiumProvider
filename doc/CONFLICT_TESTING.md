@@ -157,11 +157,11 @@ commits, reopened bytes, screenshots, complete diagnostic spans, and healthy fin
 reports. The earlier accepted baseline `05e8e5f` and intervening failed bundles
 remain preserved. The audit records exact run IDs and the focused corrections.
 
-Latest finalized validation on the bounded working-set runtime: 465 macOS Stability
+Latest finalized validation on the bounded working-set runtime: 470 macOS Stability
 tests, 415 standard macOS tests (including UI), 381 iOS Simulator tests, and 381
 visionOS Simulator tests passed, with zero failed or skipped. The signed generic
-visionOS build succeeded. Bundles are `potassium-finish-stability-mac-02.xcresult`,
-`potassium-finish-mac-02.xcresult`, `potassium-finish-ios-01.xcresult`, and
+visionOS build succeeded. Bundles are `potassium-finish-stability-mac-03.xcresult`,
+`potassium-finish-mac-03.xcresult`, `potassium-finish-ios-01.xcresult`, and
 `potassium-finish-vision-sim-01.xcresult`. The host-app package embedding follow-up
 also passed iOS Simulator and signed generic visionOS builds.
 

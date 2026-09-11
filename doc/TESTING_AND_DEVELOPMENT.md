@@ -559,11 +559,22 @@ product between the core framework and extensions, retain its host-app product
 dependency: Xcode must embed and sign the generated package framework. A build-only
 or unsigned CI pass cannot establish successful local library validation.
 
-Launch performance retains a single application controller across iterations and
-terminates before starting measurement. It uses Apple's
-[responsive launch metric](https://developer.apple.com/documentation/xctest/xctapplicationlaunchmetric/init(waituntilresponsive:))
-and also requires an app window. A missing metric fails the test; it is not replaced
-with a retry or an assumed timing sample.
+`testLaunchToSetupReadinessPerformance` measures elapsed time from launching the
+synthetic app through opening Setup and observing its enabled Add Account control.
+Termination happens before measurement. It uses `XCTClockMetric`, so every sample
+covers the whole verified interaction, including XCTest automation overhead. It is
+not comparable to the former first-frame/responsive-launch signpost benchmark.
+Two CI runs lost built-in launch signpost samples despite successful app/window
+checks; both failures remain retained. Missing timing samples or failed readiness
+assertions still fail the new benchmark.
+
+Finder permanent-deletion confirmation uses the exact display name obtained from
+the verified selected URL before opening the contextual command. Hidden extensions
+must not be guessed or stripped from paths. Only one newly opened dialog or sheet
+of the owned window may match the complete quoted name with exactly Cancel/Delete
+controls. Different selections, partial names, or distinct matching dialogs fail
+closed. Exact-fixture operator confirmation and provider/domain rebinding remain
+required, and only a `deleteItem` callback plus authoritative absence proves deletion.
 
 Poll-scheduling tests hold fake I/O behind explicit cancellable gates. Start
 notifications establish ordering; queue-count observations are bounded by the
