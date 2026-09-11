@@ -592,3 +592,9 @@ overall one-minute test deadline rather than a short executor-scheduling assumpt
 CI runs both Mac profiles and retains `.xcresult` bundles for 14 days for every
 destination, including failures. Interrupted/incomplete bundles remain diagnostic
 evidence only and must never be treated as passing results.
+
+Finder context menus use a secondary click on the unique display-name field of the
+verified selection, with fresh geometry contained in the owned window. The driver
+does not require an advertised `AXShowMenu` action for this mouse route: Finder can
+omit that action while still exposing the native contextual menu. Ambiguous fields
+and missing/out-of-window geometry remain hard failures.

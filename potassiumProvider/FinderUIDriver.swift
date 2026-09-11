@@ -753,32 +753,26 @@ final class SystemFinderUIDriver: FinderUIDriving {
         return candidates.first { string($0, kAXRoleAttribute) == kAXRowRole } ?? candidates.first
     }
 
-    private func selectedMenuAnchor() -> AXUIElement? {
+    private func selectedMenuPoint() -> CGPoint? {
         guard let selected = selectedElement(), let selectionURL,
-              let name = try? displayedName(of: selectionURL) else { return nil }
+              let name = try? displayedName(of: selectionURL),
+              let window = finderWindowAX(), let windowFrame = rect(window) else { return nil }
         let candidates = elements(selected).filter {
-            string($0, kAXRoleAttribute) == kAXTextFieldRole && string($0, kAXValueAttribute) == name
+            string($0, kAXRoleAttribute) == kAXTextFieldRole
         }
-        let supported = candidates.filter { element in
-            var actions: CFArray?
-            return AXUIElementCopyActionNames(element, &actions) == .success &&
-                (actions as? [String] ?? []).contains(kAXShowMenuAction)
-        }
-        return supported.count == 1 ? supported.first : nil
+        return FinderContextMenuTarget.point(displayedName: name, windowBounds: windowFrame,
+            fields: candidates.map { .init(name: string($0, kAXValueAttribute), bounds: rect($0)) })
     }
 
     private func showSelectedContextMenu() async throws {
-        try await wait { self.selectedMenuAnchor() != nil }
-        guard let field = selectedMenuAnchor(), let frame = rect(field),
-              let window = finderWindowAX(), let windowFrame = rect(window),
-              windowFrame.contains(frame), frame.width > 1, frame.height > 1,
+        try await wait { self.selectedMenuPoint() != nil }
+        guard let point = selectedMenuPoint(),
               let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else {
             throw FinderUIError.controlUnavailable
         }
-        // Finder advertises AXShowMenu on the name field but can reject its
-        // invocation. Use a real secondary click at the freshly verified field,
-        // whose geometry is confined to our bound window. No fixed coordinates.
-        let point = CGPoint(x: frame.midX, y: frame.midY)
+        // Finder may omit AXShowMenu or reject that action. Secondary-click
+        // routing needs only the unique name field of the verified selection,
+        // with fresh geometry confined to the bound window.
         menuIsOpen = true
         for type in [CGEventType.rightMouseDown, .rightMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .right) else {

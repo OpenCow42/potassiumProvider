@@ -15,6 +15,15 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The next live retry stopped before eviction because the harness required an
+advertised `AXShowMenu` action for a secondary-click route. Computer use confirmed
+the generated fixture's native menu remained available. The driver now uses the
+unique exact display-name field and its confined geometry, retaining independent
+URL/domain/selection checks. Negative target regressions reject ambiguous names
+and absent/out-of-window geometry. This is an automation correction; CR-013 and
+all mutation policies remain unchanged. The progress fix still awaits a live
+transfer attempt after this earlier failure.
+
 The first deletion-deferred live run passed the real preserve-both race but could
 not cancel either transfer: diagnostics showed only zero and terminal completion.
 Transfer diagnostic sampling now uses Foundation's `fractionCompleted`, including

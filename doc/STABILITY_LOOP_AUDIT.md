@@ -1795,3 +1795,29 @@ generic visionOS build passed. CI `34580616050` on the preceding optional-deleti
 commit `9b71d76` finalized green on all three jobs, including both Mac profiles.
 These results validate the sampler and cancellation regressions; the corrected
 ordinary app still needs a live cancellation result.
+
+### Native context-menu capability mismatch
+
+The progress-corrected fresh run `efa72a78-de91-4f37-8561-ad72348ed2bb` sealed
+**two passed, one failed, thirteen skipped**. Eviction timed out before any menu
+command was invoked. Computer use observed the exact generated name field with
+only Open Finder Item advertised and no eviction alert. An independent owned
+Finder window opened that same generated fixture's native context menu by secondary
+click and exposed Remove Download. The menu was dismissed without selecting any
+action, and the inspection window closed. Earlier failing evidence is preserved.
+
+Earliest divergence: `selectedMenuAnchor` required advertised `AXShowMenu`, although
+the driver actually uses WindowServer secondary-click routing. Finder can omit
+that action. The corrected target uses the unique exact display-name field of the
+independently bound selection and requires its fresh rectangle to be contained in
+the bound window. Duplicate names, absent geometry, wrong names, empty labels, or
+out-of-window rectangles yield no click. Three regression cases exercise these
+confinement boundaries. No File Provider callback, transfer, or conflict policy
+changes. Validation and the next live retry are pending.
+
+The corrected context target finalized **21 passed, zero failed/skipped** in
+`potassium-context-anchor-stability-mac-02.xcresult`, and the standard Mac build
+succeeded. The first selected build retained a missing CoreGraphics import error;
+that import was corrected before the passing rerun. The shared progress runtime
+retains its preceding four-destination focused validation; this follow-up changes
+only the macOS Stability UI driver.
