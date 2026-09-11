@@ -45,12 +45,25 @@ struct ProviderActionRootView: View {
                 }
             }
             .navigationTitle(navigationTitle)
+            #if os(macOS)
+            // A hosted FPUI sheet does not install a NavigationStack toolbar in
+            // Finder's window. Keep dismissal in the actual hosted view tree.
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Spacer()
+                    Button("Done", action: complete)
+                        .disabled(model.isLoading || model.isWorking)
+                }
+                .padding()
+            }
+            #else
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: complete)
                         .disabled(model.isLoading || model.isWorking)
                 }
             }
+            #endif
         }
         .frame(minWidth: 360, minHeight: 440)
         #if STABILITY

@@ -29,7 +29,7 @@ final class ProviderActionViewModel: ObservableObject {
 
     let mode: Mode
     let domainIdentifier: String
-    let itemIdentifier: NSFileProviderItemIdentifier
+    @Published private(set) var itemIdentifier: NSFileProviderItemIdentifier
 
     @Published private(set) var item: KDriveRemoteItem?
     @Published private(set) var vaultItem: VaultItem?
@@ -66,6 +66,9 @@ final class ProviderActionViewModel: ObservableObject {
         defer { isLoading = false }
         do {
             let runtime = try await ProviderActionRuntime.load(domainIdentifier: domainIdentifier)
+            let resolvedIdentifier = try await ProviderActionItemResolver.resolve(itemIdentifier, configuration: runtime.configuration)
+            try Task.checkCancellation()
+            itemIdentifier = resolvedIdentifier
             if let vault = runtime.encryptedVault {
                 guard let identifier = VaultItemIdentifier(
                     fileProviderIdentifier: itemIdentifier.rawValue
@@ -103,6 +106,8 @@ final class ProviderActionViewModel: ObservableObject {
             case .versionHistory:
                 try await loadNextVersionPage()
             }
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
             initialLoadErrorMessage = error.localizedDescription

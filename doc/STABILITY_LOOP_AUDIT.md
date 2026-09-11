@@ -2091,3 +2091,65 @@ its outstanding callbacks settled. No evidence was recovered or forcibly sealed.
 All owned windows closed. The command-routing/session-pointer regressions finalized
 in `potassium-session-pointer-stability-mac-01.xcresult` with zero failures/skips;
 the standard Mac build passed (`potassium-session-pointer-standard-mac-01.log`).
+
+
+## 2026-09-11: current Actions selection identifier failure
+
+Fresh run `8a4d7d89-48f1-4a54-81c5-f9266e0934cd` on `212e54e` sealed with
+13 passed, two failed and permanent deletion deferred. Session-level native input
+successfully exercised provider Restore, favorite/unfavorite and duplicate. Both
+transfer attempts exposed intermediate progress and received a confined indicator
+click, but completed successfully without a cancellation terminal. Cancellation
+remains failed; clicking an indicator is not sufficient evidence.
+
+For contextual actions, the expected outcome was a loaded share panel for the bound
+fixture. Computer use and the operator screenshot instead observed “Action
+Unavailable” from the current installed Actions executable. The earliest divergence
+is `ProviderActionViewModel.load`: FileProviderUI supplied an opaque macOS document
+identifier, which was passed directly to the numeric kDrive parser. Root-cause
+confidence is high for this availability defect. The source file remained intact;
+no share mutation was dispatched. This is a provider UI boundary defect even though
+the retained report classifies the eventual missing-panel timeout as automation.
+Reproduce by selecting a generated plaintext item and choosing Share kDrive Link.
+
+The focused correction resolves the incoming selection with the domain's
+`getUserVisibleURL`, then `getIdentifierForUserVisibleFile`, checks the returned
+domain, and validates the identifier against the configured plaintext/vault engine.
+No filename lookup, document-ID parsing, content read, or server mutation is used
+for resolution. One 90-second deadline covers both callback stages; cancellation
+and late replies fail closed. iOS/visionOS retain validated canonical IDs because
+iOS replicated extensions cannot obtain user-visible URLs. System error details
+are not displayed by the resolver. The model publishes its canonical identifier
+before loading action data, also correcting its run-local panel alias.
+
+The Actions sheet belongs to a separate Accessibility process even though Finder
+hosts it visually. The driver now searches the selected app's Actions executable
+only after physical-path and code-hash verification, and requires one exact
+run-local fixture alias. A title, an unbound panel, an older executable, and duplicate
+matching panels cannot authorize an action. Live verification of this correction
+and fresh/already-running acceptance remain pending. Earlier bundles and fixtures
+are retained; CR-013 stays open.
+
+Sources: Apple's [URL resolution](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/getuservisibleurl(for:completionhandler:))
+and [reverse identifier/domain resolution](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager/getidentifierforuservisiblefile(at:completionhandler:)),
+plus the installed macOS SDK's `NSFileProviderManager.h` security-scope and iOS
+availability contract. Regression coverage: `ProviderActionItemResolverTests`,
+`FinderActionPanelTargetTests`, and the existing callback-deadline tests.
+
+The observed hosted error sheet also lacked its toolbar-only Done button. macOS
+now renders Done inside the hosted view; other platforms retain their toolbar.
+Runner cleanup closes only a panel with the exact expected alias and attested
+process before closing its owned editor and Finder windows. It waits for work to
+finish and never dismisses an unrelated or unbound panel.
+
+Finalized focused Mac results for the identity correction: 25 Stability tests and
+23 standard-profile tests passed with zero failures/skips. Bundles are
+`/private/tmp/potassium-action-identity-stability-mac-03.xcresult` and
+`/private/tmp/potassium-action-identity-standard-mac-02.xcresult`. A same-domain
+replacement regression also rejects a canonical selection whose URL resolves to a
+different stable ID. The generic visionOS build passed (`potassium-action-identity-vision-build-02.log`).
+
+The final iPhone 17/iOS 26.5 and Apple Vision Pro/visionOS 26.5 Simulator
+results each passed 23 tests with zero failures/skips, retained at
+`/private/tmp/potassium-action-identity-ios-02.xcresult` and
+`/private/tmp/potassium-action-identity-vision-sim-02.xcresult`.

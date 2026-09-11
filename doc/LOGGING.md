@@ -389,3 +389,16 @@ Session pointer delivery also records whether the observed cursor reached its
 requested target after movement. This is a boolean diagnostic, not a substitute
 for an observed menu, invoked action or real provider callback. Coordinates remain
 local to the driver and are not exported.
+
+
+Actions panels on macOS can receive an opaque system selection identifier and
+expose their Accessibility tree in the Actions process rather than Finder. The
+production UI resolves the canonical provider identifier and verifies its domain
+before loading action data. Stability binds the panel's run-local alias to that
+canonical identifier and requires the installed Actions executable path/code hash.
+Do not use filenames, raw document IDs, a panel title, or the first window as a
+fallback. Resolution uses one bounded 90-second callback budget and retains no URL
+or raw system error in its messages. Negative resolver/panel-target tests cover
+wrong domains/engines, old code, ambiguous panels, timeout and cancellation.
+The sealed `212e54e` run passed 13 scenarios; cancellation and contextual actions
+failed and deletion was deferred. This is not completed Mac acceptance.

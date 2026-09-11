@@ -15,6 +15,17 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The current Actions extension exposed a macOS opaque document identifier directly
+to the kDrive parser in fresh run `8a4d7d89-48f1-4a54-81c5-f9266e0934cd`.
+The UI boundary now resolves through system URL/identifier APIs, checks the returned
+domain, and validates against the configured engine before loading or mutating.
+Wrong-domain, unresolved, virtual-container, timeout, cancellation and cross-engine
+regressions fail closed. Canonical identity also binds the Stability panel alias;
+its separate AX process requires the installed executable's path and code hash.
+No conflict policy changes. The run sealed 13 passed, two failed, deletion deferred;
+cancellation and live verification of the Actions correction remain open. CR-013
+remains open regardless of disposable-file outcomes.
+
 The toolbar path passed the first ten live scenarios but omitted provider Restore
 and favorite actions. It is now limited to the two verified built-in download
 commands; provider actions and selected deletion retain their item context menu.
@@ -750,6 +761,7 @@ implementation audit for updated run/test results. `CR-013` is still **Open**.
 | Favorite or unfavorite | Stable item ID exists; no conditional favorite version is documented | Apply the explicit local favorite intent, refetch authoritative metadata, and invalidate both the old and returned parent containers | Changes favorite state only | Low. A same-field remote race is last-writer-wins, but no file bytes or hierarchy are changed. | Toggle the favorite state again if the final value is not desired. |
 | Duplicate contextual action | Source metadata refetch succeeds | Derive an explicit extension-preserving `copy` name, send it in the duplicate body, then refetch the returned stable ID; never rely on `{}` or server-selected naming | Creates one new item | Low. The source is unchanged. A destination-name collision may reject the operation without a confirmed mutation. | Choose another name or remove the colliding copy, then retry. |
 | Restore from trash | Trashed metadata is fresh; original parent still exists, otherwise configured drive root is used | Restore stable ID to the explicit verified destination and invalidate trash plus destination | Moves one item out of trash | Low and reversible. The original item bytes are not replaced; destination choice may fall back to root. | Move the restored item to the desired folder or trash it again. |
+| UI action selection identity | macOS may supply a system document identifier rather than the provider ID | Resolve the user-visible URL with the expected domain manager, reverse-resolve the provider ID/domain, require the expected domain and engine-valid ID before loading action data. Files on iOS/visionOS use validated canonical IDs without URL access. | None during resolution | Fail closed for wrong domain, unsupported engine, unresolved/virtual IDs, timeout or cancellation. Never infer identity from names or internal document-ID syntax. | Close the panel, reselect the exact item and retry. `ProviderActionItemResolverTests` covers isolation, timeout and late callback cancellation; live confirmation pending. |
 | Create share link | No current link; configuration has a documented `public`, `inherit`, or valid password access mode | Create the link with explicit capabilities and known access; reject invalid password configuration | Creates link metadata | Medium privacy impact if the chosen access is too broad, but the adapter never widens an unknown value and no file bytes change. | Disable the link immediately and create a corrected one. |
 | Update share link | Current link exists; selected access is documented | Send the complete selected capabilities and explicit access. Encode a cleared expiration as JSON null. Refetch; fail closed if the server returns an unknown access value | Replaces link metadata | Medium. The endpoint exposes no conditional link version, so a stale editor can overwrite concurrent settings. The previous fail-open access decoder and uncleared expiration are resolved. | Reopen authoritative link settings, correct them, or disable the link. |
 | Delete share link | Stable item ID exists; no conditional link version is documented | Delete link metadata unconditionally and record only closed diagnostics | Disables the current share URL | Medium availability impact. A concurrent editor has no ETag protection and the old URL cannot be restored by the provider. | Create a new link and redistribute its URL. |

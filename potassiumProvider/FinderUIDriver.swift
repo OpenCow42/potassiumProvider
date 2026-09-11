@@ -84,6 +84,12 @@ final class SystemFinderUIDriver: FinderUIDriving {
         let deadline = StabilityDeadline(budget: .seconds(90))
         remainingTime = { deadline.remaining() }
         var failure: Error?
+        do {
+            if actionPanelScope() != nil {
+                try await pressControl(title: "Done")
+                try await wait { self.actionPanelScope() == nil }
+            }
+        } catch { failure = error }
         do { try await closeOwnedEditorDocuments() } catch { failure = error }
         do { try await closeOwnedFinderWindows() } catch { failure = failure ?? error }
         if let failure { throw failure }
@@ -678,11 +684,23 @@ final class SystemFinderUIDriver: FinderUIDriving {
 
     private func actionPanelScope() -> AXUIElement? {
         guard let actionPanelIdentifier else { return nil }
-        let windows = attribute(finderAX(), kAXWindowsAttribute) as? [AXUIElement] ?? []
-        let matches = windows.filter { window in
-            elements(window).contains { string($0, kAXIdentifierAttribute) == actionPanelIdentifier }
+        var windows: [AXUIElement] = []
+        if let window = finderWindowAX() { windows.append(window) }
+        let extensionURL = Bundle.main.bundleURL.appendingPathComponent("Contents/PlugIns/potassiumProviderActions.appex")
+        if let bundle = Bundle(url: extensionURL), let identifier = bundle.bundleIdentifier, let executable = bundle.executableURL {
+            let expectedHash = StabilityDiagnosticIdentity.codeHash(at: extensionURL)
+            for app in NSRunningApplication.runningApplications(withBundleIdentifier: identifier) {
+                guard FinderActionPanelTarget.isExpectedProcess(executableURL: app.executableURL, expectedURL: executable,
+                    codeHash: StabilityDiagnosticIdentity.codeHash(forProcessIdentifier: app.processIdentifier), expectedCodeHash: expectedHash) else { continue }
+                let application = AXUIElementCreateApplication(app.processIdentifier)
+                windows += attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
+            }
         }
-        return matches.count == 1 ? matches.first : nil
+        var uniqueWindows: [AXUIElement] = []
+        for window in windows where !uniqueWindows.contains(where: { CFEqual($0, window) }) { uniqueWindows.append(window) }
+        let identifiers = uniqueWindows.map { elements($0).compactMap { string($0, kAXIdentifierAttribute) } }
+        guard let index = FinderActionPanelTarget.index(alias: actionPanelIdentifier, windowIdentifiers: identifiers) else { return nil }
+        return uniqueWindows[index]
     }
 
     private func selectedDeletionDialog() -> AXUIElement? {
