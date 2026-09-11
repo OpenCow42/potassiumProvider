@@ -31,6 +31,9 @@ final class ProviderActionViewModel: ObservableObject {
     let domainIdentifier: String
     @Published private(set) var itemIdentifier: NSFileProviderItemIdentifier
 
+    #if STABILITY
+    @Published private(set) var stabilityPanelAlias: UUID?
+    #endif
     @Published private(set) var item: KDriveRemoteItem?
     @Published private(set) var vaultItem: VaultItem?
     @Published private(set) var shareLink: KDriveShareLinkSummary?
@@ -69,6 +72,10 @@ final class ProviderActionViewModel: ObservableObject {
             let resolvedIdentifier = try await ProviderActionItemResolver.resolve(itemIdentifier, configuration: runtime.configuration)
             try Task.checkCancellation()
             itemIdentifier = resolvedIdentifier
+            #if STABILITY
+            stabilityPanelAlias = try await StabilityActionPanelIdentity.resolve(for: resolvedIdentifier.rawValue)
+            try Task.checkCancellation()
+            #endif
             if let vault = runtime.encryptedVault {
                 guard let identifier = VaultItemIdentifier(
                     fileProviderIdentifier: itemIdentifier.rawValue

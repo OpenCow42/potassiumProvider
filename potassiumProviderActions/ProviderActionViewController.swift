@@ -66,8 +66,8 @@ public final class ProviderActionViewController: FPUIActionExtensionViewControll
         view.setAccessibilityElement(true)
         view.setAccessibilityRole(.group)
         view.setAccessibilityIdentifier(nil)
-        panelIdentityObservation = model.$itemIdentifier.dropFirst().sink { [weak self] identifier in
-            guard let alias = StabilityDiagnosticIdentity.activeAlias(for: identifier.rawValue) else { return }
+        panelIdentityObservation = model.$stabilityPanelAlias.sink { [weak self] alias in
+            guard let alias else { return }
             self?.view.setAccessibilityIdentifier("provider.stability.action." + alias.uuidString)
         }
         #endif

@@ -2181,3 +2181,33 @@ The hosted-panel follow-up passed 26 focused Stability Mac tests with no failure
 or skips (`/private/tmp/potassium-action-panel-stability-mac-01.xcresult`) and the
 standard Mac build. Its additional runtime branches are macOS/Stability-only;
 the identity resolver retains the finalized cross-platform results above.
+
+
+### Permission-gated diagnostic lookup during view layout
+
+Fresh `2ebe661` run `8b4d51f5-f35d-4f06-bb62-ea174945f8ab` sealed with
+13 passed, two failed and deletion deferred. Contextual actions timed out before
+any Actions API diagnostic. The retained process sample
+`/private/tmp/potassium-action-panel-loading-sample.txt` shows the main thread in
+`ProviderActionRootView.body`, through `activeAlias`/`activeRun`, blocked in `open`
+for the shared coordinator lock during initial hosted-view layout. The operator
+confirmed a visible macOS data-access prompt and accepted it. This supports an
+environment permission gate, not an inferred layout-engine or server deadlock.
+
+Run discovery is now dispatched off the UI actor with one bounded callback waiter.
+The model publishes the result; SwiftUI rendering and the native AX identifier
+subscriber use only that cached alias. They never open the shared store during
+layout. Lookup cancellation, timeout, absent-run behavior and off-main execution
+have dedicated regressions. Done remains available during read-only loading and
+cancels the load task; mutation-in-progress still disables dismissal. This does not
+bypass macOS consent. The Actions extension may need its own data-access consent
+even when containing-app preflight has passed. Native panel discovery still needs
+live verification after the granted permission. CR-013 stays open.
+
+The off-main lookup and loading dismissal follow-up finalized with 30 Stability Mac
+tests and 23 tests on each of standard Mac, iPhone 17/iOS 26.5 Simulator, and
+Apple Vision Pro/visionOS 26.5 Simulator, all with zero failures/skips. Bundles:
+`/private/tmp/potassium-panel-lookup-{stability-mac,standard-mac,ios,vision-sim}-01.xcresult`.
+The generic visionOS build passed (`potassium-panel-lookup-vision-build-01.log`).
+Computer use confirmed no Actions window remained after the operator accepted the
+prompt and the previous run finished. A new signed live retry is still required.

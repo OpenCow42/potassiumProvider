@@ -52,7 +52,7 @@ struct ProviderActionRootView: View {
                 HStack {
                     Spacer()
                     Button("Done", action: complete)
-                        .disabled(model.isLoading || model.isWorking)
+                        .disabled(model.isWorking)
                 }
                 .padding()
             }
@@ -60,7 +60,7 @@ struct ProviderActionRootView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: complete)
-                        .disabled(model.isLoading || model.isWorking)
+                        .disabled(model.isWorking)
                 }
             }
             #endif
@@ -69,7 +69,7 @@ struct ProviderActionRootView: View {
         #if STABILITY
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("provider.stability.action." +
-            (StabilityDiagnosticIdentity.activeAlias(for: model.itemIdentifier.rawValue)?.uuidString ?? "unbound"))
+            (model.stabilityPanelAlias?.uuidString ?? "unbound"))
         #endif
     }
 

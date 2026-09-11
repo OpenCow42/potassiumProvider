@@ -665,3 +665,11 @@ Stability includes that main window only from the attested Actions process and
 still requires the resolved run-local alias, explicitly published on the native
 AppKit root. Discovery deduplicates the same listed/main window. A visible form
 without this identity cannot produce a passing result or authorize cleanup.
+
+A containing-app permission preflight does not establish the Actions extension's
+first-use data-access consent. A live retry encountered that macOS prompt while
+opening its shared diagnostic coordinator file; the operator accepted it. Alias
+discovery now runs off the UI actor with bounded waiting and publishes a cached
+value; SwiftUI layout and AX binding perform no shared-store I/O. Done can dismiss
+a loading panel, while mutation-in-progress still disables it. Consent remains a
+system requirement; a blocked lookup or unbound panel cannot count as a pass.
