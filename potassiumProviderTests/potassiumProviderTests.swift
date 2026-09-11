@@ -1546,7 +1546,7 @@ struct PotassiumProviderCoreTests {
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
         #expect(request.value(forHTTPHeaderField: "If-Match") == "etag-before")
         #expect(query["total_size"] == "4")
-        #expect(query["with"] == "etag")
+        #expect(query["with"] == "etag,is_favorite")
         #expect(query["client_token"] == "0123456789abcdef0123456789abcdef")
         #expect(query["total_chunk_hash"] == "sha256:abcd")
         #expect(query["last_modified_at"] == "1700000001")
@@ -1722,6 +1722,39 @@ struct PotassiumProviderCoreTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
     }
 
+    @Test(arguments: ["metadata", "directory", "trash", "working-set"], [false, true, nil] as [Bool?])
+    func favoriteStateIsRequestedAndUnknownRemainsUnknown(route: String, favorite: Bool?) async throws {
+        var response = try #require(JSONSerialization.jsonObject(with: Self.fileUploadResponseData) as? [String: Any])
+        var file = try #require(response["data"] as? [String: Any])
+        file["is_favorite"] = favorite
+        response["data"] = route == "metadata" ? file : [file] as Any
+        response["cursor"] = NSNull()
+        response["has_more"] = false
+        await KDriveJSONRequestCapturingURLProtocol.reset(responseData: try JSONSerialization.data(withJSONObject: response))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let service = PotassiumKDriveService(bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!, session: session)
+        let item: KDriveRemoteItem
+        switch route {
+        case "metadata": item = try await service.item(driveID: 100, fileID: 42)
+        case "directory": item = try #require(await service.listDirectory(driveID: 100, folderID: 7, cursor: nil, limit: 50).items.first)
+        case "trash": item = try #require(await service.listTrash(driveID: 100, cursor: nil, limit: 50).items.first)
+        default: item = try #require(await service.listWorkingSetRelevantItems(driveID: 100, latestLimit: 50).first)
+        }
+        #expect(item.id == 42)
+        #expect(item.parentID == 7)
+        #expect(item.name == "Edited.jpg")
+        #expect(item.size == 4)
+        #expect(item.isFavorite == favorite)
+        let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
+        let requestURL = try #require(request.url)
+        let query = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(query.contains(URLQueryItem(name: "with", value: "etag,is_favorite")))
+    }
+
     @Test func kdriveServiceFetchesInitialAdvancedListingThroughPotassiumRoute() async throws {
         await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.advancedListingResponseData)
         let configuration = URLSessionConfiguration.ephemeral
@@ -1743,7 +1776,7 @@ struct PotassiumProviderCoreTests {
 
         #expect(request.httpMethod == "GET")
         #expect(components.path == "/3/drive/100/files/42/listing")
-        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities")))
+        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")))
         #expect(queryItems.contains { $0.name == "with" && $0.value?.contains("etag") == true } == false)
         #expect(queryItems.contains(URLQueryItem(name: "limit", value: "50")))
         #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "type")))
@@ -1751,6 +1784,8 @@ struct PotassiumProviderCoreTests {
         #expect(queryItems.contains(URLQueryItem(name: "order_for[name]", value: "asc")))
         #expect(queryItems.contains(URLQueryItem(name: "order_for[type]", value: "asc")))
         #expect(page.items.first?.id == 43)
+        #expect(page.items.first?.isFavorite == false)
+        #expect(page.actionItems.first?.isFavorite == true)
         #expect(page.actions.first?.action == "file_update")
         #expect(page.actions.last?.action == "file_rename")
         #expect(page.actionItems.first?.id == 44)
@@ -1779,7 +1814,7 @@ struct PotassiumProviderCoreTests {
 
         #expect(request.httpMethod == "GET")
         #expect(components.path == "/3/drive/100/files/42/listing/continue")
-        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities")))
+        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")))
         #expect(queryItems.contains { $0.name == "with" && $0.value?.contains("etag") == true } == false)
         #expect(queryItems.contains(URLQueryItem(name: "cursor", value: "old-cursor")))
     }
@@ -1818,7 +1853,7 @@ struct PotassiumProviderCoreTests {
         let advancedURL = try #require(advancedRequest.url)
         let advancedComponents = try #require(URLComponents(url: advancedURL, resolvingAgainstBaseURL: false))
         #expect(advancedComponents.path == "/3/drive/100/files/42/listing")
-        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities")) == true)
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")) == true)
     }
 
     @Test func kdriveServicePropagatesContinuedAdvancedListing422WithoutChangingListingModes() async throws {
@@ -1855,7 +1890,7 @@ struct PotassiumProviderCoreTests {
         let advancedComponents = try #require(URLComponents(url: advancedURL, resolvingAgainstBaseURL: false))
         #expect(advancedComponents.path == "/3/drive/100/files/42/listing/continue")
         #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "cursor", value: "advanced-cursor")) == true)
-        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities")) == true)
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")) == true)
     }
 
     @Test func kdriveServiceFallsBackToDirectoryListingWithoutETagAfter422() async throws {
@@ -1877,11 +1912,11 @@ struct PotassiumProviderCoreTests {
         let firstURL = try #require(requests.first?.url)
         let firstComponents = try #require(URLComponents(url: firstURL, resolvingAgainstBaseURL: false))
         let firstQuery = firstComponents.queryItems ?? []
-        #expect(firstQuery.contains(URLQueryItem(name: "with", value: "etag")))
+        #expect(firstQuery.contains(URLQueryItem(name: "with", value: "etag,is_favorite")))
         let secondURL = try #require(requests.last?.url)
         let secondComponents = try #require(URLComponents(url: secondURL, resolvingAgainstBaseURL: false))
         let secondQuery = secondComponents.queryItems ?? []
-        #expect(secondQuery.contains { $0.name == "with" } == false)
+        #expect(secondQuery.contains(URLQueryItem(name: "with", value: "is_favorite")))
         #expect(page.items.map(\.id) == [43])
         #expect(page.hasMore == false)
     }

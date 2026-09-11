@@ -1891,3 +1891,40 @@ or events after completion. The containing suite finalized **62 Stability Mac te
 and **67 standard Mac tests**, zero failed/skipped. Initial single-method selections
 ran zero tests and are explicitly excluded from validation; class selection verified
 the affected test actually executed. Simulator lifecycle reruns are pending.
+
+### Independent cases reached; favorite metadata omitted (2026-09-11)
+
+`fdaa23ad-7080-4463-9cf0-456982831b03` on `a525f87` sealed **13 passed, two
+failed, one deferred**. All prior successful cases passed again; deletion stayed
+deferred without a prompt. Working-set refresh passed with its fresh metadata
+proof. Cancellation observed intermediate progress while both transfers were still
+active, confirming the new local cursor's scheduling improvement. Neither transfer
+was cancelled; the larger transfer ran approximately 15 seconds, so control
+identification/selection needs further diagnosis. No cancellation success is claimed.
+
+Contextual actions timed out at the first favorite menu command, after the generated
+file was edited and uploaded. Computer use observed the exact fixture's Share,
+Version History, and Duplicate provider actions, but neither Favorite action. The
+activation rules require known boolean favorite state; the adapter's metadata and
+list requests omitted the optional `is_favorite` include. This is a concrete mapping
+gap with high-confidence connection to the missing menu, although the old live
+response field was not exported. API documentation and Potassium's advanced-listing
+preset support the additional include. Missing state still remains nil. No menu
+predicate is broadened and no unknown state is treated as false.
+
+The focused fix adds favorite state to direct metadata, ordinary/Trash/working-set
+listings, uploads, and advanced initial/continuation listing resources. The ordinary
+ETag fallback retains favorite state. Regressions verify tri-state mapping, stable
+identity/parent/name/size, exact include queries, and retained rejection of unsupported
+advanced ETags. The first test build hit nested `#require` macro recursion; that
+expression was split before rerunning. All failed bundles and run fixtures remain;
+owned Finder windows closed and monitoring settled normally.
+
+The preceding lifecycle correction finalized **67 tests on each simulator**, zero
+failed/skipped; both runs explicitly executed the corrected lazy-transfer test.
+Those results supplement 62 Stability Mac and 67 standard Mac lifecycle tests.
+
+Favorite-state validation finalized **73 Stability Mac tests** and **78 standard
+Mac tests**, zero failed/skipped; the generic visionOS build passed. CI for the
+preceding `a525f87` cursor/continuation change finalized green on all destinations
+(run `34586472123`). The next signed favorite-state build still needs live evidence.

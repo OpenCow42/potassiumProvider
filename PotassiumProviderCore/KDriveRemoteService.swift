@@ -231,7 +231,11 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     /// kDrive advanced-listing routes reject `etag` and `files.etag` with HTTP
     /// 422. Direct metadata and ordinary directory listings remain the source
     /// of authoritative ETags for content mutations.
-    private static let advancedDirectoryListingIncludedResources = "files.capabilities"
+    private static let advancedDirectoryListingIncludedResources = "files.capabilities,files.is_favorite"
+
+    /// Favorite state is optional unless explicitly included. Omitting it hides
+    /// both favorite actions and can erase known state during reconciliation.
+    private static let itemIncludedResources = "etag,is_favorite"
 
     /// Maximum `total_size` accepted by kDrive's direct upload endpoint.
     /// Larger transfers must use the upload-session API and are rejected before
@@ -296,7 +300,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func item(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem {
         try await performNetworkOperation(.itemLookup) {
-            try await service.getFile(driveId: driveID, fileId: fileID, with: "etag").data.remoteItem
+            try await service.getFile(driveId: driveID, fileId: fileID, with: Self.itemIncludedResources).data.remoteItem
         }
     }
 
@@ -311,14 +315,14 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
                 response = try await service.listDirectoryFiles(
                     driveId: driveID,
                     fileId: folderID,
-                    with: "etag",
+                    with: Self.itemIncludedResources,
                     options: options
                 )
             } catch APIClientError.unacceptableStatusCode(422, _, _) {
                 response = try await service.listDirectoryFiles(
                     driveId: driveID,
                     fileId: folderID,
-                    with: nil,
+                    with: "is_favorite",
                     options: options
                 )
             }
@@ -380,7 +384,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         ) {
             let response = try await service.listTrashFiles(
                 driveId: driveID,
-                with: "etag",
+                with: Self.itemIncludedResources,
                 options: ListKDriveTrashOptions(cursor: cursor, limit: limit, orderBy: ["name"], order: "asc")
             )
             return KDriveItemPage(items: response.data.map(\.remoteItem), nextCursor: response.cursor, hasMore: response.hasMore)
@@ -389,10 +393,10 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
 
     public func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
         try await performNetworkOperation(.listWorkingSetRelevantItems) {
-            let latest = try await service.listLastModifiedFiles(driveId: driveID, with: "etag", limit: latestLimit).data
-            let favorites = try await service.listFavoriteFiles(driveId: driveID, with: "etag", limit: latestLimit).data
-            let myShared = try await service.listMySharedFiles(driveId: driveID, with: "etag", limit: latestLimit).data
-            let sharedWithMe = try await service.listSharedWithMeFiles(driveId: driveID, with: "etag", limit: latestLimit).data
+            let latest = try await service.listLastModifiedFiles(driveId: driveID, with: Self.itemIncludedResources, limit: latestLimit).data
+            let favorites = try await service.listFavoriteFiles(driveId: driveID, with: Self.itemIncludedResources, limit: latestLimit).data
+            let myShared = try await service.listMySharedFiles(driveId: driveID, with: Self.itemIncludedResources, limit: latestLimit).data
+            let sharedWithMe = try await service.listSharedWithMeFiles(driveId: driveID, with: Self.itemIncludedResources, limit: latestLimit).data
             var itemsByID: [Int: KDriveRemoteItem] = [:]
             for item in latest + favorites + myShared + sharedWithMe {
                 itemsByID[item.id] = item.remoteItem
@@ -521,7 +525,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             driveId: driveID,
             data: contents,
             options: UploadKDriveFileOptions(
-                with: "etag",
+                with: Self.itemIncludedResources,
                 clientToken: clientToken,
                 conflict: conflictStrategy.rawValue,
                 directoryId: parentID,
@@ -593,7 +597,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             driveId: driveID,
             data: contents,
             options: UploadKDriveFileOptions(
-                with: "etag",
+                with: Self.itemIncludedResources,
                 ifMatch: expectedETag,
                 clientToken: clientToken,
                 fileId: fileID,

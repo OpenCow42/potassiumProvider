@@ -109,15 +109,16 @@ Legacy directory listing uses:
 - cursor from Apple page data
 - limit `200`
 - order by `name` ascending
-- retries without an included resource if the ETag-enabled request returns HTTP
-  422
+- requests `etag,is_favorite`; on HTTP 422, retries with `is_favorite` only so
+  losing the optional ETag cannot also hide favorite actions
 
 Advanced directory listing uses:
 
 - limit `200`
 - order by `type`, then `name`
 - per-field ascending order for `type` and `name`
-- `with=files.capabilities`, matching the open-source desktop kDrive client
+- `with=files.capabilities,files.is_favorite`, a narrow subset of Potassium's
+  advanced-listing preset that includes the state needed by Finder actions
 - HTTP 422 is surfaced to File Provider as `.cannotSynchronize`; it does not
   fall back to ordinary directory listing because that route has neither
   advanced change actions nor compatible cursor semantics
@@ -244,3 +245,11 @@ ID, byte count, and `application/octet-stream`. Logical names, paths, MIME
 types, dates, hashes, device names, favorites, shares, and versions are never
 sent through this boundary. Latest/favorite/shared/activity/preview/thumbnail
 endpoints are not called for encrypted items.
+
+Direct metadata, ordinary/Trash/working-set listings, and upload responses request
+`etag,is_favorite`. Advanced listings request `files.capabilities,files.is_favorite`;
+they still never request unsupported ETags. Missing favorite state remains nil,
+so neither favorite action is enabled from a guessed value. The explicit field is
+documented by the [metadata](https://developer.infomaniak.com/docs/api/get/3/drive/%7Bdrive_id%7D/files/%7Bfile_id%7D)
+and [upload](https://developer.infomaniak.com/docs/api/post/3/drive/%7Bdrive_id%7D/upload)
+contracts, and `files.is_favorite` is part of Potassium's advanced-listing preset.

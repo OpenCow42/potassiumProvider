@@ -15,6 +15,18 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+Fresh run `fdaa23ad-7080-4463-9cf0-456982831b03` sealed with 13 passed, two failed
+(cancellation and contextual actions), and deletion deferred. Working-set refresh
+passed. Computer use observed Share/History/Duplicate but no favorite actions for
+the generated fixture. Requests omitted optional favorite state while the activation
+rules correctly require known true/false. The adapter now includes `is_favorite`
+(or `files.is_favorite` on advanced listings), preserving nil when omitted. The
+ordinary-listing ETag fallback retains the favorite include. Parameterized request/
+mapping regressions cover known true, known false, and unknown without changing
+identity, names, parentage, contents, or the existing last-writer-wins favorite
+policy. Advanced ETag rejection and CR-013 remain unchanged; live proof of the
+favorite-action correction is pending.
+
 The timed `1fd42e7` live run passed 12 scenarios with deletion deferred; both
 transfers completed uncancelled despite Download Now returning in 0.57 seconds.
 The harness now observes appended local diagnostics at 50 ms without the API
@@ -472,7 +484,7 @@ audited truth table takes precedence and the inconsistency must be corrected.
     return `etag`; a matching `If-Match` replacement succeeds and changes the
     ETag; a stale ETag is rejected with 409 or 412. The advanced listing routes
     reject both `etag` and `files.etag` include resources with HTTP 422. The
-    provider uses the desktop-compatible `files.capabilities` resource. A
+    provider uses the compatible `files.capabilities,files.is_favorite` resources. A
     remaining 422 is surfaced as `.cannotSynchronize`, rather than mixing an
     advanced change cursor with ordinary-listing pagination. Advanced-listing
     snapshot ETags remain nullable and content mutations fail closed until
@@ -677,7 +689,7 @@ implementation audit for updated run/test results. `CR-013` is still **Open**.
 | Direct create or replacement exceeds `1_000_000_000` bytes | Callback URL file size or loaded payload byte count is above the documented direct-upload maximum | Reject before mapping an oversized callback file into `Data`, retain the post-read count check for size/read races, and return `.cannotSynchronize` until a file-backed session adapter exists | No | No unsupported request is sent. The callback source remains File Provider-owned, but this early rejection does not create a separate provider conflict-stage copy; availability is blocked for large files. | Keep the File Provider source available and use a session-capable official client, or retry after session uploads are implemented. |
 | New directory collides by name or type | Recognized HTTP 409, or named 422 collision | Retry once with a conflict filename. | Creates a second directory | Low byte-loss risk, but response-shape coverage is not live-validated. | Rename/merge folders if the response was not recognized. |
 | Local content edit; remote unchanged | `C`, conditional upload succeeds | Stage first, then replace by `file_id` with `If-Match`, SHA-256, and deterministic token; remove stage only after success. | Conditional content replace | Low. A remote race cannot silently pass the checked ETag. | None. |
-| Advanced folder enumeration | API rejects `etag` or `files.etag` in advanced-listing `with` | Request `files.capabilities`; if the advanced route still returns HTTP 422, surface `.cannotSynchronize` and retain the prior snapshot/anchor. Do not substitute ordinary-directory pagination because it omits advanced actions and has incompatible cursor semantics. Snapshot items have no authoritative content ETag, so later content mutations preserve both or fail on conflict until direct ETag metadata is refreshed. | No mutation | Low byte-loss risk; synchronization pauses rather than committing an actionless response against an advanced anchor. | Retry after the service or provider is corrected; conflict copies retain local bytes when direct ETag metadata is still unavailable. |
+| Advanced folder enumeration | API rejects `etag` or `files.etag` in advanced-listing `with` | Request `files.capabilities,files.is_favorite`; if the advanced route still returns HTTP 422, surface `.cannotSynchronize` and retain the prior snapshot/anchor. Do not substitute ordinary-directory pagination because it omits advanced actions and has incompatible cursor semantics. Snapshot items have no authoritative content ETag, so later content mutations preserve both or fail on conflict until direct ETag metadata is refreshed. | No mutation | Low byte-loss risk; synchronization pauses rather than committing an actionless response against an advanced anchor. | Retry after the service or provider is corrected; conflict copies retain local bytes when direct ETag metadata is still unavailable. |
 | Remote changes after preflight | `C`, conditional upload rejects with 409/412 | Refetch and upload a renamed conflict copy from the same staged bytes. | Creates a second item | Low. Both versions are preserved. | Compare or merge the visible files. |
 | Local content edit vs already-changed remote content | `!C && U` | Upload a renamed conflict copy and leave the original unchanged. | Creates a second item | Low. Both versions are preserved. | Compare or merge the visible files. |
 | `.failOnConflict` content conflict | `!C`, or conditional 409/412 | Do not mutate kDrive; return `.localVersionConflictingWithServer`; keep staged bytes and record recovery path. | No | Low immediate loss risk. This is intentional user-intervention behavior. | Reveal/export recovery copy, compare versions, then retry the desired change. |

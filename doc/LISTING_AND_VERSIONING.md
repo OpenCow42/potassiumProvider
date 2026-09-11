@@ -75,7 +75,9 @@ file while a stale ETag is rejected.
 The advanced `/listing` and `/listing/continue` routes are different: the live
 API rejects both `etag` and `files.etag` in their `with` parameter with HTTP
 422. potassiumChannel's compatible default excludes those resources, and the
-provider explicitly uses the desktop-compatible `files.capabilities` subset.
+provider uses `files.capabilities,files.is_favorite` from that compatible preset.
+The favorite include is necessary for Finder action predicates; missing favorite
+state remains unknown, rather than being coerced to false.
 An advanced-listing 422 is surfaced as a retryable synchronization failure;
 ordinary directory listings do not return the action feed and their pagination
 cursors must never replace an advanced-listing sync cursor. Advanced-listing
