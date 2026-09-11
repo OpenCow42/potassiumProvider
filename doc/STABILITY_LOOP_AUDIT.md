@@ -1965,3 +1965,40 @@ Stability Mac and 78 standard Mac; the generic visionOS build passed. The new
 registration/native-control selection finalized **29 Stability tests**, zero failed
 or skipped, in `potassium-native-cancel-stability-mac-01.xcresult`. No shared runtime
 or mutation semantics changed in this follow-up. Its signed live rerun is pending.
+
+### Retained pre-command timeout (2026-09-11)
+
+Run `40740dba-43e4-450f-9bf6-5845a9a5014d` on `5ae7040` passed the stricter
+Actions registration preflight, but sealed **three passed, two failed, eleven
+skipped**. Enumeration, hydration and independent working-set refresh passed.
+Eviction and contextual actions timed out before the contextual command was
+recorded as invoked. No current Actions callback was observed. The native transfer
+fallback was not exercised because its earlier prerequisite failure caused a skip.
+Owned Finder windows closed and the bundle/fixtures remain retained.
+
+The trace does not yet distinguish missing anchor geometry from ambiguous popup
+menus or a missing command. Closed numeric menu observations now distinguish
+anchor lookup, event posting, popup count and exact enabled-command count without
+exporting item names or URLs. Preserve-both and cancellation also create independent
+fixtures, so selection now allows all four advanced cases after earlier failures;
+remaining dependent operations still skip. Tests preserve failure outcomes and
+conflict-profile exclusion. No unexercised step or native click is a pass.
+
+The failed step's zero remaining budget also prevented its screenshot helper from
+performing fresh AX/Apple Event checks. Failure-only observation now receives a
+separate bounded 15 seconds to dismiss the known popup and revalidate/capture the
+same generated row. The failed operation's deadline and result stay unchanged.
+
+Popup discovery also incorrectly counted expanded submenus as independent visible
+menus. The driver now searches transient roots, excludes the application menu bar,
+and matches only direct commands of the single root popup. Swift Testing covers
+expanded Open With submenus, two genuinely distinct popups, hidden menus and
+traversal exhaustion. This is a supported selector defect; the retained timeout
+trace alone does not prove it caused that particular run. Live confirmation remains
+pending. CI `34589769700` passed macOS, iOS Simulator and visionOS on `5ae7040`.
+
+The popup/continuation regressions finalized **36 passing Stability Mac tests**,
+zero failures/skips, in `potassium-popup-root-stability-mac-01.xcresult`; the standard
+Mac build passed (`potassium-popup-root-standard-mac-01.log`). This follow-up changes
+only the macOS Stability harness; shared-runtime simulator validation remains the
+previous finalized evidence.

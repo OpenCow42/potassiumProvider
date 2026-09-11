@@ -38,6 +38,7 @@ protocol FinderUIDriving: FinderUINavigating, FinderDocumentUIDriving {
     func confirmPermanentDeletion(_ url: URL, fixtureAlias: UUID) async throws
     func panelAction(_ action: FinderPanelAction) async throws
     func capture(in directory: URL, sequence: Int) async throws
+    func captureFailure(in directory: URL, sequence: Int) async throws
 }
 
 enum FinderPanelAction {
@@ -385,11 +386,20 @@ final class SystemFinderUIDriver: FinderUIDriving {
         do {
             var commandItem: AXUIElement?
             var commandMenu: AXUIElement?
+            var lastMenuObservation: String?
             try await wait {
-                guard let menu = self.contextMenu() else { return false }
-                let matches = self.elements(menu).filter {
+                guard let menu = self.contextMenu() else {
+                    let count = self.elements(self.finderAX()).filter { self.string($0, kAXRoleAttribute) == kAXMenuRole &&
+                        self.rect($0).map { $0.width > 1 && $0.height > 1 } == true }.count
+                    let observation = "visibleMenuCount=\(count)"
+                    if observation != lastMenuObservation { print("finder stability UI: contextual menu pending; " + observation); lastMenuObservation = observation }
+                    return false
+                }
+                let matches = (self.attribute(menu, kAXChildrenAttribute) as? [AXUIElement] ?? []).filter {
                     self.string($0, kAXRoleAttribute) == kAXMenuItemRole && self.string($0, kAXTitleAttribute) == title
                 }
+                let observation = "commandMatchCount=\(matches.count) enabled=\(matches.first.map { (self.attribute($0, kAXEnabledAttribute) as? Bool) != false } ?? false)"
+                if observation != lastMenuObservation { print("finder stability UI: contextual command observation; " + observation); lastMenuObservation = observation }
                 guard matches.count == 1, let item = matches.first else { return false }
                 guard (self.attribute(item, kAXEnabledAttribute) as? Bool) != false else { return false }
                 commandItem = item; commandMenu = menu
@@ -444,7 +454,8 @@ final class SystemFinderUIDriver: FinderUIDriving {
         do {
             try await wait { self.contextMenu() != nil }
             guard let menu = contextMenu() else { throw FinderUIError.controlUnavailable }
-            let found = elements(menu).filter { string($0, kAXRoleAttribute) == kAXMenuItemRole && string($0, kAXTitleAttribute) == title }
+            let found = (attribute(menu, kAXChildrenAttribute) as? [AXUIElement] ?? []).filter {
+                string($0, kAXRoleAttribute) == kAXMenuItemRole && string($0, kAXTitleAttribute) == title }
             try await dismissContextMenu()
             actionCount += 1
             return found.count == 1
@@ -696,6 +707,17 @@ final class SystemFinderUIDriver: FinderUIDriving {
         return match.map { uniqueCandidates[$0] }
     }
 
+    func captureFailure(in directory: URL, sequence: Int) async throws {
+        // An expired operation budget must not also suppress its failure image.
+        // Observation cannot extend the failed operation or turn it into a pass.
+        let operationRemaining = remainingTime
+        let observationDeadline = StabilityDeadline(budget: .seconds(15))
+        remainingTime = { observationDeadline.remaining() }
+        defer { remainingTime = operationRemaining }
+        if menuIsOpen { try await dismissContextMenu(allowMissingWindow: true) }
+        try await capture(in: directory, sequence: sequence)
+    }
+
     func capture(in directory: URL, sequence: Int) async throws {
         guard CGPreflightScreenCaptureAccess(), let windowID, let selected = selectedElement(),
               let bounds = rect(selected) else { throw FinderUIError.screenshotUnavailable }
@@ -816,6 +838,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
 
     private func showSelectedContextMenu() async throws {
+        print("finder stability UI: locating confined context-menu anchor")
         try await wait { self.selectedMenuPoint() != nil }
         guard let point = selectedMenuPoint(),
               let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else {
@@ -836,15 +859,21 @@ final class SystemFinderUIDriver: FinderUIDriving {
             }
             event.post(tap: .cghidEventTap)
         }
+        print("finder stability UI: context-menu mouse request posted")
     }
 
     private func contextMenu() -> AXUIElement? {
         // The application menu bar contains similarly named commands. Only
         // the transient popup opened on our verified selection is actionable.
-        let menus = elements(finderAX()).filter {
-            guard string($0, kAXRoleAttribute) == kAXMenuRole, let frame = rect($0) else { return false }
-            return frame.width > 1 && frame.height > 1
-        }
+        let menus = FinderPopupMenuDiscovery.roots(from: finderAX(), role: {
+            switch self.string($0, kAXRoleAttribute) {
+            case kAXMenuRole: .menu
+            case kAXMenuBarRole: .menuBar
+            default: .other
+            }
+        }, children: { self.attribute($0, kAXChildrenAttribute) as? [AXUIElement] ?? [] }, visible: {
+            self.rect($0).map { $0.width > 1 && $0.height > 1 } == true
+        })
         return menus.count == 1 ? menus.first : nil
     }
 

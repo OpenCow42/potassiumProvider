@@ -605,7 +605,8 @@ through diagnostics, allowing cancellation while work is active; the command doe
 not wait for AX action completion or a later Finder Apple Event. Other contextual
 actions keep their result checks.
 
-Working-set refresh and contextual actions are independent continuation cases:
+Preserve-both, cancellation/progress, working-set refresh and contextual actions
+are independent continuation cases:
 they each prepare a new run-owned fixture and repeat safety preflight even when
 an earlier scenario failed. The failed step stays failed, and the bundle cannot
 be certified as passing. Dependent steps still stop after a prerequisite failure.
@@ -630,3 +631,7 @@ launch an older Actions copy while the replicated instance uses the correct buil
 Discovery must contain exactly the selected app's Actions extension; missing,
 duplicate or malformed discovery is rejected. See `FILE_PROVIDER_CLEANUP.md` for
 registration-only repair. This does not replace final Actions code-hash evidence.
+
+Finder contextual command selection is confined to the single visible transient
+root menu and its direct commands. Expanded submenus are subordinate to that root;
+application menu-bar commands and ambiguous independent popups are excluded.

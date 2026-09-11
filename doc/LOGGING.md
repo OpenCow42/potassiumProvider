@@ -373,3 +373,10 @@ and the writer-health latch. Shared-lock contention defers that observation with
 blocking the UI. An interrupted final record is retained until complete. This is
 only a scheduling aid; final certification still validates the entire immutable
 bundle with the existing strict parser and callback requirements.
+
+Failure screenshot observation has its own bounded 15-second budget. The failed
+operation remains failed and its original deadline is not extended. The driver
+can dismiss its known transient menu, then revalidate the exact selected row before
+capturing it; unrelated windows and broader screenshot regions remain excluded.
+Closed numeric menu observations identify anchor lookup, event posting, popup count
+and exact enabled-command count without exporting file names or URLs.

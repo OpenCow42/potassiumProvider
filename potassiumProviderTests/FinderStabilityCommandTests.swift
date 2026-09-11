@@ -47,7 +47,7 @@ struct FinderStabilityCommandTests {
         let full = FinderStabilityScenarioSelection(includePermanentDeletion: true)
         #expect(StabilityFinderScenario.allCases.allSatisfy { full.skipReason(for: $0, afterFailure: false) == nil })
         #expect(selection.skipReason(for: .permanentDeletion, afterFailure: true) == .earlierStepFailure)
-        #expect(selection.skipReason(for: .concurrentRemotePreserveBoth, afterFailure: true) == .earlierStepFailure)
+        #expect(selection.skipReason(for: .concurrentRemotePreserveBoth, afterFailure: true) == nil)
         let conflict = FinderStabilityScenarioSelection(conflictCase: .contentAfterPreflight)
         #expect(conflict.skipReason(for: .permanentDeletion, afterFailure: false) == .notSelectedForConflictProfile)
         #expect(conflict.skipReason(for: .concurrentRemotePreserveBoth, afterFailure: false) == nil)
@@ -56,7 +56,7 @@ struct FinderStabilityCommandTests {
     @Test func independentScenariosContinueAfterFailureWithoutBroadeningConflictSelection() {
         let selection = FinderStabilityScenarioSelection()
         #expect(StabilityFinderScenario.allCases.filter { selection.skipReason(for: $0, afterFailure: true) == nil } ==
-            [.workingSetRefresh, .supportedContextualActions])
+            [.concurrentRemotePreserveBoth, .cancellationAndProgress, .workingSetRefresh, .supportedContextualActions])
         let conflict = FinderStabilityScenarioSelection(conflictCase: .contentAfterPreflight)
         #expect(conflict.skipReason(for: .workingSetRefresh, afterFailure: true) == .notSelectedForConflictProfile)
         #expect(conflict.skipReason(for: .supportedContextualActions, afterFailure: true) == .notSelectedForConflictProfile)

@@ -78,7 +78,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                 if let session {
                     // The driver only captures its previously verified single
                     // generated selection; failure never broadens the region.
-                    try? await ui.capture(in: session.run.directoryURL.appendingPathComponent("visual-evidence"), sequence: 100 + index)
+                    try? await ui.captureFailure(in: session.run.directoryURL.appendingPathComponent("visual-evidence"), sequence: 100 + index)
                 }
                 if pointerActive { try? await context.endStep(correlationID) }
                 let origin: StabilityFailureOrigin = (error as? FinderUIError) == .evictionResourceBusy ? .environment :

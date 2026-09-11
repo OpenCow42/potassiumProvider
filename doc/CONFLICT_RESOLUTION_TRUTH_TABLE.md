@@ -15,6 +15,16 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+A later fresh run failed before eviction/contextual command dispatch, with no
+current Actions callback. Its bundle stays failed; native cancellation was not
+exercised. Sanitized menu observations now distinguish anchor, popup and command
+selection failures. All four advanced cases create independent fixtures and may
+continue after an earlier failure, without changing the failed result or relaxing
+conflict/cancellation evidence. CR-013 and mutation policy remain unchanged.
+Popup selection excludes menu-bar commands and subordinate menus, with negative
+regressions for ambiguous roots. This harness correction does not change conflict
+or deletion policies; confirmation in a live run is still required.
+
 Fresh `765a651` evidence confirms favorite, unfavorite and duplicate UI/server
 operations after adding the optional metadata include. The final share panel was
 observed loading; the runner timed out without the Stability panel identifier.
