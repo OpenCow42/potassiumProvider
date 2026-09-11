@@ -119,6 +119,9 @@ Apple Event failures print numeric codes without private command text.
 
 Each passing step requires a baseline and postcondition, Finder-visible and remote
 assertions, and successful item-specific callback evidence from the expected build.
+Transfer sampling uses Foundation `Progress.fractionCompleted` so weighted child
+progress is visible before the parent's integer units advance. Only actual
+observations are bucketed; terminal completion is not intermediate progress.
 Cancellation accepts the expected cancelled fetch and requires real progress plus a
 later successful fetch for that same item. Trash uses `modifyItem`; permanent
 selected-item deletion uses `deleteItem`. Root enumeration cannot substitute for

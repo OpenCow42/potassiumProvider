@@ -1056,7 +1056,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         )
     }
 
-    private static func trackProgress(
+    static func trackProgress(
         _ progress: Progress,
         with span: ProviderDiagnosticSpan
     ) -> Task<Void, Never> {
@@ -1064,10 +1064,10 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             while Task.isCancelled == false {
                 let total = progress.totalUnitCount
                 if total > 0 {
-                    await span.progress(
-                        fractionCompleted: Double(progress.completedUnitCount)
-                            / Double(total)
-                    )
+                    // URLSession progress can contain weighted children. Its
+                    // parent unit count stays zero while those children make
+                    // real progress; fractionCompleted includes their work.
+                    await span.progress(fractionCompleted: progress.fractionCompleted)
                 }
                 do {
                     try await Task.sleep(for: .milliseconds(250))

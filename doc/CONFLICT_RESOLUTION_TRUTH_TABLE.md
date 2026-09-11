@@ -15,6 +15,17 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The first deletion-deferred live run passed the real preserve-both race but could
+not cancel either transfer: diagnostics showed only zero and terminal completion.
+Transfer diagnostic sampling now uses Foundation's `fractionCompleted`, including
+weighted child work, instead of dividing the parent's integer unit counts. The
+parent can remain at zero units while its child has transferred 40% or 90%; a new
+regression verifies both intermediate buckets and cancellation without a later
+success. This corrects progress evidence without simulating transfer or weakening
+cancellation acceptance. Focused validation finalized 25 passing tests on each
+Mac profile and each requested simulator, with zero failures/skips; the signed
+generic visionOS build passed. Live confirmation remains pending.
+
 2026-09-11 operator-directed selection: original Finder runs now defer permanent
 deletion before any re-trash or confirmation, then continue the independent
 preserve-both, transfer, working-set, and contextual-action scenarios. Explicit

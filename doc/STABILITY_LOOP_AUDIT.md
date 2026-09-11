@@ -1757,3 +1757,41 @@ finalized **384 passed, zero failed/skipped** in
 `potassium-optional-deletion-vision-sim-01.xcresult`. The signed generic visionOS
 build also succeeded (`potassium-optional-deletion-vision-build-01.log`). The
 standard Mac UI suite is still running; no live suite is active during validation.
+
+Standard Mac validation finalized **418 passed, zero failed/skipped** in
+`potassium-optional-deletion-standard-mac-01.xcresult`, including UI and readiness
+measurement. Ordinary signed build `9b71d76` passed all preflight checks, including
+saved-Keychain authentication, ownership/domain binding, extension registration,
+Accessibility, Automation, and screen recording. The fresh live run now starts
+with deletion deferred; no local builds or tests overlap it.
+
+### Deletion deferral verified; transfer progress divergence
+
+Fresh ordinary build `9b71d76`, run `343fc032-7799-41a9-ae93-92270cc31d66`, sealed
+**12 passed, one failed, three skipped**. Scenarios 1–11 passed, scenario 12 was
+explicitly `skipped(permanentDeletionNotSelected)` with no re-trash/prompt, and
+scenario 13 passed its actual conditional-upload race with both versions reopened.
+Scenario 14 failed `cancellationNotExercised`; 15/16 were skipped after that failure.
+The 64 MiB and 256 MiB fixtures each completed before cancellation. Download spans
+`9E25BB88-F224-452D-B56E-504E16CC7286` (1,429 ms) and
+`CDBF9DB6-7298-4FF8-8B34-E5DDDA6AFA38` (3,854 ms) had zero-only intermediate
+progress. The report/timeline/screenshots and generated fixtures remain preserved;
+owned Finder windows closed and monitoring continued through settlement.
+
+`trackProgress` divided the parent's completed units by total units. Foundation
+`Progress` with a weighted child can retain zero parent units at 40% and 90% child
+completion (independent local Foundation reproduction). The corrected sampler uses
+`fractionCompleted`; a new test exercises the production sampler with this exact
+hierarchy and verifies intermediate buckets, one cancellation, and no late success.
+Confidence is high in this sampler defect; whether it explains all missing live
+progress awaits rerun. No transfer is slowed, fabricated, or counted as cancelled
+without Finder and correlated callback evidence. Reproduce with the ordinary
+`--run --extension-state fresh --yes-live` command, leaving deletion deferred.
+
+The progress correction finalized **25 focused tests on each of standard Mac,
+Stability Mac, iPhone 17/iOS 26.5, and Apple Vision Pro/visionOS 26.5**, with zero
+failed/skipped (`potassium-transfer-progress-<destination>-01.xcresult`). The signed
+generic visionOS build passed. CI `34580616050` on the preceding optional-deletion
+commit `9b71d76` finalized green on all three jobs, including both Mac profiles.
+These results validate the sampler and cancellation regressions; the corrected
+ordinary app still needs a live cancellation result.
