@@ -15,6 +15,26 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+2026-09-11 continuation: working-set preparation now permits at most four
+independent materialized-folder reads at once using the existing
+InfomaniakConcurrency dependency. Results retain folder order and still commit in
+one transaction guarded by every container snapshot and the starting working-set
+anchor. Failure/cancellation discards the batch without advancing cursors or the
+successful watermark; throttling propagates its Retry-After metadata without a
+poll-local retry. A superseding journal stops new folder work; up to four reads
+may already be in flight. `WorkingSetSyncTests` adds gated overlap, ordered state,
+partial-batch nonpublication, cancellation, and throttling regressions. The retained
+large-crawl failure motivates this latency correction; live mitigation of CR-022
+remains pending until a complete original-suite rerun. No conflict policy or
+permanent-delete guarantee changes.
+
+Diagnostic subscriptions now capture their initial file state before returning the
+stream, preventing an immediately appended event from being absorbed into a later
+worker baseline. The cross-store regression appends without a startup sleep.
+The real SQLite WAL-contention regression uses dedicated opener/release queues so
+its synchronous busy wait cannot starve the cooperative task that releases its
+own test lock. Production SQLite timeout/transaction behavior is unchanged.
+
 2026-09-10 conflict-matrix continuation: the production plaintext and vault
 `modifyItem` sequences now run through shared injected executors. Regression
 coverage checks combined contents/name/parent changes, pending fields, contents

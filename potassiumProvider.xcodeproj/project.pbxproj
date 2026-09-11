@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D00001152FF9000000000015 /* InfomaniakConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = D00001142FF9000000000014 /* InfomaniakConcurrency */; };
 		C09842BF2FF8491700CB8B7E /* PotassiumChannelCore in Frameworks */ = {isa = PBXBuildFile; productRef = C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */; };
 		C09842C12FF8491700CB8B7E /* PotassiumKDrive in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C02FF8491700CB8B7E /* PotassiumKDrive */; };
 		C09842C32FF8491700CB8B7E /* PotassiumOAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C09842C22FF8491700CB8B7E /* PotassiumOAuth */; };
@@ -182,6 +183,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D00001152FF9000000000015 /* InfomaniakConcurrency in Frameworks */,
 				D00000072FF9000000000007 /* SQLite in Frameworks */,
 				D00000042FF9000000000004 /* PotassiumChannelCore in Frameworks */,
 				D00000052FF9000000000005 /* PotassiumKDrive in Frameworks */,
@@ -343,6 +345,7 @@
 			);
 			name = PotassiumProviderCore;
 			packageProductDependencies = (
+				D00001142FF9000000000014 /* InfomaniakConcurrency */,
 				D00001042FF9000000000004 /* SQLite */,
 				D00001012FF9000000000001 /* PotassiumChannelCore */,
 				D00001022FF9000000000002 /* PotassiumKDrive */,
@@ -1565,6 +1568,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		D00001142FF9000000000014 /* InfomaniakConcurrency */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0DCD8ED2FFA44AB00520215 /* XCRemoteSwiftPackageReference "swift-concurrency" */;
+			productName = InfomaniakConcurrency;
+		};
 		C09842BE2FF8491700CB8B7E /* PotassiumChannelCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C09842BD2FF8491700CB8B7E /* XCRemoteSwiftPackageReference "potassiumChannel" */;

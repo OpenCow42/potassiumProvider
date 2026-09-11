@@ -1564,3 +1564,41 @@ preserved lab and the ordinary signed build. Investigate refresh scheduling and
 visible-URL delivery before changing policy; keep the deadline, fixture confinement,
 retained evidence, and complete-span requirements intact. The independently
 verified six fresh and six already-running conflict passes remain valid.
+
+
+### CI failures and bounded refresh continuation
+
+The latest pre-continuation CI (`34545034527`) failed seven Mac setup UI tests,
+plus cross-store diagnostic observation on Mac/iOS and three scheduling/contention
+regressions on visionOS. Direct inspection of synthetic Mac fixtures found an
+Advanced disclosure identifier propagating over its token/save controls and drive
+actions exposed as List rows. Removing the parent identifier and using a grouped
+Form exposes the intended identifiers in native Accessibility. UI tests now use
+the disclosure role, a contained sign-in heading, and content-scoped empty-state
+queries that do not accidentally match the toolbar.
+
+Local `potassium-finish-mac-01.xcresult` finalized with **408 passed, five failed,
+zero skipped** (413 total). All failures are UI tests; the first changes fixed two
+of the seven original UI failures but do not yet establish a passing UI suite.
+Further UI failures retain the synthetic app's accessibility description. The next
+targeted run has compiled the changes but is currently blocked at app launch by
+local debugger authorization. An earlier UI initialization attempt timed out and
+was interrupted; it is not a finalized passing test result. Developer Mode was
+still disabled after one-off permission; enabling it requires the operator's local
+administrator password. No global security setting has been changed by the runner.
+
+The JSONL subscription baseline was established inside a later worker task, allowing
+an intervening append to be missed. It is now captured before subscription return.
+The real WAL-contention test now releases its lock on a dedicated queue, independent
+of the Swift executor blocked by the opener. Existing SQLite production behavior
+is unchanged. The updated cross-store observation and contention regressions pass
+in the local finalized Mac run above; simulator and CI confirmation remain pending.
+
+The retained 423-request working-set trace motivates a separately focused change:
+up to four independent folder reads may overlap, retaining ordered results and the
+single guarded commit. New gated regressions require actual overlap, no prefix
+publication, complete identities/parentage/cursors, and cancellation or HTTP 429
+without cursor/watermark advancement. Retry-After metadata remains intact. A newer
+journal still supersedes the whole prepared batch; already-started reads are bounded
+by four. Compilation succeeded in the targeted build; test and live verification
+are pending. CR-022's latency limitation and CR-013's deletion guarantee remain open.

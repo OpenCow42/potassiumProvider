@@ -1,4 +1,5 @@
 import Foundation
+import PotassiumChannelCore
 import Testing
 import PotassiumProviderCore
 
@@ -14,7 +15,7 @@ struct WorkingSetSyncTests {
         let previousTime = Date(timeIntervalSince1970: 1_000)
         let initial = try await store.commitWorkingSetPoll(domainIdentifier: "domain-1", containerSnapshotUpdates: [],
             items: [base], changes: KDriveSnapshotChangeSet(updatedItems: [base], deletedItemIDs: []), completedAt: previousTime)
-        try await store.replaceMaterializedItems([.init(fileID: 10, isContainer: true), .init(fileID: 20, isContainer: true)], domainIdentifier: "domain-1")
+        try await store.replaceMaterializedItems((10..<18).map { .init(fileID: $0, isContainer: true) }, domainIdentifier: "domain-1")
         let publish: @Sendable () async throws -> Void = {
             let published = try await store.publishKnownWorkingSetItem(edited, replacing: base,
                 domainIdentifier: "domain-1", recordedAt: previousTime.addingTimeInterval(1))
@@ -30,11 +31,79 @@ struct WorkingSetSyncTests {
             #expect(!outcome.didPoll && outcome.snapshot?.items == [edited])
         }
         #expect(delivery?.changes.updatedItems == [edited])
-        #expect(await remote.advancedRequestCount() == (duringFolder ? 1 : 0))
+        #expect(await remote.advancedRequestCount() <= (duringFolder ? 4 : 0))
+        if duringFolder { #expect(await remote.advancedRequestCount() > 0) }
         #expect(await remote.requestedPartialFileIDs().isEmpty)
         #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "10") == nil)
         #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == previousTime)
     }
+    @Test(.timeLimit(.minutes(1)))
+    func independentFoldersOverlapWithinBoundAndCommitCompleteOrderedState() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        try await store.replaceMaterializedItems((10..<18).map { .init(fileID: $0, isContainer: true) }, domainIdentifier: "domain-1")
+        let gate = WorkingSetContainerGate()
+        let remote = WorkingSetRemoteMock(relevantItems: [], advancedResponses: [:], itemByID: [:], partialResults: [],
+            advancedResponse: { folderID in try await gate.page(folderID: folderID) })
+        let coordinator = makeCoordinator(remote: remote, store: store)
+        let time = Date(timeIntervalSince1970: 2_000)
+        let polling = Task { try await coordinator.poll(now: time) }
+        defer { polling.cancel() }
+        try await gate.waitForStarted(4)
+        #expect(await gate.peakActive == 4)
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "10") == nil)
+        await gate.release([13, 12, 11, 10])
+        try await gate.waitForStarted(8)
+        // Completed first-batch cursors remain uncommitted while the rest waits.
+        #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: "10") == nil)
+        await gate.release([17, 16, 15, 14])
+        let result = try await polling.value
+        let expected = (10..<18).map { makeWorkingSetItem(id: $0 * 10, name: "Fixture.txt", parentID: $0, updatedAt: 1_000) }
+        #expect(result.didPoll && result.snapshot?.items == expected)
+        #expect(result.changes.updatedItems == expected)
+        #expect(await gate.peakActive == 4)
+        #expect(await gate.finished == 8)
+        #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == time)
+        for folderID in 10..<18 {
+            let snapshot = try #require(await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: String(folderID)))
+            #expect(snapshot.serverCursor == "cursor-\(folderID)")
+            #expect(snapshot.items == expected.filter { $0.parentID == folderID })
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func cancelledOrThrottledFolderBatchCannotAdvanceAnyCursor(cancel: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KDriveSnapshotSQLiteStore(databaseURL: directory.appendingPathComponent("Snapshots.sqlite3"))
+        try await store.replaceMaterializedItems((10..<18).map { .init(fileID: $0, isContainer: true) }, domainIdentifier: "domain-1")
+        let gate = WorkingSetContainerGate(throttle: !cancel)
+        let remote = WorkingSetRemoteMock(relevantItems: [], advancedResponses: [:], itemByID: [:], partialResults: [],
+            advancedResponse: { folderID in try await gate.page(folderID: folderID) })
+        let coordinator = makeCoordinator(remote: remote, store: store)
+        let polling = Task { try await coordinator.poll(now: Date(timeIntervalSince1970: 2_000)) }
+        defer { polling.cancel() }
+        try await gate.waitForStarted(4)
+        if cancel {
+            polling.cancel()
+            await #expect(throws: CancellationError.self) { try await polling.value }
+        } else {
+            await gate.release([10])
+            // Retry-After survives; the poll neither retries nor commits a prefix.
+            await #expect(throws: APIClientError.unacceptableStatusCode(429, body: "synthetic", metadata: .init(retryAfter: "60"))) {
+                try await polling.value
+            }
+        }
+        #expect(await gate.startedCount == 4)
+        #expect(await gate.finished == 4)
+        #expect(try await store.lastSuccessfulWorkingSetPoll(domainIdentifier: "domain-1") == nil)
+        #expect(await remote.requestedPartialFileIDs().isEmpty)
+        for folderID in 10..<18 {
+            #expect(try await store.snapshot(domainIdentifier: "domain-1", containerIdentifier: String(folderID)) == nil)
+        }
+    }
+
     @Test func immediateMaterializationPollsCannotOverlapEachOther() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -461,6 +530,7 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     private let beforePartial: (@Sendable () async throws -> Void)?
     private let beforeRelevantReturn: (@Sendable () async throws -> Void)?
     private let beforeAdvancedReturn: (@Sendable () async throws -> Void)?
+    private let advancedResponse: (@Sendable (Int) async throws -> KDriveAdvancedItemPage)?
     private var advancedCalls = 0
     private let relevantItems: [KDriveRemoteItem]
     private let advancedResponses: [String: KDriveAdvancedItemPage]
@@ -483,7 +553,8 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
         beforePartial: (@Sendable () async throws -> Void)? = nil,
         relevantDelay: Duration = .zero,
         beforeRelevantReturn: (@Sendable () async throws -> Void)? = nil,
-        beforeAdvancedReturn: (@Sendable () async throws -> Void)? = nil
+        beforeAdvancedReturn: (@Sendable () async throws -> Void)? = nil,
+        advancedResponse: (@Sendable (Int) async throws -> KDriveAdvancedItemPage)? = nil
     ) {
         self.relevantItems = relevantItems
         self.advancedResponses = advancedResponses
@@ -494,6 +565,7 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
         self.relevantDelay = relevantDelay
         self.beforeRelevantReturn = beforeRelevantReturn
         self.beforeAdvancedReturn = beforeAdvancedReturn
+        self.advancedResponse = advancedResponse
     }
 
     func listWorkingSetRelevantItems(driveID: Int, latestLimit: Int) async throws -> [KDriveRemoteItem] {
@@ -528,6 +600,7 @@ private actor WorkingSetRemoteMock: KDriveFileProviding, KDriveWorkingSetRemoteP
     func listAdvancedDirectory(driveID: Int, folderID: Int, cursor: String?, limit: Int) async throws -> KDriveAdvancedItemPage {
         advancedCalls += 1
         try await beforeAdvancedReturn?()
+        if let advancedResponse { return try await advancedResponse(folderID) }
         guard let page = advancedResponses[cursor ?? "<initial>"] else {
             throw WorkingSetRemoteMockError.unimplemented
         }
@@ -590,4 +663,39 @@ private func makeWorkingSetItem(
         modifiedAt: Date(timeIntervalSince1970: updatedAt),
         updatedAt: Date(timeIntervalSince1970: updatedAt)
     )
+}
+
+/// Suspension is controlled by requests, not subsecond sleeps or CPU scheduling.
+private actor WorkingSetContainerGate {
+    let throttle: Bool
+    private var waiters: [Int: AsyncStream<Void>.Continuation] = [:]
+    private let starts = AsyncStream<Int>.makeStream()
+    private(set) var startedCount = 0
+    private(set) var finished = 0
+    private(set) var peakActive = 0
+    init(throttle: Bool = false) { self.throttle = throttle }
+    func page(folderID: Int) async throws -> KDriveAdvancedItemPage {
+        let release = AsyncStream<Void>.makeStream()
+        waiters[folderID] = release.continuation
+        startedCount += 1
+        peakActive = max(peakActive, waiters.count)
+        starts.continuation.yield(startedCount)
+        defer { waiters[folderID] = nil; finished += 1 }
+        var iterator = release.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        try Task.checkCancellation()
+        if throttle { throw APIClientError.unacceptableStatusCode(429, body: "synthetic", metadata: .init(retryAfter: "60")) }
+        return KDriveAdvancedItemPage(items: [makeWorkingSetItem(id: folderID * 10, name: "Fixture.txt", parentID: folderID, updatedAt: 1_000)],
+            actions: [], actionItems: [], nextCursor: "cursor-\(folderID)", hasMore: false)
+    }
+    func waitForStarted(_ count: Int) async throws {
+        if startedCount >= count { return }
+        for await number in starts.stream {
+            if number >= count { return }
+        }
+        throw CancellationError()
+    }
+    func release(_ folders: [Int]) {
+        for folder in folders { waiters[folder]?.yield(()); waiters[folder]?.finish() }
+    }
 }

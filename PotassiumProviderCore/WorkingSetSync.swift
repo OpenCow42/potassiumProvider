@@ -1,4 +1,5 @@
 import Foundation
+import InfomaniakConcurrency
 
 public struct KDriveMaterializedItem: Codable, Equatable, Sendable {
     public let fileID: Int
@@ -172,6 +173,7 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
     public static let pollingInterval: TimeInterval = 60
     public static let latestItemLimit = 200
     public static let partialActivityBatchSize = 200
+    private static let maximumConcurrentContainerPolls = 4
 
     private let domainIdentifier: String
     private let driveID: Int
@@ -264,9 +266,16 @@ public struct KDriveWorkingSetPollCoordinator: Sendable {
         var deletedItemIDs = Set<Int>()
         var containerSnapshotUpdates: [KDriveWorkingSetContainerSnapshotUpdate] = []
 
-        for folderID in materializedContainerIDs.sorted() {
-            try await requireWorkingSetAnchor(oldWorkingSet?.anchor)
-            let result = try await pollMaterializedContainer(folderID: folderID)
+        // Independent folders can be read together, but their cursors and the
+        // working-set journal still commit as one guarded transaction. Bound
+        // requests instead of making Finder wait for every folder serially.
+        let containerResults = try await materializedContainerIDs.sorted().concurrentMap(
+            customConcurrency: Self.maximumConcurrentContainerPolls
+        ) { folderID in
+            try await self.requireWorkingSetAnchor(oldWorkingSet?.anchor)
+            return try await self.pollMaterializedContainer(folderID: folderID)
+        }
+        for result in containerResults {
             relevantItems.append(contentsOf: result.snapshot.items)
             changedItems.append(contentsOf: result.changes.updatedItems)
             deletedItemIDs.formUnion(result.changes.deletedItemIDs)

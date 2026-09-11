@@ -531,3 +531,21 @@ known logical names, paths, types, dates, hashes, device names, or plaintext
 bytes. Benchmark 100,000 items, 10,000 siblings, and multi-gigabyte files. Safe
 migration/rekey design and independent review with all high-severity findings
 resolved are required before default enablement.
+
+
+### Mac setup accessibility and concurrent regression tests
+
+The Mac drive management screen uses a grouped Form to expose action controls.
+The Advanced disclosure control is identified by its native disclosure role and
+label, leaving the token/save controls' own identifiers intact. UI tests distinguish
+inline empty-state controls from toolbar refresh and accept the combined accessible
+sign-in heading. Synthetic fixtures remain isolated from saved accounts and tokens.
+
+Diagnostic change subscriptions cover appends immediately after registration.
+Their cross-store test waits for the observation under the test's overall deadline,
+without assuming a worker starts within a subsecond sleep. The SQLite initialization
+contention test runs its blocking opener and lock-release timer on dedicated queues;
+this preserves real WAL contention without depending on cooperative executor width.
+Working-set batch tests use explicit suspension gates to verify the four-folder
+limit, complete ordered results, and no cursor/watermark advancement after cancellation
+or HTTP 429. Live deadlines and original sixteen-scenario acceptance are unchanged.

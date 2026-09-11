@@ -13,7 +13,7 @@ File Provider experience.
   `potassiumProviderFileProvider`, `potassiumProviderActions`,
   `potassiumProviderTests`, and `potassiumProviderUITests`
 - Supported validation platforms: iOS Simulator, macOS, and visionOS
-- Dependencies: `SQLite.swift` and `potassiumChannel` package products
+- Dependencies: `InfomaniakConcurrency`, `SQLite.swift`, and `potassiumChannel` package products
   `PotassiumChannelCore`, `PotassiumKDrive`, and `PotassiumOAuth`
 - Tests: Swift Testing for unit tests, XCTest for UI tests
 
