@@ -2038,3 +2038,31 @@ standard Mac build passed (`potassium-pointer-sequence-standard-mac-01.log`). Th
 first test build required an explicit core-module import in the new test file; its
 failed bundle remains retained. The preceding commit's CI `34591774207` passed all
 three platform jobs. Live verification of the new pointer sequence is next.
+
+### Finder Actions toolbar path (2026-09-11)
+
+The subsequent `686eb94` run reports native event-posting permission granted but
+still observes no popup after the revised secondary click. The pointer changes do
+not resolve that live failure; its cause below input dispatch is still unconfirmed.
+Read-only computer use exposes Finder's `Action` menu button with the description
+“Perform tasks with the selected items.” The driver now prefers pressing that
+named control inside the one toolbar of its bound window, after revalidating the
+exact selection. Only one enabled, geometrically confined control is accepted.
+Its AX request has a bounded timeout and the actual popup must still be observed.
+The existing exact direct-command lookup and remote/callback assertions remain.
+Missing toolbar controls retain the confined secondary-click fallback. Regression
+coverage rejects missing, duplicate, disabled and unconfined toolbar controls;
+live confirmation is pending.
+
+The pointer rerun `9964d0bb-1186-40fd-b77d-1a24f9c273fb` sealed with **four
+passed, three failed, nine skipped**, the same scenario outcomes as the preceding
+run. Native posting permission was true at each failed menu request. Preserve-both
+and working-set refresh passed independently; no failed menu invoked its provider
+command. Owned windows closed and the evidence/fixtures remain retained. The
+Actions toolbar path is the next isolated harness change to validate.
+
+Toolbar selection regressions finalized successfully in
+`potassium-toolbar-menu-stability-mac-01.xcresult` with zero failures/skips. The
+standard Mac build passed (`potassium-toolbar-menu-standard-mac-01.log`). The
+preceding transfer scenario's duration fell to 106 seconds including fixture
+preparation and failure capture; its menu lookup used the 90-second UI cap.

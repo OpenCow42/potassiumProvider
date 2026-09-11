@@ -15,6 +15,12 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+Granted event-posting permission and the revised pointer sequence did not resolve
+the subsequent missing-menu trace. The harness now prefers Finder's named Actions
+toolbar menu for the exact bound selection, with negative confinement regressions.
+Actual popup, command, server and callback evidence remain required. This is a UI
+routing change awaiting live verification; CR-013 remains open.
+
 A later trace narrowed the menu failure to posted pointer input with no visible
 popup, before any mutation. Native input now clears modifiers, moves before clicking
 and revalidates the target, with cancellation/release regressions. Ordinary UI waits

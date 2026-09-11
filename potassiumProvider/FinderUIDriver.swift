@@ -841,6 +841,32 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
 
     private func showSelectedContextMenu() async throws {
+        // Finder exposes the selected item's contextual commands through its
+        // Actions toolbar menu too. Prefer this named Accessibility control.
+        guard let selectionURL, try verifySelection(selectionURL), let window = finderWindowAX() else {
+            throw FinderUIError.selectionMismatch
+        }
+        let toolbars = elements(window).filter { string($0, kAXRoleAttribute) == kAXToolbarRole }
+        if toolbars.count == 1, let toolbar = toolbars.first, let windowBounds = rect(window), let toolbarBounds = rect(toolbar) {
+            let buttons = elements(toolbar).filter { string($0, kAXRoleAttribute) == kAXMenuButtonRole }
+            if let index = FinderToolbarActionTarget.index(window: windowBounds, toolbar: toolbarBounds,
+                buttons: buttons.map { .init(description: string($0, kAXDescriptionAttribute),
+                    enabled: (attribute($0, kAXEnabledAttribute) as? Bool) != false, bounds: rect($0)) }) {
+                menuIsOpen = true
+                let button = buttons[index]
+                // Menu tracking may outlive the AX request. Its observed popup
+                // is authoritative; do not block the driver inside that request.
+                let remaining = remainingTime().components
+                let seconds = Float(remaining.seconds) + Float(remaining.attoseconds) / 1e18
+                guard seconds > 0, AXUIElementSetMessagingTimeout(button, min(2, seconds)) == .success else {
+                    throw FinderUIError.controlUnavailable
+                }
+                let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
+                print("finder stability UI: bound Actions toolbar menu requested; AX code \(result.rawValue)")
+                guard result == .success || contextMenu() != nil else { throw FinderUIError.controlUnavailable }
+                return
+            }
+        }
         print("finder stability UI: locating confined context-menu anchor")
         try await wait { self.selectedMenuPoint() != nil }
         guard let point = selectedMenuPoint(),
