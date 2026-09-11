@@ -26,14 +26,35 @@ jobs:
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Run unit tests on macOS
+      - name: Run unit and UI tests on macOS
         run: |
           xcodebuild test \
             -project potassiumProvider.xcodeproj \
             -scheme potassiumProvider \
             -destination 'platform=macOS' \
+            -resultBundlePath "$RUNNER_TEMP/macos-tests.xcresult" \
             MACOSX_DEPLOYMENT_TARGET=26.4 \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Run Stability profile unit tests on macOS
+        if: ${{ !cancelled() }}
+        run: |
+          xcodebuild test \
+            -project potassiumProvider.xcodeproj \
+            -scheme potassiumProvider-Stability \
+            -destination 'platform=macOS' \
+            -resultBundlePath "$RUNNER_TEMP/macos-stability-tests.xcresult" \
+            MACOSX_DEPLOYMENT_TARGET=26.4 \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Retain Mac test result bundles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-test-results
+          path: ${{ runner.temp }}/macos*-tests.xcresult
+          retention-days: 14
+          if-no-files-found: warn
 
   ios:
     name: iOS Simulator
@@ -58,7 +79,17 @@ jobs:
             -scheme potassiumProvider \
             -destination 'platform=iOS Simulator,OS=26.5,name=iPhone 17' \
             -only-testing:potassiumProviderTests \
+            -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult" \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Retain iOS test result bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-test-results
+          path: ${{ runner.temp }}/ios-tests.xcresult
+          retention-days: 14
+          if-no-files-found: warn
 
   visionos:
     name: visionOS
@@ -83,4 +114,14 @@ jobs:
             -scheme potassiumProvider \
             -destination 'platform=visionOS Simulator,OS=26.5,name=Apple Vision Pro' \
             -only-testing:potassiumProviderTests \
+            -resultBundlePath "$RUNNER_TEMP/visionos-tests.xcresult" \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Retain visionOS test result bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: visionos-test-results
+          path: ${{ runner.temp }}/visionos-tests.xcresult
+          retention-days: 14
+          if-no-files-found: warn

@@ -1618,10 +1618,53 @@ journal still supersedes the whole prepared batch; already-started reads are bou
 by four. The new runtime passes all 381 unit tests on each requested simulator, with
 finalized `potassium-finish-ios-01.xcresult` and
 `potassium-finish-vision-sim-01.xcresult` bundles. The generic visionOS build also
-succeeded. CI unit coverage passes on all three platforms. Local Mac profile
-reruns and live verification of the latency correction remain pending. CR-022's
+succeeded. CI unit coverage passes on all three platforms. Both local Mac profile reruns now pass; live verification of the latency
+correction remains pending. CR-022's
 latency limitation and CR-013's deletion guarantee remain open.
 
 The host-app package embedding change also passed the signed generic visionOS
-build (`potassium-finish-vision-build-02.log`). Full local Mac validation is running;
-this does not yet establish a passing live Finder suite.
+build (`potassium-finish-vision-build-02.log`). The standard Mac run
+`potassium-finish-mac-02.xcresult` finalized with **415 passed, zero failed or
+skipped**, including all setup, activity, and launch UI tests. Explicit teardown
+closed test-owned app instances. The Stability profile then finalized
+`potassium-finish-stability-mac-02.xcresult` with **465 passed, zero failed or
+skipped**. Both Mac profiles are passing; complete live Finder acceptance remains
+pending. Test extension registrations were removed before rebuilding the ordinary
+signed Stability app.
+
+### Launch-metric CI follow-up
+
+CI `34575745738` on `716f907` fixed all five previous setup UI failures. Its Mac
+job failed only `testLaunchPerformance`: iteration 3 returned zero launch metrics
+while iteration 0 returned one. The app launched under distinct process IDs in all
+iterations; this trace does not establish an application startup defect. The local
+full run retained all launch metrics and passed. Classification: test harness / CI
+measurement, with moderate confidence in the measurement boundary as the cause.
+The regression now reuses one application controller, terminates outside the
+measured interval, waits for the responsive-launch metric and an app window, and
+retains the metric assertion. Local/CI reruns are pending; no missing measurement
+is accepted as a pass. Validation waits until the active Finder run settles.
+
+The same CI run finalized iOS successfully but failed one visionOS scheduling test:
+`materializationArrivingDuringIORequiresAnotherPollAndCancellationDoesNotPoll`
+(16.923 seconds). Its three-second observation and five-second fake-I/O deadlines
+could expire while the suite competed for simulator execution. The old workflow
+retained only console output, so the exact failed assertion was unavailable; this
+is a supported timing hypothesis, not a proven provider defect. Fake I/O now waits
+on explicit cancellable gates, with start notifications and the test's one-minute
+overall deadline. Queue-count observation retains cancellation and final empty-queue
+assertions. No production scheduling behavior changes. CI now retains result bundles
+for all destinations for 14 days and also runs the Mac Stability unit profile.
+These test-only follow-ups are awaiting validation while the live run is paused.
+
+### Original-suite continuation at exact deletion confirmation
+
+Ordinary signed build `716f907` passed preflight, including saved-Keychain login,
+verified lab/domain ownership, Accessibility, Finder automation, screen recording,
+and extension registration. Fresh run `9b684af4-ca17-4795-8c79-74195aeee299`
+cleared fixture preparation and verified scenarios 1–11, including Remove Download,
+TextEdit editing, Trash, and the strengthened Restore callback/bytes/destination
+checks. It remains monitored at the operator's exact-fixture permanent-deletion
+confirmation. This is an incomplete active run, not a certified 16-scenario pass.
+No permanent deletion or warm-run acceptance is claimed. Failed earlier bundles
+remain preserved; CR-013 stays open.

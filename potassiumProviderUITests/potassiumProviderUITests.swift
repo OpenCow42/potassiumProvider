@@ -399,9 +399,16 @@ final class potassiumProviderUITests: XCTestCase {
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            UITestApplication.make(for: self).launch()
+        let app = UITestApplication.make(for: self)
+        let options = XCTMeasureOptions()
+        options.invocationOptions = [.manuallyStart]
+        // Termination belongs outside the measured launch interval. Reuse the
+        // same application controller and require a launch ready for input.
+        measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)], options: options) {
+            app.terminate()
+            startMeasuring()
+            app.launch()
+            XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
         }
     }
 

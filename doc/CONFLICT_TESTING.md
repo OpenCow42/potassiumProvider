@@ -157,14 +157,21 @@ commits, reopened bytes, screenshots, complete diagnostic spans, and healthy fin
 reports. The earlier accepted baseline `05e8e5f` and intervening failed bundles
 remain preserved. The audit records exact run IDs and the focused corrections.
 
-Latest finalized validation: 463 macOS Stability tests, 395 standard macOS tests,
-379 iOS Simulator tests, and 379 visionOS Simulator tests passed, with zero
-failed/skipped/expected failures. The generic visionOS build succeeded. The last
-changes are confined to macOS Stability; shared-runtime results cover the provider
-lifecycle correction. `FileProviderBackgroundWorkTests` verifies cancellation,
-replacement-instance independence, and late-registration rejection. A retained
-failed-preparation trace also verifies actual materialization-child cancellation
-during invalidation, mitigating CR-024 without converting that failure to a pass.
+Latest finalized validation on the bounded working-set runtime: 465 macOS Stability
+tests, 415 standard macOS tests (including UI), 381 iOS Simulator tests, and 381
+visionOS Simulator tests passed, with zero failed or skipped. The signed generic
+visionOS build succeeded. Bundles are `potassium-finish-stability-mac-02.xcresult`,
+`potassium-finish-mac-02.xcresult`, `potassium-finish-ios-01.xcresult`, and
+`potassium-finish-vision-sim-01.xcresult`. The host-app package embedding follow-up
+also passed iOS Simulator and signed generic visionOS builds.
+
+The historical six fresh and six warm conflict passes above cover `d4b5323`;
+they do not certify the newer working-set runtime. `FileProviderBackgroundWorkTests`
+verifies cancellation, replacement-instance independence, and late-registration
+rejection. The retained failed-preparation trace establishes actual child-work
+cancellation during invalidation, mitigating CR-024 without converting a failed
+run to a pass. New gated folder-read tests verify bounded overlap, a single complete
+commit, cancellation, and Retry-After-preserving throttling.
 
 These conflict profiles do not certify the separate sixteen-scenario suite. Its
 complete fresh and already-running acceptance remains open; earlier runs verified

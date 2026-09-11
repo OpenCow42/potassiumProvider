@@ -29,7 +29,9 @@ remains pending until a complete original-suite rerun. No conflict policy or
 permanent-delete guarantee changes. The 381-test iOS and visionOS Simulator runs
 finalized successfully on this runtime (`potassium-finish-ios-01.xcresult` and
 `potassium-finish-vision-sim-01.xcresult`); CI `34573732948` also passes unit coverage
-on all platforms. Mac UI and original live acceptance remain pending.
+on all platforms. The subsequent full standard Mac run finalized 415 passing tests
+including UI, and the Stability profile finalized 465 passing tests; both have zero
+failures/skips. Original live acceptance on the new runtime remains pending.
 
 Diagnostic subscriptions now capture their initial file state before returning the
 stream, preventing an immediately appended event from being absorbed into a later
@@ -37,6 +39,10 @@ worker baseline. The cross-store regression appends without a startup sleep.
 The real SQLite WAL-contention regression uses dedicated opener/release queues so
 its synchronous busy wait cannot starve the cooperative task that releases its
 own test lock. Production SQLite timeout/transaction behavior is unchanged.
+The poll-scheduling regression now uses cancellable fake-I/O gates and a bounded
+overall test deadline after a CI-only timing failure; it still requires a subsequent
+poll for arrivals during I/O, no poll for cancelled waiters, and an empty final queue.
+Production scheduling policy is unchanged; follow-up CI validation is pending.
 
 2026-09-10 conflict-matrix continuation: the production plaintext and vault
 `modifyItem` sequences now run through shared injected executors. Regression

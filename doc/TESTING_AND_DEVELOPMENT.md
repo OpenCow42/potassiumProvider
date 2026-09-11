@@ -558,3 +558,16 @@ state, and diagnostic trees are scoped to the app window. When sharing a SwiftPM
 product between the core framework and extensions, retain its host-app product
 dependency: Xcode must embed and sign the generated package framework. A build-only
 or unsigned CI pass cannot establish successful local library validation.
+
+Launch performance retains a single application controller across iterations and
+terminates before starting measurement. It uses Apple's
+[responsive launch metric](https://developer.apple.com/documentation/xctest/xctapplicationlaunchmetric/init(waituntilresponsive:))
+and also requires an app window. A missing metric fails the test; it is not replaced
+with a retry or an assumed timing sample.
+
+Poll-scheduling tests hold fake I/O behind explicit cancellable gates. Start
+notifications establish ordering; queue-count observations are bounded by the
+overall one-minute test deadline rather than a short executor-scheduling assumption.
+CI runs both Mac profiles and retains `.xcresult` bundles for 14 days for every
+destination, including failures. Interrupted/incomplete bundles remain diagnostic
+evidence only and must never be treated as passing results.
