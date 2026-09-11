@@ -537,7 +537,9 @@ resolved are required before default enablement.
 
 The Mac drive management screen uses a grouped Form to expose action controls.
 The Advanced disclosure control is identified by its native disclosure role and
-label, leaving the token/save controls' own identifiers intact. UI tests distinguish
+label, leaving the token/save controls' own identifiers intact. Both the arrow and
+label toggle its expansion state. Drive navigation rows include their spacer in
+the hit area, so a normal centre click opens the destination. UI tests distinguish
 inline empty-state controls from toolbar refresh and accept the combined accessible
 sign-in heading. Synthetic fixtures remain isolated from saved accounts and tokens.
 
@@ -549,3 +551,10 @@ this preserves real WAL contention without depending on cooperative executor wid
 Working-set batch tests use explicit suspension gates to verify the four-folder
 limit, complete ordered results, and no cursor/watermark advancement after cancellation
 or HTTP 429. Live deadlines and original sixteen-scenario acceptance are unchanged.
+
+The Mac UI runner launches its sibling app product by URL to avoid another checkout's
+Launch Services registration. All launch and performance tests use synthetic setup
+state, and diagnostic trees are scoped to the app window. When sharing a SwiftPM
+product between the core framework and extensions, retain its host-app product
+dependency: Xcode must embed and sign the generated package framework. A build-only
+or unsigned CI pass cannot establish successful local library validation.

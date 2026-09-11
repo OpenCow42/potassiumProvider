@@ -409,6 +409,7 @@ private struct ProviderAccountRow: View {
 private struct ProviderAddAccountView: View {
     @ObservedObject var model: PotassiumProviderAppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var isAdvancedExpanded = false
 
     var body: some View {
         #if os(macOS)
@@ -518,7 +519,7 @@ private struct ProviderAddAccountView: View {
                     .accessibilityIdentifier("addAccount.oauth")
                 }
 
-                DisclosureGroup("Advanced") {
+                DisclosureGroup(isExpanded: $isAdvancedExpanded) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Manual tokens are intended for development and may stop working when they expire.")
                             .font(.subheadline)
@@ -545,6 +546,10 @@ private struct ProviderAddAccountView: View {
                         .accessibilityIdentifier("addAccount.saveManualToken")
                     }
                     .padding(.top, 10)
+                } label: {
+                    Text("Advanced")
+                        .contentShape(Rectangle())
+                        .onTapGesture { isAdvancedExpanded.toggle() }
                 }
             }
         }
@@ -765,6 +770,7 @@ private struct ProviderAccountManagementView: View {
                                 ForEach(Array(driveDescriptors.enumerated()), id: \.element.id) { index, descriptor in
                                     NavigationLink(value: ProviderSetupRoute.drive(descriptor.id)) {
                                         ProviderDriveRow(descriptor: descriptor)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityIdentifier("account.drive.\(descriptor.driveID)")

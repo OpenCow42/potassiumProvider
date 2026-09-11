@@ -25,7 +25,7 @@ final class potassiumProviderUITests: XCTestCase {
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        let app = UITestApplication.make(for: self)
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -57,7 +57,7 @@ final class potassiumProviderUITests: XCTestCase {
         availableDrive.tap()
         #endif
 
-        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5), app.windows["net.weavee.potassiumProvider.main-window"].debugDescription)
         XCTAssertTrue(app.buttons["drive.createEncryptedVault"].exists)
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
@@ -123,6 +123,9 @@ final class potassiumProviderUITests: XCTestCase {
 
         let addAccount = app.buttons["setup.addAccount"]
         XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        #if os(macOS)
+        XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
+        #endif
         addAccount.tap()
 
         XCTAssertTrue(app.buttons["addAccount.oauth"].waitForExistence(timeout: 5))
@@ -132,16 +135,13 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(advanced.waitForExistence(timeout: 5))
         advanced.click()
         #endif
-        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5), app.windows["net.weavee.potassiumProvider.main-window"].debugDescription)
         #if os(macOS)
         XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
         #else
         XCTAssertTrue(app.staticTexts["Advanced"].exists)
         #endif
 
-        #if os(macOS)
-        XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
-        #endif
     }
 
     #if os(macOS)
@@ -401,13 +401,13 @@ final class potassiumProviderUITests: XCTestCase {
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            UITestApplication.make(for: self).launch()
         }
     }
 
     @MainActor
     private func launchSetupFixture(named fixtureName: String = "setup-navigation") -> XCUIApplication {
-        let app = XCUIApplication()
+        let app = UITestApplication.make(for: self)
         app.launchEnvironment["POTASSIUM_UI_TEST_FIXTURE"] = fixtureName
         app.launch()
         return app

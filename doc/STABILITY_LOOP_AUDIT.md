@@ -1580,19 +1580,34 @@ queries that do not accidentally match the toolbar.
 Local `potassium-finish-mac-01.xcresult` finalized with **408 passed, five failed,
 zero skipped** (413 total). All failures are UI tests; the first changes fixed two
 of the seven original UI failures but do not yet establish a passing UI suite.
-Further UI failures retain the synthetic app's accessibility description. The next
-targeted run has compiled the changes but is currently blocked at app launch by
-local debugger authorization. An earlier UI initialization attempt timed out and
-was interrupted; it is not a finalized passing test result. Developer Mode was
-still disabled after one-off permission; enabling it requires the operator's local
-administrator password. No global security setting has been changed by the runner.
+Further UI failures retain the synthetic app's accessibility description. An earlier
+UI initialization attempt timed out while enabling automation and was interrupted;
+it is not a finalized passing test result. Later launch failures were initially
+attributed to debugger authorization, but a direct launch established a missing
+embedded InfomaniakConcurrency package framework and a library-validation failure.
+The host app now declares that shared package product so Xcode embeds and signs it.
+A focused run then launched successfully without changing Developer Mode and passed
+drive navigation. One later retry could not obtain a process ID while a previous
+synthetic test instance remained open. After that instance closed, the next retry launched and
+reached its UI assertion. Explicit per-test app teardown now closes owned test
+instances; no global security setting has been changed by the runner.
+
+CI `34573732948` on `3b15d54` finalized iOS and visionOS successfully; Mac retained
+five setup UI failures and no unit-test failures. Four failed after a drive-row
+centre click did not navigate: the label's spacer lacked a hit area. The Mac row
+now defines a rectangular content shape. Native inspection confirmed that the
+Advanced arrow toggled but its label did not. The label now toggles the native expansion binding; a normal centre-click
+regression finalized successfully in `potassium-finish-ui-07.xcresult`. UI tests
+explicitly target the sibling build product, and launch/performance fixtures use synthetic state.
+Failure tree attachments are now scoped to the synthetic app window.
 
 The JSONL subscription baseline was established inside a later worker task, allowing
 an intervening append to be missed. It is now captured before subscription return.
 The real WAL-contention test now releases its lock on a dedicated queue, independent
 of the Swift executor blocked by the opener. Existing SQLite production behavior
 is unchanged. The updated cross-store observation and contention regressions pass
-in the local finalized Mac run above; simulator and CI confirmation remain pending.
+in the local finalized Mac run above and both finalized simulator runs. CI on
+`3b15d54` also passed these regressions.
 
 The retained 423-request working-set trace motivates a separately focused change:
 up to four independent folder reads may overlap, retaining ordered results and the
@@ -1600,5 +1615,13 @@ single guarded commit. New gated regressions require actual overlap, no prefix
 publication, complete identities/parentage/cursors, and cancellation or HTTP 429
 without cursor/watermark advancement. Retry-After metadata remains intact. A newer
 journal still supersedes the whole prepared batch; already-started reads are bounded
-by four. Compilation succeeded in the targeted build; test and live verification
-are pending. CR-022's latency limitation and CR-013's deletion guarantee remain open.
+by four. The new runtime passes all 381 unit tests on each requested simulator, with
+finalized `potassium-finish-ios-01.xcresult` and
+`potassium-finish-vision-sim-01.xcresult` bundles. The generic visionOS build also
+succeeded. CI unit coverage passes on all three platforms. Local Mac profile
+reruns and live verification of the latency correction remain pending. CR-022's
+latency limitation and CR-013's deletion guarantee remain open.
+
+The host-app package embedding change also passed the signed generic visionOS
+build (`potassium-finish-vision-build-02.log`). Full local Mac validation is running;
+this does not yet establish a passing live Finder suite.

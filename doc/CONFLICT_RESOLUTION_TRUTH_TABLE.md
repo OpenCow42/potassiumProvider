@@ -26,7 +26,10 @@ may already be in flight. `WorkingSetSyncTests` adds gated overlap, ordered stat
 partial-batch nonpublication, cancellation, and throttling regressions. The retained
 large-crawl failure motivates this latency correction; live mitigation of CR-022
 remains pending until a complete original-suite rerun. No conflict policy or
-permanent-delete guarantee changes.
+permanent-delete guarantee changes. The 381-test iOS and visionOS Simulator runs
+finalized successfully on this runtime (`potassium-finish-ios-01.xcresult` and
+`potassium-finish-vision-sim-01.xcresult`); CI `34573732948` also passes unit coverage
+on all platforms. Mac UI and original live acceptance remain pending.
 
 Diagnostic subscriptions now capture their initial file state before returning the
 stream, preventing an immediately appended event from being absorbed into a later
