@@ -17,15 +17,16 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
         var steps: [StabilityFinderStepResult] = []
         var observations: [StabilityFinderAPIObservation] = []
         var failed = false
+        let selection = FinderStabilityScenarioSelection(conflictCase: conflictCase,
+            includePermanentDeletion: context.includePermanentDeletion)
         for (index, scenario) in StabilityFinderScenario.allCases.enumerated() {
             let startedAt = Date(), correlationID = UUID()
             let actionStart = ui.actionCount
-            if let conflictCase, scenario != conflictCase.scenario {
-                steps.append(step(index, scenario, correlationID, startedAt, .skipped(.notSelectedForConflictProfile)))
-                continue
-            }
-            if failed {
-                steps.append(step(index, scenario, correlationID, startedAt, .skipped(.earlierStepFailure)))
+            if let reason = selection.skipReason(for: scenario, afterFailure: failed) {
+                steps.append(step(index, scenario, correlationID, startedAt, .skipped(reason)))
+                if reason == .permanentDeletionNotSelected {
+                    print("finder stability step 12/16: permanentDeletion deferred; continuing without re-trashing or deletion confirmation")
+                }
                 continue
             }
             var pointerActive = false

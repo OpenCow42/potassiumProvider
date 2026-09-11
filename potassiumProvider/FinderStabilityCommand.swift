@@ -60,7 +60,8 @@ enum FinderStabilityCommandLine {
                     )
                 case .run:
                     result = await executor.run(requestPermissions: options.requestPermissions,
-                        extensionLaunchMode: options.extensionLaunchMode)
+                        extensionLaunchMode: options.extensionLaunchMode,
+                        includePermanentDeletion: options.includePermanentDeletion)
                 case .conflicts:
                     result = await executor.conflicts(requestPermissions: options.requestPermissions, selectedCase: options.conflictCase, extensionLaunchMode: options.extensionLaunchMode)
                 case .recover:
@@ -88,7 +89,7 @@ enum FinderStabilityCommandLine {
           potassiumProvider --finder-stability provision --yes-live
           potassiumProvider --finder-stability watch
           potassiumProvider --finder-stability preflight [--request-permissions]
-          potassiumProvider --finder-stability run --yes-live [--extension-state fresh|running] [--request-permissions]
+          potassiumProvider --finder-stability run --yes-live [--include-permanent-deletion] [--extension-state fresh|running] [--request-permissions]
           potassiumProvider --finder-stability conflicts --yes-live [--case CASE] [--extension-state fresh|running] [--request-permissions]
           potassiumProvider --finder-stability recover --yes-recover
 
@@ -99,6 +100,7 @@ enum FinderStabilityCommandLine {
           --yes-live             Required for run, provision, or conflicts. Confirms use of the saved development account and disposable lab root.
           --yes-recover          Required for recover. Performs local evidence lifecycle recovery only.
           --request-permissions  Ask macOS to present Accessibility, screen recording, and Finder Automation consent prompts when needed.
+          --include-permanent-deletion  Include scenario 12 and its exact-item confirmation. Default: defer deletion and continue scenarios 13–16; exit 4 if all selected scenarios pass.
         """
     }
 }
@@ -117,6 +119,7 @@ struct FinderStabilityCommandOptions: Equatable, Sendable {
     let requestPermissions: Bool
     var conflictCase: StabilityLiveConflictCase? = nil
     var extensionLaunchMode: StabilityExtensionLaunchMode? = nil
+    var includePermanentDeletion = false
 }
 
 enum FinderStabilityArgumentParseResult: Equatable, Sendable {
@@ -178,6 +181,7 @@ enum FinderStabilityArgumentParser {
         var expectsCase = false
         var extensionLaunchMode: StabilityExtensionLaunchMode?
         var expectsLaunchMode = false
+        var includePermanentDeletion = false
         for argument in commandArguments {
             if expectsLaunchMode {
                 guard let value = StabilityExtensionLaunchMode(rawValue: argument), extensionLaunchMode == nil else { throw FinderStabilityArgumentError.unknownOption }
@@ -216,6 +220,9 @@ enum FinderStabilityArgumentParser {
                 confirmedLiveRun = true
             case "--yes-recover":
                 confirmedRecovery = true
+            case "--include-permanent-deletion":
+                guard !includePermanentDeletion else { throw FinderStabilityArgumentError.unknownOption }
+                includePermanentDeletion = true
             default:
                 throw FinderStabilityArgumentError.unknownOption
             }
@@ -223,6 +230,7 @@ enum FinderStabilityArgumentParser {
 
         guard let mode else { throw FinderStabilityArgumentError.missingMode }
         guard !expectsCase, !expectsLaunchMode,
+              !includePermanentDeletion || mode == .run,
               conflictCase == nil || mode == .conflicts,
               extensionLaunchMode == nil || mode == .conflicts || mode == .run else { throw FinderStabilityArgumentError.unknownOption }
         switch mode {
@@ -253,7 +261,8 @@ enum FinderStabilityArgumentParser {
         }
         return .execute(FinderStabilityCommandOptions(
             mode: mode,
-            requestPermissions: requestPermissions, conflictCase: conflictCase, extensionLaunchMode: extensionLaunchMode
+            requestPermissions: requestPermissions, conflictCase: conflictCase, extensionLaunchMode: extensionLaunchMode,
+            includePermanentDeletion: includePermanentDeletion
         ))
     }
 }
@@ -261,6 +270,7 @@ enum FinderStabilityArgumentParser {
 enum FinderStabilityCommandResult: Equatable, Sendable {
     case ready
     case completed
+    case completedWithDeferredDeletion
     case recovered
     case checkpoint
     case rejected
@@ -272,6 +282,8 @@ enum FinderStabilityCommandResult: Equatable, Sendable {
             0
         case .checkpoint:
             3
+        case .completedWithDeferredDeletion:
+            4
         case .rejected:
             2
         case .failed:
@@ -285,6 +297,8 @@ enum FinderStabilityCommandResult: Equatable, Sendable {
             "finder stability preflight: ready"
         case .completed:
             "finder stability run: evidence bundle sealed"
+        case .completedWithDeferredDeletion:
+            "finder stability run: 15 scenarios passed; permanent deletion deferred; evidence bundle sealed; full acceptance incomplete"
         case .recovered:
             "finder stability recovery: stale run preserved and released"
         case .checkpoint:
@@ -302,12 +316,18 @@ protocol FinderStabilityCommandExecuting {
     func preflight(requestPermissions: Bool) async -> FinderStabilityCommandResult
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult
     func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?, includePermanentDeletion: Bool) async -> FinderStabilityCommandResult
     func conflicts(requestPermissions: Bool, selectedCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult
     func recoverStaleRun() async -> FinderStabilityCommandResult
     func provision() async -> FinderStabilityCommandResult
     func watch() async -> FinderStabilityCommandResult
 }
 extension FinderStabilityCommandExecuting {
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?, includePermanentDeletion: Bool) async -> FinderStabilityCommandResult {
+        // Older injected executors cannot silently ignore explicit deletion selection.
+        guard !includePermanentDeletion else { return .rejected }
+        return await run(requestPermissions: requestPermissions, extensionLaunchMode: extensionLaunchMode)
+    }
     func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?) async -> FinderStabilityCommandResult {
         guard extensionLaunchMode == nil else { return .rejected }
         return await run(requestPermissions: requestPermissions)

@@ -4,6 +4,39 @@ import Testing
 
 @Suite("Stability Finder run model")
 struct StabilityFinderRunModelTests {
+    @Test func deferredDeletionIsVersionedAndNeverCountsAsPassed() throws {
+        var steps = passingSteps()
+        steps[11] = step(sequenceNumber: 12, scenario: .permanentDeletion,
+            outcome: .skipped(.permanentDeletionNotSelected), assertionOutcome: .notEvaluated(.stepSkipped))
+        let report = try StabilityFinderRunReport(schemaVersion: StabilityFinderRunReport.selectiveSchemaVersion,
+            correlationID: UUID(), startedAt: timestamp(0), finishedAt: timestamp(20),
+            preflightResults: passingPreflight(), stepResults: steps)
+        #expect(report.hasOnlyDeferredPermanentDeletion)
+        #expect(report.stepSummary.passed == 15 && report.stepSummary.skipped == 1)
+        #expect(try JSONDecoder().decode(StabilityFinderRunReport.self, from: JSONEncoder().encode(report)) == report)
+        for version in [StabilityFinderRunReport.currentSchemaVersion, StabilityFinderRunReport.liveSchemaVersion] {
+            #expect(throws: StabilityFinderRunValidationError.invalidStepDeferral(.permanentDeletion)) {
+                try StabilityFinderRunReport(schemaVersion: version, correlationID: UUID(),
+                    startedAt: timestamp(0), finishedAt: timestamp(20), preflightResults: passingPreflight(), stepResults: steps)
+            }
+            let historical = try StabilityFinderRunReport(schemaVersion: version, correlationID: UUID(),
+                startedAt: timestamp(0), finishedAt: timestamp(20), preflightResults: passingPreflight(), stepResults: passingSteps())
+            #expect(try JSONDecoder().decode(StabilityFinderRunReport.self, from: JSONEncoder().encode(historical)) == historical)
+            #expect(!historical.hasOnlyDeferredPermanentDeletion)
+        }
+        steps[12] = step(sequenceNumber: 13, scenario: .concurrentRemotePreserveBoth,
+            outcome: .failed(.operationFailed), assertionOutcome: .notEvaluated(.operationDidNotReachAssertion))
+        let failed = try StabilityFinderRunReport(schemaVersion: StabilityFinderRunReport.selectiveSchemaVersion,
+            correlationID: UUID(), startedAt: timestamp(0), finishedAt: timestamp(20), preflightResults: passingPreflight(), stepResults: steps)
+        #expect(!failed.hasOnlyDeferredPermanentDeletion)
+        steps[12] = step(sequenceNumber: 13, scenario: .concurrentRemotePreserveBoth,
+            outcome: .skipped(.permanentDeletionNotSelected), assertionOutcome: .notEvaluated(.stepSkipped))
+        #expect(throws: StabilityFinderRunValidationError.invalidStepDeferral(.concurrentRemotePreserveBoth)) {
+            try StabilityFinderRunReport(schemaVersion: StabilityFinderRunReport.selectiveSchemaVersion,
+                correlationID: UUID(), startedAt: timestamp(0), finishedAt: timestamp(20), preflightResults: passingPreflight(), stepResults: steps)
+        }
+    }
+
     @Test func standardSequenceCoversEveryPlannedScenario() {
         #expect(StabilityFinderScenario.allCases == [
             .enumerationAndChangeAnchors,

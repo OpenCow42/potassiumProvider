@@ -170,26 +170,20 @@ actor ConflictTestRemote: KDriveFileProviding {
 }
 
 actor ConflictTestGate {
-    private var reached = false
-    private var released = false
+    private let arrival = AsyncStream<Void>.makeStream()
+    private let releaseSignal = AsyncStream<Void>.makeStream()
     func arrive() async throws {
-        reached = true
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !released {
-            try Task.checkCancellation()
-            guard ContinuousClock.now < deadline else { throw URLError(.timedOut) }
-            try await Task.sleep(for: .milliseconds(2))
-        }
+        arrival.continuation.finish()
+        for await _ in releaseSignal.stream { }
+        // Cancellation and release can race. A released gate must never turn
+        // a cancelled request into a committed synthetic mutation.
         try Task.checkCancellation()
     }
     func waitUntilReached() async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !reached {
-            guard ContinuousClock.now < deadline else { throw URLError(.timedOut) }
-            try await Task.sleep(for: .milliseconds(2))
-        }
+        for await _ in arrival.stream { }
+        try Task.checkCancellation()
     }
-    func release() { released = true }
+    func release() { releaseSignal.continuation.finish() }
 }
 
 struct ConflictTestClient: Sendable {

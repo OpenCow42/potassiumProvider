@@ -59,7 +59,8 @@ data.
   uninstall script, reset modes, stale registration repair, and safety boundary.
 - [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md): schemes,
   dependencies, commands, and the opt-in live Finder suite using the saved
-  Keychain account and an isolated lab inside `Private`.
+  Keychain account and an isolated lab inside `Private`. Permanent deletion is
+  deferred by default; `--include-permanent-deletion` enables its confirmation.
 - [Stability implementation audit](doc/STABILITY_LOOP_AUDIT.md): retained live
   failures, focused fixes, finalized validation results, and remaining gates.
 

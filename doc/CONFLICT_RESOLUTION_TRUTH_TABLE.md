@@ -15,6 +15,26 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+2026-09-11 operator-directed selection: original Finder runs now defer permanent
+deletion before any re-trash or confirmation, then continue the independent
+preserve-both, transfer, working-set, and contextual-action scenarios. Explicit
+`--include-permanent-deletion` retains exact-item confirmation and `deleteItem`
+evidence. Report schema 3 records an untested deletion, never a pass; schemas 1/2
+remain readable. Selection, command forwarding, version compatibility, and strict
+telemetry regressions cover this change. CR-013 remains open and no deletion
+contract or conflict resolution policy changes.
+
+CI `34578669227` passed both Mac profiles and iOS, but the visionOS cancellation
+test threw a synthetic gate timeout (retained xcresult: 380 passed, one failed).
+The five-second fake replacement/arrival gates and worker polling are replaced
+with cancellable signals plus a one-minute overall test limit. Cancellation is
+still checked after gate release, the worker terminal is awaited, and server bytes,
+staged recovery bytes, no Trash mutation, and exactly one completion are required.
+New gate-ordering coverage checks release-before-arrival and cancellation/release
+races. The corrected suite finalized 475 passing Stability Mac tests and 384
+passing tests on each requested simulator, with zero failures/skips; the signed
+generic visionOS build also succeeded. Standard Mac UI validation remains pending.
+
 2026-09-11 continuation: working-set preparation now permits at most four
 independent materialized-folder reads at once using the existing
 InfomaniakConcurrency dependency. Results retain folder order and still commit in

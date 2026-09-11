@@ -995,7 +995,7 @@ public actor StabilityRunCoordinator {
         report: StabilityFinderRunReport
     ) throws {
         for step in report.stepResults where step.outcome == .passed {
-            if report.schemaVersion == StabilityFinderRunReport.liveSchemaVersion {
+            if report.schemaVersion >= StabilityFinderRunReport.liveSchemaVersion {
                 try StabilityLiveEvidenceValidator.validate(step: step, diagnostics: diagnostics)
                 continue
             }

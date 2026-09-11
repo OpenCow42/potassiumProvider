@@ -4,6 +4,25 @@ import Testing
 
 @Suite("Stability Finder evidence")
 struct StabilityFinderEvidenceTests {
+    @Test(arguments: [StabilityFinderRunReport.liveSchemaVersion, StabilityFinderRunReport.selectiveSchemaVersion])
+    func newerReportsCannotFallBackToHistoricalTelemetryRules(version: UInt16) async throws {
+        let coordinator = StabilityRunCoordinator(rootDirectoryURL: try temporaryDirectory())
+        let owned = try await coordinator.startOwnedRun(buildRevision: nil)
+        let historical = try passingReport()
+        let report = try StabilityFinderRunReport(schemaVersion: version, correlationID: historical.correlationID,
+            startedAt: historical.startedAt, finishedAt: historical.finishedAt,
+            preflightResults: historical.preflightResults, stepResults: historical.stepResults)
+        // Historical diagnostics lack item/build/UI evidence. Neither newer
+        // schema may accept them, even if all old operation mappings match.
+        try await recordPassingDiagnostics(report, in: owned.run)
+        await #expect(throws: StabilityLiveEvidenceError.self) {
+            try await coordinator.writeFinderEvidence(ownedRun: owned, report: report,
+                observations: passingObservations(for: report))
+        }
+        #expect(!FileManager.default.fileExists(atPath: owned.run.finderReportURL.path))
+        #expect(!FileManager.default.fileExists(atPath: owned.run.summaryURL.path))
+    }
+
     @Test func finderRunOwnershipAndStepCorrelationAreExclusive() async throws {
         let root = try temporaryDirectory()
         let coordinator = StabilityRunCoordinator(rootDirectoryURL: root)

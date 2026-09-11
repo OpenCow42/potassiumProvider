@@ -193,6 +193,8 @@ scripts/run-finder-stability.sh --provision --yes-live
 scripts/run-finder-stability.sh --preflight --request-permissions
 # Reuse the installed signed Stability bundle without compiling again.
 scripts/run-finder-stability.sh --run --yes-live --request-permissions
+# Optional full acceptance: also exercise permanent deletion with exact-item confirmation.
+scripts/run-finder-stability.sh --run --yes-live --include-permanent-deletion
 scripts/run-finder-stability.sh --app "$HOME/Applications/Potassium Stability.app" --watch
 scripts/run-finder-stability.sh --recover-stale-run --yes-recover
 ```
@@ -202,7 +204,9 @@ log, giving the standalone runner its own permission identity. Credentials remai
 in the app's Keychain flow; OAuth refresh also stays inside the app. No credential,
 account ID, remote URL, or root path is accepted as a runner argument. Exit 0 means
 ready or fully passed (according to the chosen mode), 3 means an unresolved
-checkpoint, 2 a safety rejection, and 1 failure or incomplete evidence.
+checkpoint, 2 a safety rejection, and 1 failure or incomplete evidence. Exit 4 means
+the 15 selected scenarios passed and permanent deletion was deliberately deferred;
+it is a completed selection with a sealed report, not full sixteen-scenario acceptance.
 
 The default install is `~/Applications/Potassium Stability.app`; `--build` is
 explicit after the first install, refuses a running containing app, retains a
@@ -246,8 +250,12 @@ file/directory creation, edit/upload, rename, move, trash, restore, permanent
 selected-item deletion, concurrent preserve-both, cancellation/progress, actual
 working-set membership, and contextual actions. Trash expects `modifyItem`;
 permanent deletion expects `deleteItem`. Restore and deletion require an exactly
-identified provider-managed trashed fixture. Deletion additionally pauses for
-confirmation of that generated fixture, then rebinds it. Empty Trash is never used.
+identified provider-managed trashed fixture. Scenario 12 is deferred by default,
+before re-trashing the restored fixture or presenting a confirmation. Scenarios
+13–16 continue with their independent fixtures. `--include-permanent-deletion`
+selects scenario 12 and its exact-fixture confirmation, followed by rebinding.
+The flag is accepted only with `--run`; it does not grant confirmation itself.
+Empty Trash is never used.
 For a bound trashed fixture, the runner navigates its owned Finder window to the
 exact parent with Finder's native Apple Events target command, verifies that
 destination, and rebinds the item/domain before selecting its contextual action.
@@ -287,11 +295,13 @@ unrelated window. Monitoring continues through closure and callback settlement.
 Cleanup failures remain visible and prevent certification. Started work must
 settle before final sealing.
 
-Version 2 reports require UI observations, fresh remote verification, item-specific
+Version 2 and 3 reports require UI observations, fresh remote verification, item-specific
 spans, and the expected extension code hash/process identity. Missing starts,
 telemetry, conflicting terminals, cached hydration, root-only working-set evidence,
-and untriggered conflict/cancellation cannot certify a pass. Version 1 reports remain
-readable as historical evidence. A successful acceptance requires all 16 scenarios
+and untriggered conflict/cancellation cannot certify a pass. Version 3 adds the
+scenario-12-only skip reason `permanentDeletionNotSelected`; its assertions remain
+not evaluated. Versions 1 and 2 remain readable as historical evidence. A successful
+full acceptance requires all 16 scenarios, including explicitly selected deletion,
 on both a fresh extension and an already running extension; unit tests and permission
 checkpoints do not establish live acceptance. See `STABILITY_LOOP_AUDIT.md` for the
 current completed evidence and outstanding live coverage.

@@ -5,6 +5,20 @@ import PotassiumProviderCore
 import Testing
 
 struct ConflictCallbackLifecycleTests {
+    @Test(.timeLimit(.minutes(1))) func gatePreservesReleaseAndCancellationOrdering() async throws {
+        let earlyRelease = ConflictTestGate()
+        await earlyRelease.release()
+        try await earlyRelease.arrive()
+        try await earlyRelease.waitUntilReached()
+        let cancelled = ConflictTestGate()
+        let worker = Task { try await cancelled.arrive() }
+        defer { worker.cancel() }
+        try await cancelled.waitUntilReached()
+        worker.cancel()
+        await cancelled.release()
+        await #expect(throws: CancellationError.self) { try await worker.value }
+    }
+
     @Test(arguments: [401, 403, 408, 429, 507])
     func productionErrorMappingIsRecoverableAndDoesNotLoseSafeStatus(status: Int) {
         let result = providerErrorMapping(APIClientError.unacceptableStatusCode(status, body: "synthetic"))
@@ -27,7 +41,7 @@ struct ConflictCallbackLifecycleTests {
         #expect((providerErrorMapping(URLError(.notConnectedToInternet)).mappedError as NSError).code == NSFileProviderError.serverUnreachable.rawValue)
     }
 
-    @Test func cancellingActualMutationSequencePreventsLateSuccessAndServerMutation() async throws {
+    @Test(.timeLimit(.minutes(1))) func cancellingActualMutationSequencePreventsLateSuccessAndServerMutation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let remote = try ConflictTestRemote(directory: directory.appendingPathComponent("server"))
@@ -57,8 +71,7 @@ struct ConflictCallbackLifecycleTests {
         await lifecycle.finish(markProgressComplete: true) { result.record("late-success") }
         #expect(result.values == ["cancelled"])
         #expect(progress.completedUnitCount == 0)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !result.workerFinished, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+        await result.waitForWorker()
         #expect(result.workerFinished)
         #expect(await remote.operations() == [])
         #expect(await remote.snapshot().trash.isEmpty)
@@ -72,7 +85,12 @@ private final class CallbackOutcomeRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var outcomes: [String] = []
     private var finished = false
-    func finishWorker() { lock.withLock { finished = true } }
+    private let workerTerminal = AsyncStream<Void>.makeStream()
+    func finishWorker() {
+        lock.withLock { finished = true }
+        workerTerminal.continuation.finish()
+    }
+    func waitForWorker() async { for await _ in workerTerminal.stream { } }
     var workerFinished: Bool { lock.withLock { finished } }
     func record(_ value: String) { lock.withLock { outcomes.append(value) } }
     var values: [String] { lock.withLock { outcomes } }

@@ -133,7 +133,12 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         await run(requestPermissions: requestPermissions, conflictCase: nil, extensionLaunchMode: extensionLaunchMode)
     }
 
-    private func run(requestPermissions: Bool, conflictCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode? = nil) async -> FinderStabilityCommandResult {
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?, includePermanentDeletion: Bool) async -> FinderStabilityCommandResult {
+        await run(requestPermissions: requestPermissions, conflictCase: nil, extensionLaunchMode: extensionLaunchMode,
+            includePermanentDeletion: includePermanentDeletion)
+    }
+
+    private func run(requestPermissions: Bool, conflictCase: StabilityLiveConflictCase?, extensionLaunchMode: StabilityExtensionLaunchMode? = nil, includePermanentDeletion: Bool = false) async -> FinderStabilityCommandResult {
         let reportStartedAt = Date()
         let runCoordinator: StabilityRunCoordinator
         let ownedRun: StabilityOwnedRunHandle
@@ -192,7 +197,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
                 preflightCommandResult = FinderStabilityPreflightEvaluator.commandResult(for: preflight)
             } catch { preflightCommandResult = .rejected; break }
         }
-        let context: FinderStabilityLiveContext
+        var context: FinderStabilityLiveContext
         var preparationStage = StabilityLaunchPreparationFailure.Stage.launchPreparation
         do {
             // Reconstruct after the run starts so typed network spans bind to
@@ -206,6 +211,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
                 ownedRun: ownedRun,
                 runCoordinator: runCoordinator
             )
+            context.includePermanentDeletion = includePermanentDeletion
         } catch {
             StabilityLaunchPreparationFailure.record(stage: preparationStage, error: error, run: ownedRun.run)
             // Never seal a run without its required Finder report. The active
@@ -232,7 +238,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
         var candidateReport: StabilityFinderRunReport?
         do {
             let report = try StabilityFinderRunReport(
-                schemaVersion: StabilityFinderRunReport.liveSchemaVersion,
+                schemaVersion: StabilityFinderRunReport.selectiveSchemaVersion,
                 correlationID: UUID(),
                 startedAt: reportStartedAt,
                 finishedAt: Date(),
@@ -274,6 +280,7 @@ final class SystemFinderStabilityCommandExecutor: FinderStabilityCommandExecutin
             if let conflictCase {
                 guard report.stepResults.first(where: { $0.scenario == conflictCase.scenario })?.outcome == .passed else { return .failed }
             } else {
+                if report.hasOnlyDeferredPermanentDeletion { return .completedWithDeferredDeletion }
                 guard report.stepSummary.passed == StabilityFinderScenario.allCases.count else { return .failed }
             }
             return .completed
@@ -428,6 +435,7 @@ struct FinderStabilityLiveContext {
     let verifySafety: @MainActor () async throws -> Void
     let beginStep: @MainActor (UUID) async throws -> Void
     let endStep: @MainActor (UUID) async throws -> Void
+    var includePermanentDeletion = false
 }
 
 @MainActor

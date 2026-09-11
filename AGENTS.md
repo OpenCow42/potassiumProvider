@@ -158,6 +158,9 @@ app.
 - The current account is an operator-authorized lab account. Stability may reuse
   its existing OAuth Keychain login as well as manually entered tokens; never
   extract a credential into a command, fixture, environment variable, or log.
+- Live Finder runs defer permanent deletion by default and continue later scenarios.
+  Use `--include-permanent-deletion` only when requested; retain exact-item
+  confirmation and never count deferred deletion as full-suite acceptance.
 - Prefer typed request/response flows from Potassium products over app-local
   ad hoc HTTP construction.
 

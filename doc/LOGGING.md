@@ -102,6 +102,14 @@ request-field classes from a 400 or 422 response; messages, values, and unknown 
 are discarded. Version 1 Finder reports and older diagnostic records remain
 readable. New live reports require the newer evidence fields.
 
+Finder report version 3 adds `skipped(permanentDeletionNotSelected)`, valid only for
+scenario 12. Its UI/server assertions are not evaluated, and it contributes zero
+passes. All other live evidence requirements remain those of version 2. Historical
+versions 1/2 still decode; they cannot encode this new selection reason. A sealed
+15-pass/one-deferred report produces exit 4 and explicitly says full acceptance is
+incomplete. Missing telemetry and failed later steps still produce failure, not
+that completed-selection status.
+
 `concurrentSnapshot` identifies a rejected snapshot compare-and-swap without
 exporting the error's domain/container identifiers. Bounded working-set retries
 emit this class on nonterminal checkpoints; exhaustion emits a failed terminal.

@@ -1714,3 +1714,46 @@ locally, not its comparability with the former launch signpost. The full Stabili
 profile then finalized **470 passed, zero failed/skipped** in
 `potassium-finish-stability-mac-03.xcresult`, including the deletion-dialog regressions.
 The ordinary signed app and live rerun are next.
+
+### Optional permanent deletion and continuation (2026-09-11)
+
+The operator requested that the deletion checkpoint become optional. `--run` now
+defers scenario 12 before re-trashing the restored fixture and proceeds to 13–16.
+`--include-permanent-deletion` explicitly selects the existing exact-item prompt;
+it never serves as confirmation. Report schema 3 records
+`skipped(permanentDeletionNotSelected)` with unevaluated assertions. Fifteen
+verified scenarios return exit 4 and cannot establish full sixteen-scenario
+acceptance. Historical reports remain readable, and schema 3 uses the same strict
+live telemetry validation as schema 2. Finder/TextEdit ownership cleanup remains
+mandatory. CR-013 stays open.
+
+The previous fresh run `a5494939-1e92-4ddd-8d35-cd7de1d9300d` had already sealed
+before this selection change: 11 passed, one failed, four skipped. The corrected
+display-name matcher found the exact native confirmation, but permanent deletion
+still timed out with no `deleteItem` callback in its retained timeline. The earliest
+unresolved divergence is now after that matched dialog; the underlying cause is
+not established. This remains failed deletion evidence, independent of the newly
+requested default deferral. Its report, timeline, and screenshots are preserved.
+
+Focused selection/report/command tests finalized 40 passed in
+`potassium-optional-deletion-tests-01.xcresult`. Expanded coverage then finalized
+475 passed, zero failed/skipped in `potassium-optional-deletion-stability-mac-01.xcresult`.
+This includes schema-3 rejection of historical telemetry, skip continuation,
+explicit option forwarding, and cancellation-gate ordering. Other destinations
+and the ordinary signed live rerun are pending.
+
+CI `34578669227` passed both Mac profiles and iOS. The retained visionOS bundle
+contains 380 passed and one failure: the callback cancellation test threw
+`NSURLErrorDomain -1001` from its synthetic five-second gate. Explicit cancellable
+arrival/release/worker-terminal signals now replace these scheduling timeouts; a
+one-minute overall test deadline still prevents indefinite waiting. The real
+mutation executor, exactly-one completion, retained staging bytes, source bytes,
+and absence of server/Trash mutations remain asserted. Production behavior is
+unchanged; the simulator rerun is pending.
+
+The expanded iPhone 17/iOS 26.5 and Apple Vision Pro/visionOS 26.5 runs both
+finalized **384 passed, zero failed/skipped** in
+`potassium-optional-deletion-ios-01.xcresult` and
+`potassium-optional-deletion-vision-sim-01.xcresult`. The signed generic visionOS
+build also succeeded (`potassium-optional-deletion-vision-build-01.log`). The
+standard Mac UI suite is still running; no live suite is active during validation.

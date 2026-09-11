@@ -129,6 +129,7 @@ public enum StabilityFinderStepSkipReason: String, Codable, Equatable, Hashable,
     case earlierStepFailure
     case earlierStepCheckpoint
     case notSelectedForConflictProfile
+    case permanentDeletionNotSelected
 }
 
 /// Exactly one case is persisted for every planned step.
@@ -233,6 +234,7 @@ public enum StabilityFinderRunValidationError: Error, Codable, Equatable, Sendab
         assertionClass: StabilityFinderAssertionClass
     )
     case assertionOutcomeMismatch(StabilityFinderScenario)
+    case invalidStepDeferral(StabilityFinderScenario)
     case invalidStepCheckpoint(
         scenario: StabilityFinderScenario,
         reason: StabilityFinderCheckpointReason
@@ -245,6 +247,16 @@ public enum StabilityFinderRunValidationError: Error, Codable, Equatable, Sendab
 public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
     public static let currentSchemaVersion: UInt16 = 1
     public static let liveSchemaVersion: UInt16 = 2
+    public static let selectiveSchemaVersion: UInt16 = 3
+
+    /// A completed selection, never full sixteen-scenario acceptance. Evidence
+    /// must still be validated and sealed before publishing this status.
+    public var hasOnlyDeferredPermanentDeletion: Bool {
+        preflightResults.allSatisfy { $0.outcome == .passed } &&
+        stepResults.allSatisfy {
+            $0.outcome == ($0.scenario == .permanentDeletion ? .skipped(.permanentDeletionNotSelected) : .passed)
+        }
+    }
 
     public let schemaVersion: UInt16
     public let correlationID: UUID
@@ -264,7 +276,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         preflightResults: [StabilityFinderPreflightResult],
         stepResults: [StabilityFinderStepResult]
     ) throws {
-        guard [Self.currentSchemaVersion, Self.liveSchemaVersion].contains(schemaVersion) else {
+        guard [Self.currentSchemaVersion, Self.liveSchemaVersion, Self.selectiveSchemaVersion].contains(schemaVersion) else {
             throw StabilityFinderRunValidationError.unsupportedSchemaVersion(schemaVersion)
         }
         guard finishedAt >= startedAt else {
@@ -279,6 +291,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         )
         try Self.validateSteps(
             stepResults,
+            schemaVersion: schemaVersion,
             runStartedAt: startedAt,
             runFinishedAt: finishedAt
         )
@@ -330,7 +343,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
             forKey: .stepSummary
         )
 
-        guard [Self.currentSchemaVersion, Self.liveSchemaVersion].contains(schemaVersion) else {
+        guard [Self.currentSchemaVersion, Self.liveSchemaVersion, Self.selectiveSchemaVersion].contains(schemaVersion) else {
             throw StabilityFinderRunValidationError.unsupportedSchemaVersion(schemaVersion)
         }
         guard finishedAt >= startedAt else {
@@ -344,6 +357,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         )
         try Self.validateSteps(
             stepResults,
+            schemaVersion: schemaVersion,
             runStartedAt: startedAt,
             runFinishedAt: finishedAt
         )
@@ -436,6 +450,7 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
 
     private static func validateSteps(
         _ results: [StabilityFinderStepResult],
+        schemaVersion: UInt16,
         runStartedAt: Date,
         runFinishedAt: Date
     ) throws {
@@ -450,6 +465,10 @@ public struct StabilityFinderRunReport: Codable, Equatable, Sendable {
         var seenCorrelations = Set<UUID>()
         var previousResult: StabilityFinderStepResult?
         for (index, result) in results.enumerated() {
+            if result.outcome == .skipped(.permanentDeletionNotSelected),
+               schemaVersion < Self.selectiveSchemaVersion || result.scenario != .permanentDeletion {
+                throw StabilityFinderRunValidationError.invalidStepDeferral(result.scenario)
+            }
             let expectedScenario = StabilityFinderScenario.allCases[index]
             guard result.scenario == expectedScenario else {
                 throw StabilityFinderRunValidationError.stepOutOfSequence(

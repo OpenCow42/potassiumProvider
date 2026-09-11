@@ -8,6 +8,51 @@ import Testing
 @MainActor
 @Suite("Finder Stability command")
 struct FinderStabilityCommandTests {
+    @Test func permanentDeletionIsExplicitAndRunScoped() async throws {
+        let prefix = ["app", "--finder-stability"]
+        #expect(try FinderStabilityArgumentParser.parse(arguments: prefix + ["run", "--yes-live"]) ==
+            .execute(.init(mode: .run, requestPermissions: false, includePermanentDeletion: false)))
+        #expect(try FinderStabilityArgumentParser.parse(arguments: prefix + ["run", "--yes-live", "--include-permanent-deletion"]) ==
+            .execute(.init(mode: .run, requestPermissions: false, includePermanentDeletion: true)))
+        for args in [["preflight"], ["conflicts", "--yes-live"], ["provision", "--yes-live"], ["watch"],
+                     ["recover", "--yes-recover"], ["run", "--yes-live", "--include-permanent-deletion"]] {
+            #expect(throws: FinderStabilityArgumentError.unknownOption) {
+                try FinderStabilityArgumentParser.parse(arguments: prefix + args + ["--include-permanent-deletion"])
+            }
+        }
+        let executor = FinderStabilityCommandExecutorFake(preflightResult: .ready)
+        for include in [false, true] {
+            let code = await FinderStabilityCommandLine.run(arguments: prefix + ["run", "--yes-live"] +
+                (include ? ["--include-permanent-deletion"] : []), executor: executor)
+            #expect(code == (include ? 0 : 4))
+        }
+        #expect(executor.deletionSelections == [false, true])
+        #expect(FinderStabilityCommandResult.completedWithDeferredDeletion.exitCode == 4)
+    }
+
+    @Test func deferralContinuesRemainingScenariosWithoutInvokingDeletion() {
+        let selection = FinderStabilityScenarioSelection()
+        var invoked: [StabilityFinderScenario] = []
+        var skipped: [StabilityFinderScenario] = []
+        for scenario in StabilityFinderScenario.allCases {
+            if let reason = selection.skipReason(for: scenario, afterFailure: false) {
+                #expect(reason == .permanentDeletionNotSelected)
+                skipped.append(scenario)
+            } else { invoked.append(scenario) }
+        }
+        #expect(skipped == [.permanentDeletion])
+        #expect(invoked.count == 15)
+        #expect(Array(invoked.suffix(4)) == [.concurrentRemotePreserveBoth, .cancellationAndProgress,
+            .workingSetRefresh, .supportedContextualActions])
+        let full = FinderStabilityScenarioSelection(includePermanentDeletion: true)
+        #expect(StabilityFinderScenario.allCases.allSatisfy { full.skipReason(for: $0, afterFailure: false) == nil })
+        #expect(selection.skipReason(for: .permanentDeletion, afterFailure: true) == .earlierStepFailure)
+        #expect(selection.skipReason(for: .concurrentRemotePreserveBoth, afterFailure: true) == .earlierStepFailure)
+        let conflict = FinderStabilityScenarioSelection(conflictCase: .contentAfterPreflight)
+        #expect(conflict.skipReason(for: .permanentDeletion, afterFailure: false) == .notSelectedForConflictProfile)
+        #expect(conflict.skipReason(for: .concurrentRemotePreserveBoth, afterFailure: false) == nil)
+    }
+
     @Test func conflictProfileRequiresLiveOptInAndExactCaseSelection() throws {
         #expect(throws: FinderStabilityArgumentError.liveConfirmationRequired) {
             try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability", "conflicts"])
@@ -418,6 +463,7 @@ private final class FinderStabilityCommandExecutorFake: FinderStabilityCommandEx
     let preflightResult: FinderStabilityCommandResult
     var preflightRequests: [Bool] = []
     var runRequests: [Bool] = []
+    var deletionSelections: [Bool] = []
     var recoveryRequestCount = 0
 
     init(preflightResult: FinderStabilityCommandResult) {
@@ -432,6 +478,12 @@ private final class FinderStabilityCommandExecutorFake: FinderStabilityCommandEx
     func run(requestPermissions: Bool) async -> FinderStabilityCommandResult {
         runRequests.append(requestPermissions)
         return .completed
+    }
+
+    func run(requestPermissions: Bool, extensionLaunchMode: StabilityExtensionLaunchMode?, includePermanentDeletion: Bool) async -> FinderStabilityCommandResult {
+        runRequests.append(requestPermissions)
+        deletionSelections.append(includePermanentDeletion)
+        return includePermanentDeletion ? .completed : .completedWithDeferredDeletion
     }
 
     func recoverStaleRun() async -> FinderStabilityCommandResult {

@@ -5,6 +5,12 @@ persistent clients, production callback executors, and separately opted-in Finde
 races. `CONFLICT_RESOLUTION_TRUTH_TABLE.md` remains normative. Passing a model test
 is not proof of a live server guarantee or a complete Finder acceptance run.
 
+Original-suite runs now defer scenario 12 (permanent deletion) by default and
+continue the independent conflict and remaining scenarios. Add
+`--include-permanent-deletion` to `--run` to select its exact-item confirmation.
+Deferral is untested coverage and cannot satisfy sixteen-scenario acceptance.
+Independent `--conflicts` selection is unchanged.
+
 ## Deterministic coverage
 
 `ConflictCase` assigns stable IDs, engine, ordering, expected resolution, and
@@ -174,10 +180,11 @@ run to a pass. New gated folder-read tests verify bounded overlap, a single comp
 commit, cancellation, and Retry-After-preserving throttling.
 
 These conflict profiles do not certify the separate sixteen-scenario suite. Its
-complete fresh and already-running acceptance remains open; earlier runs verified
-ten scenarios through Trash, and the strengthened Restore path and subsequent
-scenarios still need complete verification. Large materialized-set latency remains
-unresolved. Live results are in `STABILITY_LOOP_AUDIT.md`.
+complete fresh and already-running acceptance remains open. The latest sealed
+fresh run verified eleven scenarios through the strengthened Restore path, then
+failed while matching Finder's hidden-extension deletion confirmation. The focused
+correction has unit coverage and is undergoing a complete live rerun. Large
+materialized-set latency remains an open limitation. Live results are in `STABILITY_LOOP_AUDIT.md`.
 
 Keep permanent-delete CR-013 open. The six conflict cases do not permanently delete
 fixtures. Permanent deletion in the original suite still requires exact generated

@@ -13,6 +13,7 @@ CONFIRMED_LIVE=0
 CONFIRMED_RECOVERY=0
 CONFLICT_CASE=""
 EXTENSION_STATE=""
+INCLUDE_PERMANENT_DELETION=0
 
 usage() {
   cat <<'USAGE'
@@ -26,6 +27,7 @@ Options:
   --provision             Create or resume the isolated lab inside Private using the saved Keychain account.
   --watch                 Show sanitized active-run diagnostics without mutation.
   --run                   Execute the verified disposable-root scenario sequence.
+  --include-permanent-deletion  Include scenario 12 and its exact-item confirmation; requires --run. Default: defer deletion and continue 13–16.
   --conflicts             Run independent conflict cases, each with fresh fixtures and evidence.
   --case CASE             Select one conflict case; requires --conflicts.
   --extension-state MODE  Require fresh or running extension evidence for --run or --conflicts.
@@ -37,6 +39,7 @@ Options:
 
 Credentials stay in the app's existing OAuth or manual-token Keychain flow.
 The installed Stability app is reused unless --build is supplied or it is absent.
+Exit 4 means all 15 selected scenarios passed with deletion deferred, not full acceptance.
 USAGE
 }
 
@@ -72,6 +75,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --conflicts)
       MODE="conflicts"
+      shift
+      ;;
+    --include-permanent-deletion)
+      if [[ "$INCLUDE_PERMANENT_DELETION" -eq 1 ]]; then exit 2; fi
+      INCLUDE_PERMANENT_DELETION=1
       shift
       ;;
     --extension-state)
@@ -112,6 +120,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$INCLUDE_PERMANENT_DELETION" -eq 1 && "$MODE" != "run" ]]; then
+  echo "error: --include-permanent-deletion requires --run" >&2
+  exit 2
+fi
 if [[ -n "$EXTENSION_STATE" && ( ( "$MODE" != "conflicts" && "$MODE" != "run" ) || ( "$EXTENSION_STATE" != "fresh" && "$EXTENSION_STATE" != "running" ) ) ]]; then
   echo "error: --extension-state requires --run or --conflicts and fresh or running" >&2
   exit 2
@@ -220,6 +232,7 @@ if [[ ! -x "$EXECUTABLE_PATH" ]]; then
 fi
 
 COMMAND_ARGS=(--finder-stability "$MODE")
+if [[ "$INCLUDE_PERMANENT_DELETION" -eq 1 ]]; then COMMAND_ARGS+=(--include-permanent-deletion); fi
 if [[ -n "$EXTENSION_STATE" ]]; then COMMAND_ARGS+=(--extension-state "$EXTENSION_STATE"); fi
 if [[ -n "$CONFLICT_CASE" ]]; then COMMAND_ARGS+=(--case "$CONFLICT_CASE"); fi
 if [[ "$MODE" == "run" || "$MODE" == "provision" || "$MODE" == "conflicts" ]]; then
@@ -255,6 +268,7 @@ if [[ "$LAUNCH_STATUS" -ne 0 ]]; then exit "$LAUNCH_STATUS"; fi
 # open returns launch status, not the app's exit code. Interpret only the exact
 # closed terminal messages emitted by FinderStabilityCommandResult.
 if /usr/bin/grep -q '^finder stability run: evidence bundle sealed$' "$RUN_LOG"; then exit 0; fi
+if /usr/bin/grep -q '^finder stability run: 15 scenarios passed; permanent deletion deferred; evidence bundle sealed; full acceptance incomplete$' "$RUN_LOG"; then exit 4; fi
 if /usr/bin/grep -q '^finder stability preflight: ready$' "$RUN_LOG"; then exit 0; fi
 if /usr/bin/grep -q '^finder stability checkpoint:' "$RUN_LOG"; then exit 3; fi
 if /usr/bin/grep -q '^finder stability rejected:' "$RUN_LOG"; then exit 2; fi

@@ -119,7 +119,7 @@ enum ConflictCase: String, CaseIterable, Sendable {
 }
 
 struct ConflictMatrixTests {
-    @Test(arguments: ConflictCase.plaintextCases)
+    @Test(.timeLimit(.minutes(1)), arguments: ConflictCase.plaintextCases)
     func twoPersistentClientsResolve(_ scenario: ConflictCase) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
