@@ -188,6 +188,7 @@ if [[ "$BUILD_APP" -eq 1 ]]; then
     -scheme potassiumProvider-Stability \
     -configuration Stability \
     -destination 'platform=macOS' \
+    -allowProvisioningUpdates \
     -derivedDataPath "$DERIVED_DATA_PATH"
   BUILT_APP_PATH="$DERIVED_DATA_PATH/Build/Products/Stability/potassiumProvider.app"
   /usr/bin/codesign --verify --deep --strict "$BUILT_APP_PATH"

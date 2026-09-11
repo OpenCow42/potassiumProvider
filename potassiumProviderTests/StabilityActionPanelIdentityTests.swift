@@ -20,9 +20,13 @@ struct StabilityActionPanelIdentityTests {
     }
 
     @Test func blockedLookupExpiresWithoutWaitingForTheDiskReply() async {
+        // Hold the synchronous lookup until the waiter has actually expired.
+        // Relative sleeps raced under the full parallel CI test load.
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
         await #expect(throws: StabilityDeadlineError.expired) {
             try await StabilityActionPanelIdentity.resolve(for: "42", timeout: .milliseconds(10)) { _ in
-                Thread.sleep(forTimeInterval: 0.1)
+                release.wait()
                 return UUID()
             }
         }

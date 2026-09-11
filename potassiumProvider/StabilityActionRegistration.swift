@@ -10,6 +10,7 @@ enum StabilityActionRegistrationError: Error {
 @MainActor
 enum StabilityActionRegistration {
     static func verify(appURL: URL) async throws {
+        try StabilityAppGroupProvisioning.verify(appURL: appURL)
         let extensionURL = appURL.appendingPathComponent("Contents/PlugIns/potassiumProviderActions.appex")
         guard let identifier = Bundle(url: extensionURL)?.bundleIdentifier else { throw StabilityActionRegistrationError.unavailable }
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("stability-registration-\(UUID().uuidString)")

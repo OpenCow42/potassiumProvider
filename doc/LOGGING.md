@@ -416,3 +416,15 @@ discovery now runs off the UI actor with bounded waiting and publishes a cached
 value; SwiftUI layout and AX binding perform no shared-store I/O. Done can dismiss
 a loading panel, while mutation-in-progress still disables it. Consent remains a
 system requirement; a blocked lookup or unbound panel cannot count as a pass.
+
+
+Stability preflight qualifies shared-container provisioning for the installed app,
+replicated extension, and Actions extension. A valid signature is insufficient:
+each embedded profile must authorize the signed explicit application identity and
+existing App Group, and be unexpired. Rejection reports only the affected target
+role; profile contents, developer identifiers and certificates are never exported.
+Both extension targets enable `REGISTER_APP_GROUPS = YES`. `--build` permits
+Xcode's normal automatic provisioning refresh using its saved developer account.
+See [Apple's container authorization guidance](https://developer.apple.com/documentation/xcode/accessing-app-group-containers).
+Repeated data-access prompts require inspecting provisioning before requesting
+another permission grant; do not reset TCC or migrate the app/Keychain group.

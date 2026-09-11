@@ -15,6 +15,15 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+Actions access in the sealed `a961bf5` retry remained blocked before API work
+(13 passed, two failed, deletion deferred). Its embedded profile lacked the shared
+App Groups grant despite claiming it in the signature. Both extensions now enable
+profile registration; installed-bundle preflight rejects unauthorized group claims,
+identity mismatches and expired/malformed profiles. This fixes configuration and
+strengthens evidence qualification without changing sharing/conflict policy. The
+alias-timeout regression uses an explicit held-read gate after full Mac CI exposed
+its relative-sleep race. Live confirmation remains required; CR-013 stays open.
+
 The `2ebe661` retry encountered a confirmed macOS data-access prompt while the
 Actions view synchronously read its diagnostic run alias. The operator accepted
 it. Stability now resolves that alias off the UI actor with bounded/cancellable

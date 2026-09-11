@@ -2211,3 +2211,53 @@ Apple Vision Pro/visionOS 26.5 Simulator, all with zero failures/skips. Bundles:
 The generic visionOS build passed (`potassium-panel-lookup-vision-build-01.log`).
 Computer use confirmed no Actions window remained after the operator accepted the
 prompt and the previous run finished. A new signed live retry is still required.
+
+
+### Actions shared-container provisioning correction (2026-09-11)
+
+Fresh `a961bf5` run `2653b37a-79e5-431d-9a5d-537967bc5e53` sealed
+**13 passed, two failed, one deferred**. The original opaque-identifier error did
+not recur. The next earliest divergence was an Actions worker blocked in `open`
+while loading `DomainConfigurationFileStore`, before an Actions API span or share
+mutation. The earlier `2ebe661` prompt was explicitly accepted by the operator;
+that grant did not establish access for this newer build. Failed evidence and
+fixtures remain retained. Cancellation was again unexercised.
+
+Read-only inspection found the installed Actions profile was a wildcard profile
+without any App Groups grant. Its signature claimed the existing shared group.
+The app and replicated extension profiles did authorize that group. All three
+were developer-signed with embedded, unexpired profiles and expanded application
+identifiers. Both extension targets omitted `REGISTER_APP_GROUPS`, which only the
+containing app enabled. Classification: environment/build configuration; high
+confidence in the provisioning mismatch, pending live proof that correcting it
+resolves the prompt. Apple documents this exact shared-container authorization
+requirement in [Accessing app group containers](https://developer.apple.com/documentation/xcode/accessing-app-group-containers).
+
+Both extensions now register their existing group for all configurations. The
+ordinary Stability build allows Xcode to refresh provisioning through its saved
+developer account. No group/Keychain migration or privacy-permission reset occurs.
+Preflight checks the installed app and both extension signatures, explicit matching
+application/team claims, expiration, and exact shared-group grants before lab
+access. It emits only a target role and remediation text. This qualification does
+not replace macOS CMS trust, device eligibility, or runtime entitlement validation.
+Negative tests reject missing/different/wildcard grants, mismatched or unexpanded
+identities, absent signature claims, malformed and expired profiles.
+
+CI `34600310726` passed iOS and visionOS but exposed a timeout-test scheduling
+race on Mac: a 100 ms simulated file read could win against a delayed 10 ms timer
+under full parallel load. The regression now holds that synchronous read behind
+a test-only gate until the waiter actually expires. This changes test scheduling,
+not production deadlines. Local build attempt `potassium-group-provisioning-stability-mac-01`
+retains an initial compile error (optional CMS byte pointer), corrected before rerun.
+Finalized validation: `potassium-group-provisioning-stability-mac-02.xcresult`
+10 focused tests and `potassium-group-provisioning-stability-full-01.xcresult`
+**529 tests** passed. Standard Mac (`potassium-group-provisioning-standard-mac-02`),
+iPhone 17/iOS 26.5 (`potassium-group-provisioning-ios-01`) and Apple Vision Pro/
+visionOS 26.5 (`potassium-group-provisioning-vision-sim-01`) each passed nine
+resolver tests, zero failures/skips; the signed generic visionOS build passed.
+Standard Mac01 remains incomplete: its tests executed, but Xcode's coverage
+collector blocked opening a container. The exact test process was stopped and
+Mac02 finalized with `-enableCodeCoverage NO`; no coverage claim is made for it.
+Inspection of the new signed products confirms explicit profiles authorizing the
+existing shared group for all three executables. Live verification remains pending.
+CR-013 stays open.
