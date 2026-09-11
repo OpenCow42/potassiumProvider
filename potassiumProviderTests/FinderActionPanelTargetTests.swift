@@ -15,6 +15,15 @@ struct FinderActionPanelTargetTests {
         #expect(!FinderActionPanelTarget.isExpectedProcess(executableURL: expected, expectedURL: expected, codeHash: nil, expectedCodeHash: nil))
     }
 
+    @Test func mainWindowOnlyDiscoveryStillRequiresExactAliasAndDeduplicatesListedWindow() {
+        #expect(FinderActionPanelTarget.candidates(listed: [Int](), main: 7, equal: ==) == [7])
+        #expect(FinderActionPanelTarget.candidates(listed: [7], main: 7, equal: ==) == [7])
+        #expect(FinderActionPanelTarget.candidates(listed: [8], main: 7, equal: ==) == [8, 7])
+        #expect(FinderActionPanelTarget.candidates(listed: [Int](), main: nil, equal: ==).isEmpty)
+        let discovered = FinderActionPanelTarget.candidates(listed: [[String]](), main: ["unrelated"], equal: ==)
+        #expect(FinderActionPanelTarget.index(alias: alias, windowIdentifiers: discovered) == nil)
+    }
+
     @Test func requiresOnePanelWithTheExactFixtureAlias() {
         #expect(FinderActionPanelTarget.index(alias: alias, windowIdentifiers: [["unrelated"], [alias]]) == 1)
         #expect(FinderActionPanelTarget.index(alias: alias, windowIdentifiers: [[alias], [alias]]) == nil)

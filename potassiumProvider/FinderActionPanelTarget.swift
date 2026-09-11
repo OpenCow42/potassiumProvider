@@ -10,6 +10,14 @@ enum FinderActionPanelTarget {
             && codeHash == expectedCodeHash
     }
 
+    /// FileProviderUI can omit a hosted sheet from AXWindows while exposing it
+    /// as AXMainWindow. Discovery does not authorize it; the exact alias still must match.
+    static func candidates<Element>(listed: [Element], main: Element?, equal: (Element, Element) -> Bool) -> [Element] {
+        var result = listed
+        if let main, !result.contains(where: { equal($0, main) }) { result.append(main) }
+        return result
+    }
+
     static func index(alias: String, windowIdentifiers: [[String]]) -> Int? {
         guard alias.hasPrefix("provider.stability.action."),
               UUID(uuidString: String(alias.dropFirst("provider.stability.action.".count))) != nil else { return nil }

@@ -693,7 +693,10 @@ final class SystemFinderUIDriver: FinderUIDriving {
                 guard FinderActionPanelTarget.isExpectedProcess(executableURL: app.executableURL, expectedURL: executable,
                     codeHash: StabilityDiagnosticIdentity.codeHash(forProcessIdentifier: app.processIdentifier), expectedCodeHash: expectedHash) else { continue }
                 let application = AXUIElementCreateApplication(app.processIdentifier)
-                windows += attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
+                let listed = attribute(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
+                let mainValue = attribute(application, kAXMainWindowAttribute)
+                let main = mainValue.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+                windows += FinderActionPanelTarget.candidates(listed: listed, main: main, equal: { CFEqual($0, $1) })
             }
         }
         var uniqueWindows: [AXUIElement] = []

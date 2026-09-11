@@ -402,3 +402,9 @@ or raw system error in its messages. Negative resolver/panel-target tests cover
 wrong domains/engines, old code, ambiguous panels, timeout and cancellation.
 The sealed `212e54e` run passed 13 scenarios; cancellation and contextual actions
 failed and deletion was deferred. This is not completed Mac acceptance.
+
+Hosted Actions sheets may have an empty `AXWindows` array and a valid `AXMainWindow`.
+Stability includes that main window only from the attested Actions process and
+still requires the resolved run-local alias, explicitly published on the native
+AppKit root. Discovery deduplicates the same listed/main window. A visible form
+without this identity cannot produce a passing result or authorize cleanup.

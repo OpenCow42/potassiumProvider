@@ -15,6 +15,15 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+Fresh `8af5313` live evidence confirms canonical selection resolution and visible
+share settings. The next divergence is harness discovery: FileProviderUI exposes
+this hosted panel through AXMainWindow with an empty AXWindows list, and the SwiftUI
+identifier is absent from the native tree. Stability now publishes the resolved
+alias on its AppKit root and includes the attested main window; unrelated windows
+remain rejected. No sharing/conflict policy changes, and CR-013 stays open. The
+bundle remains 13 passed, two failed, one deferred until complete UI/server evidence
+can verify contextual actions and cancellation.
+
 The current Actions extension exposed a macOS opaque document identifier directly
 to the kDrive parser in fresh run `8a4d7d89-48f1-4a54-81c5-f9266e0934cd`.
 The UI boundary now resolves through system URL/identifier APIs, checks the returned

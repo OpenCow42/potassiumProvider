@@ -2153,3 +2153,31 @@ The final iPhone 17/iOS 26.5 and Apple Vision Pro/visionOS 26.5 Simulator
 results each passed 23 tests with zero failures/skips, retained at
 `/private/tmp/potassium-action-identity-ios-02.xcresult` and
 `/private/tmp/potassium-action-identity-vision-sim-02.xcresult`.
+
+
+### Live identity correction and hosted panel discovery
+
+Fresh `8af5313` run `7200afb4-464d-480d-acdf-390d77e88ccc` sealed with
+13 passed, two failed and deletion deferred. The current Actions process resolved
+the selection, completed item lookup and share-settings lookup, and visibly rendered
+the Share form and Done. The original invalid-identifier failure is fixed. The
+contextual scenario still timed out before entering the form: native read-only AX
+inspection after settling showed an empty Actions `AXWindows` list, a valid
+`AXMainWindow` containing its 11-node form, and no exposed Stability identifier.
+No share mutation occurred, and the generated source remains preserved. The report
+retains automation failure; this is not a contextual-action pass.
+
+Discovery now includes the attested process's main window, deduplicated against its
+listed windows. It still requires one exact fixture alias. The Stability-only macOS
+controller publishes the resolved alias on its native AppKit root, because the
+hosted SwiftUI NavigationStack's identifier did not cross the accessibility bridge.
+Regression coverage rejects an unrelated main window and duplicate discovery;
+actual form interaction and owned-panel cleanup still require the next live run.
+The earlier Actions process-tree observation was incomplete: computer use could
+find the main window, whereas AXWindows alone could not. Cancellation remains failed:
+both real transfers completed without a cancelled callback. CR-013 stays open.
+
+The hosted-panel follow-up passed 26 focused Stability Mac tests with no failures
+or skips (`/private/tmp/potassium-action-panel-stability-mac-01.xcresult`) and the
+standard Mac build. Its additional runtime branches are macOS/Stability-only;
+the identity resolver retains the finalized cross-platform results above.

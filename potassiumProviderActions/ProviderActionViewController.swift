@@ -5,6 +5,9 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
+#if STABILITY
+import Combine
+#endif
 #else
 import UIKit
 #endif
@@ -13,6 +16,9 @@ import UIKit
 public final class ProviderActionViewController: FPUIActionExtensionViewController {
     private var actionModel: ProviderActionViewModel?
     private var loadTask: Task<Void, Never>?
+    #if os(macOS) && STABILITY
+    private var panelIdentityObservation: AnyCancellable?
+    #endif
 
     deinit { loadTask?.cancel() }
 
@@ -54,6 +60,17 @@ public final class ProviderActionViewController: FPUIActionExtensionViewControll
                 }
             )
         )
+        #if os(macOS) && STABILITY
+        // FileProviderUI's hosted NavigationStack does not expose its SwiftUI
+        // identifier through AX. Publish the verified identity on the native root.
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.group)
+        view.setAccessibilityIdentifier(nil)
+        panelIdentityObservation = model.$itemIdentifier.dropFirst().sink { [weak self] identifier in
+            guard let alias = StabilityDiagnosticIdentity.activeAlias(for: identifier.rawValue) else { return }
+            self?.view.setAccessibilityIdentifier("provider.stability.action." + alias.uuidString)
+        }
+        #endif
         loadTask = Task { await model.load() }
     }
 
