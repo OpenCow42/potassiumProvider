@@ -298,29 +298,14 @@ struct StabilityDiagnosticsTests {
         #expect(try await store.recentConflicts(domainIdentifier: "domain", limit: 10).isEmpty)
     }
 
-    @Test func eventObservationSeesAnAppendFromAnotherStore() async throws {
+    @Test(.timeLimit(.minutes(1))) func eventObservationSeesAnAppendFromAnotherStore() async throws {
         let (_, run, store) = try await makeRun()
         let writer = try KDriveProviderEventJSONLStore(runDirectoryURL: run.directoryURL)
         let changes = await store.eventChanges(pollInterval: 0.02)
-        try await Task.sleep(for: .milliseconds(60))
-
-        let observation = Task { () -> Bool in
-            var iterator = changes.makeAsyncIterator()
-            return await iterator.next() != nil
-        }
+        // No startup sleep: a returned subscription must already cover writes.
         try await writer.recordActivity(activity(id: UUID(), occurredAt: Date()))
-        let observed = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await observation.value }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(1))
-                return false
-            }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            observation.cancel()
-            return first
-        }
-        #expect(observed)
+        var iterator = changes.makeAsyncIterator()
+        #expect(await iterator.next() != nil)
     }
 
     @Test func eventCapacityRejectsBeforeCorruptingReplayableEvidence() async throws {

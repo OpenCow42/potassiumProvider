@@ -347,3 +347,9 @@ Signaling records only the intended changed containers; the explicit working-set
 scenario selects `.workingSet` itself. All other callbacks stay in the global
 timeline and settlement checks. Diagnostic waits print closed reason transitions
 (such as `pendingOperations`), without raw errors or private subjects.
+
+
+JSONL change subscriptions establish their initial file fingerprint before returning
+the stream. An append between subscription return and the polling task's first turn
+must therefore emit a change notification. This does not add payloads or change the
+diagnostic/report schema; the cross-store observation regression has no startup sleep.

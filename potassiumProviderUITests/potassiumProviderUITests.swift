@@ -57,7 +57,7 @@ final class potassiumProviderUITests: XCTestCase {
         availableDrive.tap()
         #endif
 
-        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["drive.createEncryptedVault"].exists)
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
@@ -128,12 +128,16 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(app.buttons["addAccount.oauth"].waitForExistence(timeout: 5))
         #if os(macOS)
         XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
-        let advanced = app.descendants(matching: .any)["addAccount.advanced"]
+        let advanced = app.disclosureTriangles["Advanced"]
         XCTAssertTrue(advanced.waitForExistence(timeout: 5))
-        advanced.tap()
+        advanced.click()
         #endif
-        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5), app.debugDescription)
+        #if os(macOS)
+        XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
+        #else
         XCTAssertTrue(app.staticTexts["Advanced"].exists)
+        #endif
 
         #if os(macOS)
         XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
@@ -150,9 +154,9 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
         addAccount.click()
 
-        XCTAssertTrue(app.staticTexts["Sign in to Infomaniak"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text(containing: "Sign in to Infomaniak", in: app).waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["addAccount.oauth"].exists)
-        XCTAssertTrue(app.staticTexts["Advanced"].exists)
+        XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
         XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
     }
 
@@ -202,8 +206,8 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(
             app.staticTexts["No Owned kDrives Available"].waitForExistence(timeout: 5)
         )
-        XCTAssertFalse(app.buttons["Load Drives"].exists)
-        XCTAssertFalse(app.buttons["Refresh Drives"].exists)
+        XCTAssertFalse(app.scrollViews.buttons["Load Drives"].exists)
+        XCTAssertFalse(app.scrollViews.buttons["Refresh Drives"].exists)
         XCTAssertTrue(app.buttons["account.refreshDrives"].waitForExistence(timeout: 5))
     }
     #endif

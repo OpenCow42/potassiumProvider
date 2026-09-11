@@ -546,7 +546,6 @@ private struct ProviderAddAccountView: View {
                     }
                     .padding(.top, 10)
                 }
-                .accessibilityIdentifier("addAccount.advanced")
             }
         }
         .navigationTitle("Add Account")
@@ -1024,7 +1023,7 @@ private struct ProviderDriveManagementView: View {
     }
 
     private func driveForm(_ descriptor: ProviderDriveDescriptor) -> some View {
-        List {
+        let content = Group {
             Section("Drive") {
                 LabeledContent("Name", value: descriptor.name)
                 LabeledContent("Drive ID", value: String(descriptor.driveID))
@@ -1244,6 +1243,13 @@ private struct ProviderDriveManagementView: View {
                 }
             }
         }
+        #if os(macOS)
+        // A grouped form exposes its controls individually to Accessibility;
+        // macOS List rows otherwise combine the action into an unnamed row.
+        return Form { content }.formStyle(.grouped)
+        #else
+        return List { content }
+        #endif
     }
 
     @ViewBuilder

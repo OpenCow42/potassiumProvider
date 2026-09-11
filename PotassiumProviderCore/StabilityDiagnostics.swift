@@ -1342,9 +1342,12 @@ public actor KDriveProviderEventJSONLStore: KDriveProviderEventStoring,
 
     public func eventChanges(pollInterval: TimeInterval = 1) async -> AsyncStream<Void> {
         let url = eventsURL
+        // Establish the subscription before returning it. If the worker takes
+        // its baseline later, an intervening append becomes invisible.
+        let initial = Self.fileFingerprint(url)
         return AsyncStream { continuation in
             let task = Task.detached {
-                var previous = Self.fileFingerprint(url)
+                var previous = initial
                 while Task.isCancelled == false {
                     try? await Task.sleep(for: .seconds(max(0.05, pollInterval)))
                     let current = Self.fileFingerprint(url)
