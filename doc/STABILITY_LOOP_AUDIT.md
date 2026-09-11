@@ -1821,3 +1821,32 @@ succeeded. The first selected build retained a missing CoreGraphics import error
 that import was corrected before the passing rerun. The shared progress runtime
 retains its preceding four-destination focused validation; this follow-up changes
 only the macOS Stability UI driver.
+
+### Progress correction confirmed live; cancellation dispatch still late
+
+Fresh run `5cfc3989-748f-47c4-befa-6f427f98dae4` on `1aa4117` sealed
+**12 passed, one failed, three skipped**. The corrected menu route passed eviction
+and all earlier scenarios; deletion stayed deferred and preserve-both passed.
+The 256 MiB download span `2B6FCD63-C5EC-41A2-A546-8EE0EC09BC53` now reports actual
+10–90% intermediate progress and finishes in 3,959 ms. This independently confirms
+the weighted-progress sampler correction. Its fetch callback
+`E42510C3-3467-4E2C-B62F-6BEE205BEA3B` completed at 4,448 ms without cancellation.
+Both transfer attempts were already complete when the runner checked after its
+contextual dispatch/progress wait, so cancellation remained unexercised. The
+owned Finder window closed and all prior failed bundles remain preserved.
+
+Download Now now uses a native mouse click on the uniquely identified, enabled
+menu item and returns after menu dismissal. It does not wait on the command's AX
+completion or a subsequent Finder Apple Event. Transfer diagnostics still decide
+completion/cancellation. Other actions retain AX dispatch and their result
+observations. Sequence tests reject transfer-completion waits on the download
+route, retain result checks elsewhere, and reject failed dispatch. A safe elapsed
+dispatch duration aids the next trace. This is a harness scheduling correction;
+the exact blocking stage in the previous invocation remains uncertain pending
+the new timed live evidence.
+
+The download-dispatch correction finalized **24 passed, zero failed/skipped** in
+`potassium-download-dispatch-stability-mac-01.xcresult`; the standard Mac build
+succeeded. The preceding context-menu commit `1aa4117` also finalized green CI
+(`34582880304`) across all destinations. Shared-runtime validation is unchanged
+from the progress correction; this follow-up changes only Stability UI dispatch.

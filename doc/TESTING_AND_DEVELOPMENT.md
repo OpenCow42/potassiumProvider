@@ -598,3 +598,9 @@ verified selection, with fresh geometry contained in the owned window. The drive
 does not require an advertised `AXShowMenu` action for this mouse route: Finder can
 omit that action while still exposing the native contextual menu. Ambiguous fields
 and missing/out-of-window geometry remain hard failures.
+
+Download Now is dispatched by a native click inside the uniquely identified popup
+menu and returns once that popup dismisses. Its transfer completion is observed
+through diagnostics, allowing cancellation while work is active; the command does
+not wait for AX action completion or a later Finder Apple Event. Other contextual
+actions keep their result checks.

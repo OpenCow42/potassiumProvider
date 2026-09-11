@@ -15,6 +15,15 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The next live run verified weighted transfer progress at 10–90%, but both transfers
+completed before cancellation could be invoked. Download Now now dispatches a
+confined native menu click and returns after popup dismissal, with transfer
+completion owned by diagnostic assertions. Sequence regressions forbid waiting
+for transfer completion in that dispatch path and retain result checks for other
+actions. Cancellation still requires actual Finder cancellation, exactly one
+callback terminal, no later success, and a subsequent successful download. This
+changes only harness scheduling; CR-013 and conflict policies are unchanged.
+
 The next live retry stopped before eviction because the harness required an
 advertised `AXShowMenu` action for a secondary-click route. Computer use confirmed
 the generated fixture's native menu remained available. The driver now uses the

@@ -383,25 +383,52 @@ final class SystemFinderUIDriver: FinderUIDriving {
         }
         try await showSelectedContextMenu()
         do {
+            var commandItem: AXUIElement?
+            var commandMenu: AXUIElement?
             try await wait {
-                guard let menu = self.contextMenu(), let item = self.elements(menu).first(where: {
+                guard let menu = self.contextMenu() else { return false }
+                let matches = self.elements(menu).filter {
                     self.string($0, kAXRoleAttribute) == kAXMenuItemRole && self.string($0, kAXTitleAttribute) == title
-                }) else { return false }
+                }
+                guard matches.count == 1, let item = matches.first else { return false }
                 guard (self.attribute(item, kAXEnabledAttribute) as? Bool) != false else { return false }
+                commandItem = item; commandMenu = menu
+                return true
+            }
+            guard let item = commandItem, let menu = commandMenu else { throw FinderUIError.controlUnavailable }
+            let dispatchedAt = ContinuousClock.now
+            try await FinderMenuCommandSequence.perform(command: title, press: {
                 let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
                 guard result == .success else {
                     print("finder stability UI: contextual press failed; AX code \(result.rawValue)")
                     throw FinderUIError.controlUnavailable
                 }
-                return true
-            }
+            }, click: {
+                guard let menuBounds = self.rect(menu),
+                      let point = FinderContextMenuTarget.point(displayedName: title, windowBounds: menuBounds,
+                        fields: [.init(name: self.string(item, kAXTitleAttribute), bounds: self.rect(item))]),
+                      NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
+                    throw FinderUIError.selectionMismatch
+                }
+                for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                    guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
+                        throw FinderUIError.controlUnavailable
+                    }
+                    event.post(tap: .cghidEventTap)
+                }
+            }, waitForDismissal: {
+                try await self.wait { self.contextMenu() == nil }
+            }, waitForResult: {
+                if ["Share kDrive Link…", "Version History…"].contains(title) {
+                    try await self.wait { self.actionPanelScope() != nil }
+                } else if self.selectedDeletionRequested {
+                    try await self.wait { self.selectedDeletionDialog() != nil }
+                } else { try await self.waitForFinderIdle() }
+            })
             print("finder stability UI: contextual command invoked")
-            try await wait { self.contextMenu() == nil }
-            if ["Share kDrive Link…", "Version History…"].contains(title) {
-                try await wait { self.actionPanelScope() != nil }
-            } else if selectedDeletionRequested {
-                try await wait { self.selectedDeletionDialog() != nil }
-            } else { try await waitForFinderIdle() }
+            if title == "Download Now" {
+                print("finder stability UI: download dispatch returned; elapsed \(dispatchedAt.duration(to: ContinuousClock.now))")
+            }
             menuIsOpen = false
             actionCount += 1
         } catch {
