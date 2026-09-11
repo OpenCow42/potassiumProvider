@@ -604,3 +604,16 @@ menu and returns once that popup dismisses. Its transfer completion is observed
 through diagnostics, allowing cancellation while work is active; the command does
 not wait for AX action completion or a later Finder Apple Event. Other contextual
 actions keep their result checks.
+
+Working-set refresh and contextual actions are independent continuation cases:
+they each prepare a new run-owned fixture and repeat safety preflight even when
+an earlier scenario failed. The failed step stays failed, and the bundle cannot
+be certified as passing. Dependent steps still stop after a prerequisite failure.
+
+Transfer cancellation registers an incremental diagnostic cursor before Download
+Now and checks appended local records every 50 ms. This does not contact the API;
+remote verification retains bounded backoff and Retry-After. A callback must match
+the scenario, item alias, extension build, process, and parent span. Intermediate
+progress excludes 0% and 100%. A completed transfer ends the cancel-control search
+and triggers the larger-fixture retry; it never counts as cancellation. Recovery
+uses another pre-dispatch cursor and requires a new successful fetch.

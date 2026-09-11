@@ -1850,3 +1850,44 @@ The download-dispatch correction finalized **24 passed, zero failed/skipped** in
 succeeded. The preceding context-menu commit `1aa4117` also finalized green CI
 (`34582880304`) across all destinations. Shared-runtime validation is unchanged
 from the progress correction; this follow-up changes only Stability UI dispatch.
+
+### Timed dispatch and independent continuation (2026-09-11)
+
+Run `5ddafe6a-d0f7-4a7a-a088-d1b516da5a10` on `1fd42e7` sealed **12 passed,
+one failed, three skipped**. Scenario 12 was deliberately deferred. Download Now
+returned in 0.568 and 0.574 seconds, while the 256 MiB download took 5,431 ms and
+its fetch 5,894 ms. Actual intermediate progress was present, but neither attempt
+was cancelled. Owned Finder windows closed; all failing bundles and fixtures remain.
+
+The generic progress wait inherited the API poller's 2/4/8/10-second backoff and
+redecoded the entire event file on each observation. Confidence is high that this
+is unsuitable for short transfers; its exact share of the live delay is unmeasured.
+A Stability-only cursor now registers before UI dispatch, decodes appended records
+at 50 ms intervals, and rejects file identity/boundary/health/format failures.
+Only the exact item, correlation, code hash, process and callback parent qualify.
+The cancel-control wait ends when that transfer completes. This does not fabricate
+cancellation, throttle real transfers, or weaken final evidence validation.
+
+Working-set and contextual actions now prepare independent small fixtures and
+repeat safety preflight after earlier failures. This allows those checks to retain
+real evidence while the transfer failure remains failed. No dependent mutation
+is resumed and no skipped step becomes a pass. Reproduce using the ordinary
+`--run --extension-state fresh --yes-live` command; deletion stays deferred.
+
+Initial focused Stability validation finalized **53 tests passed**, zero failures
+or skips, in `potassium-transfer-tail-stability-mac-01.xcresult`. Parameterized
+instances total 67. The final health-path guard also finalized 53 passed in the `-02` bundle.
+The standard Mac decoder/evidence selection passed 27 tests; each simulator passed
+26. The generic signed visionOS build passed. CI on `1fd42e7` passed both Mac profiles and visionOS but failed iOS
+in `kdriveServiceExposesLazyObservableDownloadOperation`; that artifact is retained
+for diagnosis separately from the live automation result.
+
+The retained CI iOS bundle confirms the lazy-download failure was the test's exact
+phase-array assertion (at most one progress event), with 384 other tests passing.
+The test now checks one start, one completion, only monotonic progress between them,
+and one shared span. It retains lazy-start, request, and exact byte assertions.
+This permits legitimate multiple progress samples without permitting extra terminals
+or events after completion. The containing suite finalized **62 Stability Mac tests**
+and **67 standard Mac tests**, zero failed/skipped. Initial single-method selections
+ran zero tests and are explicitly excluded from validation; class selection verified
+the affected test actually executed. Simulator lifecycle reruns are pending.

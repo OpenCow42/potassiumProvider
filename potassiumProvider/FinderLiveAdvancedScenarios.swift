@@ -110,21 +110,34 @@ extension FinderLiveRunSession {
             try await signal(NSFileProviderItemIdentifier(String(item.parentID)))
             let url = try await visible(item)
             let subject = StabilityDiagnosticIdentity.alias(for: String(item.id), runID: run.runID)
+            let tail = try StabilityDiagnosticTail(eventsURL: run.eventsURL)
+            let attempt = FinderTransferObservation(subject: subject, correlation: correlationID, codeHash: expectedExtensionCodeHash)
             try await ui.contextAction("Download Now", on: url)
-            try await poll(seconds: 600) {
-                try self.diagnostics().contains { $0.subjectAlias == subject && $0.operation == .downloadFile &&
-                    ($0.phase == .completed || ($0.phase == .progress && ($0.progressPercentBucket ?? 0) > 0)) }
+            try await waitForLocalObservation {
+                try attempt.ingest(tail.readAvailable())
+                return attempt.hasIntermediateProgress || attempt.downloadFinished
             }
-            let alreadyCompleted = try diagnostics().contains { $0.subjectAlias == subject && $0.operation == .fetchContents && $0.phase == .completed }
-            if alreadyCompleted { continue }
-            try await ui.cancelDownload(url)
-            try await poll {
-                self.cancellationObserved = try self.diagnostics().contains { $0.subjectAlias == subject && $0.operation == .fetchContents && $0.phase == .cancelled }
-                return self.cancellationObserved
+            print("finder stability transfer: intermediate progress \(attempt.hasIntermediateProgress); already completed \(attempt.downloadFinished)")
+            guard !attempt.downloadFinished else { continue }
+            let invoked = try await ui.cancelDownload(url) {
+                try attempt.ingest(tail.readAvailable())
+                return attempt.canCancel
             }
+            guard invoked else { continue }
+            try await waitForLocalObservation {
+                try attempt.ingest(tail.readAvailable())
+                return attempt.fetchCancelled || attempt.fetchCompleted
+            }
+            guard attempt.fetchCancelled else { continue }
+            cancellationObserved = true
+            // A new cursor prevents the uncancelled first-size attempt or the
+            // cancelled callback from satisfying this recovery download.
+            let recoveryTail = try StabilityDiagnosticTail(eventsURL: run.eventsURL)
+            let recovery = FinderTransferObservation(subject: subject, correlation: correlationID, codeHash: expectedExtensionCodeHash)
             try await ui.contextAction("Download Now", on: url)
-            try await poll(seconds: 600) {
-                try self.diagnostics().contains { $0.subjectAlias == subject && $0.operation == .fetchContents && $0.phase == .completed }
+            try await waitForLocalObservation {
+                try recovery.ingest(recoveryTail.readAvailable())
+                return recovery.fetchCompleted
             }
             guard try Data(contentsOf: url) == data else { throw FinderLiveError.assertionFailed }
             try await waitBytes(item, expected: data)

@@ -53,6 +53,15 @@ struct FinderStabilityCommandTests {
         #expect(conflict.skipReason(for: .concurrentRemotePreserveBoth, afterFailure: false) == nil)
     }
 
+    @Test func independentScenariosContinueAfterFailureWithoutBroadeningConflictSelection() {
+        let selection = FinderStabilityScenarioSelection()
+        #expect(StabilityFinderScenario.allCases.filter { selection.skipReason(for: $0, afterFailure: true) == nil } ==
+            [.workingSetRefresh, .supportedContextualActions])
+        let conflict = FinderStabilityScenarioSelection(conflictCase: .contentAfterPreflight)
+        #expect(conflict.skipReason(for: .workingSetRefresh, afterFailure: true) == .notSelectedForConflictProfile)
+        #expect(conflict.skipReason(for: .supportedContextualActions, afterFailure: true) == .notSelectedForConflictProfile)
+    }
+
     @Test func conflictProfileRequiresLiveOptInAndExactCaseSelection() throws {
         #expect(throws: FinderStabilityArgumentError.liveConfirmationRequired) {
             try FinderStabilityArgumentParser.parse(arguments: ["app", "--finder-stability", "conflicts"])

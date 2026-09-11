@@ -208,6 +208,17 @@ final class FinderLiveRunSession {
         }
     }
 
+    /// Local append observations do not contact the server and must not inherit
+    /// the API poller's 2/4/8/10-second backoff during a short transfer.
+    func waitForLocalObservation(_ predicate: () throws -> Bool) async throws {
+        while deadline.remaining() > .zero {
+            try Task.checkCancellation()
+            if try predicate() { return }
+            try await Task.sleep(for: min(.milliseconds(50), deadline.remaining()))
+        }
+        throw FinderLiveError.timedOut
+    }
+
     func diagnostics() throws -> [ProviderDiagnosticEvent] { try StabilityRunCoordinator.readDiagnosticEvents(from: run.eventsURL) }
 
     /// A controlled diagnostic comparison after a failed navigation run. This

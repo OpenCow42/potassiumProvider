@@ -34,7 +34,7 @@ protocol FinderUIDriving: FinderUINavigating, FinderDocumentUIDriving {
     func contextAction(_ title: String, on url: URL) async throws
     func hasContextAction(_ title: String, on url: URL) async throws -> Bool
     func trash(_ url: URL) async throws
-    func cancelDownload(_ url: URL) async throws
+    func cancelDownload(_ url: URL, whilePending: () throws -> Bool) async throws -> Bool
     func confirmPermanentDeletion(_ url: URL, fixtureAlias: UUID) async throws
     func panelAction(_ action: FinderPanelAction) async throws
     func capture(in directory: URL, sequence: Int) async throws
@@ -565,18 +565,24 @@ final class SystemFinderUIDriver: FinderUIDriving {
         }
     }
 
-    func cancelDownload(_ url: URL) async throws {
+    func cancelDownload(_ url: URL, whilePending: () throws -> Bool) async throws -> Bool {
+        guard try whilePending() else { return false }
         try await select(url)
         try await activateFinder()
+        var invoked = false
         try await wait {
+            guard try whilePending() else { return true }
             guard let selected = self.selectedElement(), let cancel = self.elements(selected).first(where: {
                 let label = self.string($0, kAXDescriptionAttribute) ?? self.string($0, kAXTitleAttribute) ?? ""
                 return label.localizedCaseInsensitiveContains("cancel")
             }) else { return false }
+            guard try whilePending() else { return true }
             guard AXUIElementPerformAction(cancel, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
+            invoked = true
             return true
         }
-        actionCount += 1
+        if invoked { actionCount += 1 }
+        return invoked
     }
 
     func confirmPermanentDeletion(_ url: URL, fixtureAlias: UUID) async throws {

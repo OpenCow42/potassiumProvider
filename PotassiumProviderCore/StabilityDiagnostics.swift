@@ -962,11 +962,12 @@ public actor StabilityRunCoordinator {
         from eventsURL: URL,
         decoder suppliedDecoder: JSONDecoder? = nil
     ) throws -> [ProviderDiagnosticEvent] {
+        let data = try LockedJSONLFile.read(from: eventsURL, maximumBytes: defaultMaximumTotalBytes)
+        return try decodeDiagnosticEvents(from: data, decoder: suppliedDecoder)
+    }
+
+    static func decodeDiagnosticEvents(from data: Data, decoder suppliedDecoder: JSONDecoder? = nil) throws -> [ProviderDiagnosticEvent] {
         let decoder = suppliedDecoder ?? makeDecoder()
-        let data = try LockedJSONLFile.read(
-            from: eventsURL,
-            maximumBytes: defaultMaximumTotalBytes
-        )
         let endsInNewline = data.last == 0x0A || data.isEmpty
         let lines = data.split(separator: 0x0A, omittingEmptySubsequences: false)
         var diagnostics: [ProviderDiagnosticEvent] = []

@@ -364,3 +364,12 @@ JSONL change subscriptions establish their initial file fingerprint before retur
 the stream. An append between subscription return and the polling task's first turn
 must therefore emit a change notification. This does not add payloads or change the
 diagnostic/report schema; the cross-store observation regression has no startup sleep.
+
+The Stability-only transfer cursor reads new complete JSONL records, up to 1 MiB
+per local observation, rather than decoding historical events at every tick.
+It opens a regular file without following symlinks, retains a bounded boundary
+anchor, and rejects replacement, truncation, boundary rewriting, malformed records,
+and the writer-health latch. Shared-lock contention defers that observation without
+blocking the UI. An interrupted final record is retained until complete. This is
+only a scheduling aid; final certification still validates the entire immutable
+bundle with the existing strict parser and callback requirements.

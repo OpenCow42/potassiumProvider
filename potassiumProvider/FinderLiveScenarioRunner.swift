@@ -83,7 +83,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                 if pointerActive { try? await context.endStep(correlationID) }
                 let origin: StabilityFailureOrigin = (error as? FinderUIError) == .evictionResourceBusy ? .environment :
                     (error as? StabilityLiveEvidenceError) == .unexpectedFailure ? .provider : error is FinderUIError ? .automation :
-                    (error is FinderLiveError || error is StabilityLiveEvidenceError || error is StabilityRunConfinementError || error is StabilityDeadlineError ? .harness : .api)
+                    (error is FinderLiveError || error is StabilityLiveEvidenceError || error is StabilityRunConfinementError || error is StabilityDeadlineError || error is StabilityDiagnosticTailError || error is ProviderDiagnosticStoreError ? .harness : .api)
                 let reason = failureReason(error)
                 let proof = session?.evidence(actions: ui.actionCount - actionStart, failure: origin, reason: reason)
                 steps.append(step(index, scenario, correlationID, startedAt, .failed(.operationFailed), proof: proof))
@@ -121,7 +121,7 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
         case FinderLiveError.assertionFailed: return .assertionFailed
         case is FinderUIError: return .uiUnavailable
         case StabilityLiveEvidenceError.unexpectedFailure: return .remoteError
-        case is StabilityLiveEvidenceError: return .missingTelemetry
+        case is StabilityLiveEvidenceError, is StabilityDiagnosticTailError, is ProviderDiagnosticStoreError: return .missingTelemetry
         default: return .remoteError
         }
     }
@@ -252,7 +252,11 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
         case .cancellationAndProgress:
             try await s.cancelTransfer()
         case .workingSetRefresh:
-            let item = try s.require(s.transfer)
+            // Independent of transfer cancellation: always use a fresh, small
+            // run-owned fixture, including when an earlier scenario failed.
+            let item = try await s.upload(name: "working-set-seed.bin", parent: root, data: Data("working-set fixture\n".utf8))
+            s.transfer = item
+            try await s.signal(NSFileProviderItemIdentifier(String(root.id)))
             try await ui.select(s.visible(item))
             try await s.verifyOwned(item)
             // A fresh remote metadata change makes a cached membership event

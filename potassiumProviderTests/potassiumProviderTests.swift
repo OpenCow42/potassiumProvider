@@ -1630,8 +1630,14 @@ struct PotassiumProviderCoreTests {
         #expect(data == KDriveDataRequestCapturingURLProtocol.responseData)
         #expect(request.url?.path == "/2/drive/100/files/42/download")
         let diagnosticEvents = await diagnostics.events()
-        #expect(diagnosticEvents.map(\.phase) == [.started, .progress, .completed]
-            || diagnosticEvents.map(\.phase) == [.started, .completed])
+        // Sampler cadence may produce several progress buckets, especially
+        // with weighted child progress. Assert lifecycle, not scheduler timing.
+        #expect(diagnosticEvents.filter { $0.phase != .progress }.map(\.phase) == [.started, .completed])
+        #expect(diagnosticEvents.first?.phase == .started)
+        #expect(diagnosticEvents.last?.phase == .completed)
+        let buckets = diagnosticEvents.filter { $0.phase == .progress }.compactMap(\.progressPercentBucket)
+        #expect(buckets.count == diagnosticEvents.filter { $0.phase == .progress }.count)
+        #expect(buckets == buckets.sorted())
         #expect(Set(diagnosticEvents.compactMap(\.spanID)).count == 1)
     }
 

@@ -15,6 +15,16 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The timed `1fd42e7` live run passed 12 scenarios with deletion deferred; both
+transfers completed uncancelled despite Download Now returning in 0.57 seconds.
+The harness now observes appended local diagnostics at 50 ms without the API
+poller's 2/4/8/10-second backoff, confines progress to the callback's item/process/
+parent span, and stops looking for a cancel control after completion. Working-set
+and contextual checks continue independently with fresh fixtures after an earlier
+failure; that failure remains in the report. Regression coverage rejects unrelated
+or terminal-only progress, contradictory cancellation terminals, cursor rotation,
+missing telemetry, and historical replay. No mutation policy or CR-013 state changes. The lazy-download regression now checks the complete diagnostic lifecycle and monotonic intermediate progress instead of assuming at most one sampler tick; exact bytes, request identity and lazy start remain required.
+
 The next live run verified weighted transfer progress at 10–90%, but both transfers
 completed before cancellation could be invoked. Download Now now dispatches a
 confined native menu click and returns after popup dismissal, with transfer

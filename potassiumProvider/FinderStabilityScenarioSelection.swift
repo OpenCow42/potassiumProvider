@@ -9,7 +9,10 @@ struct FinderStabilityScenarioSelection {
 
     func skipReason(for scenario: StabilityFinderScenario, afterFailure: Bool) -> StabilityFinderStepSkipReason? {
         if let conflictCase, scenario != conflictCase.scenario { return .notSelectedForConflictProfile }
-        if afterFailure { return .earlierStepFailure }
+        // These cases prepare their own fixture and repeat the normal safety preflight.
+        // Keep the earlier failed result; independence does not turn it into a pass.
+        let independent = conflictCase == nil && [.workingSetRefresh, .supportedContextualActions].contains(scenario)
+        if afterFailure && !independent { return .earlierStepFailure }
         if conflictCase == nil, scenario == .permanentDeletion, !includePermanentDeletion {
             return .permanentDeletionNotSelected
         }
