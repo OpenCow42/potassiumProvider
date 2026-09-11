@@ -13,7 +13,7 @@ File Provider experience.
   `potassiumProviderFileProvider`, `potassiumProviderActions`,
   `potassiumProviderTests`, and `potassiumProviderUITests`
 - Supported validation platforms: iOS Simulator, macOS, and visionOS
-- Dependencies: `SQLite.swift` and `potassiumChannel` package products
+- Dependencies: `InfomaniakConcurrency`, `SQLite.swift`, and `potassiumChannel` package products
   `PotassiumChannelCore`, `PotassiumKDrive`, and `PotassiumOAuth`
 - Tests: Swift Testing for unit tests, XCTest for UI tests
 
@@ -152,6 +152,15 @@ app.
 - Keep networking behavior testable with mocks, fixtures, or injectable
   clients. Live checks must be explicit, locally guarded, and kept out of the
   default test path.
+- Provision new Stability Lab roots below the server-created `Private` folder,
+  verifying its stable identity and drive-root parent; do not assume the drive
+  root accepts creates. Never use the `Private` folder itself as a disposable root.
+- The current account is an operator-authorized lab account. Stability may reuse
+  its existing OAuth Keychain login as well as manually entered tokens; never
+  extract a credential into a command, fixture, environment variable, or log.
+- Live Finder runs defer permanent deletion by default and continue later scenarios.
+  Use `--include-permanent-deletion` only when requested; retain exact-item
+  confirmation and never count deferred deletion as full-suite acceptance.
 - Prefer typed request/response flows from Potassium products over app-local
   ad hoc HTTP construction.
 

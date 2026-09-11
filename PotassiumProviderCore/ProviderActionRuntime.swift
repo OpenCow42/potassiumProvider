@@ -31,6 +31,10 @@ public struct ProviderActionRuntime: Sendable {
             throw ProviderActionRuntimeError.configurationUnavailable
         }
 
+        guard configuration.isCompatible(with: .current) else {
+            throw ProviderActionRuntimeError.configurationUnavailable
+        }
+
         let tokenStore = KeychainOAuthTokenStore(accessGroup: ProviderConstants.keychainAccessGroup)
         guard configuration.encryptionMode != .opaqueVaultV1 else {
             throw ProviderActionRuntimeError.configurationUnavailable
@@ -49,9 +53,11 @@ public struct ProviderActionRuntime: Sendable {
             try await tokenStore.saveToken(token, accountIdentifier: configuration.accountIdentifier)
         }
 
-        let service = PotassiumKDriveService(bearerToken: token.accessToken)
-        let eventStore = try? KDriveProviderEventSQLiteStore(
-            appGroupIdentifier: ProviderConstants.appGroupIdentifier
+        let eventStore = try? ProviderEventStoreFactory.makeDefault()
+        let service = PotassiumKDriveService(
+            bearerToken: token.accessToken,
+            diagnosticRecorder: eventStore as? any ProviderDiagnosticRecording,
+            diagnosticSource: .actionExtension
         )
         let encryptedVault: (any EncryptedVaultProviding)?
         if configuration.encryptionMode == .opaqueVaultV2 {

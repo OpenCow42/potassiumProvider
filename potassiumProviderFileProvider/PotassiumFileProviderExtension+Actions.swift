@@ -9,7 +9,12 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        let lifecycle = FileProviderOperationLifecycle(progress: progress) {
+        let lifecycle = FileProviderOperationLifecycle(
+            progress: progress,
+            diagnosticOperation: Self.diagnosticOperation(for: actionIdentifier),
+            diagnosticItemIdentifier: itemIdentifiers.count == 1 ? itemIdentifiers.first?.rawValue : nil,
+            diagnosticRecorder: diagnosticRecorder
+        ) {
             completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
         }
 
@@ -83,12 +88,17 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
                     throw NSFileProviderError(.noSuchItem)
                 }
 
+                let knownBefore = try await loadedRuntime.workingSetStateStore.workingSetSnapshot(
+                    domainIdentifier: loadedRuntime.configuration.domainIdentifier)?.items.first { $0.id == fileID }
                 let execution = try await KDriveContextActionCoordinator(
                     driveID: loadedRuntime.configuration.driveID,
                     rootFileID: loadedRuntime.configuration.rootFileID,
                     remote: loadedRuntime.remote,
                     actions: loadedRuntime.actions
                 ).perform(action, fileID: fileID)
+
+                await self.publishKnownWorkingSetItem(execution.activityItem,
+                    replacing: execution.activityItem.id == fileID ? knownBefore : nil, runtime: loadedRuntime)
 
                 let recordedIdentifier = action == .duplicate
                     ? ProviderEventRecorder.itemIdentifier(for: execution.activityItem)
@@ -128,7 +138,10 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
                     itemPath: nil,
                     summary: "perform contextual action."
                 )
-                await lifecycle.finish(markProgressComplete: false) {
+                await lifecycle.finish(
+                    markProgressComplete: false,
+                    diagnosticError: mappedError
+                ) {
                     completionHandler(mappedError)
                 }
             }
@@ -143,6 +156,24 @@ extension PotassiumFileProviderExtension: NSFileProviderCustomAction {
             return .modify
         }
         return activityKind(for: action)
+    }
+
+    private static func diagnosticOperation(
+        for actionIdentifier: NSFileProviderExtensionActionIdentifier
+    ) -> ProviderDiagnosticOperation {
+        guard let action = ProviderDirectContextAction(
+            rawValue: actionIdentifier.rawValue
+        ) else {
+            return .modifyItem
+        }
+        switch action {
+        case .addFavorite, .removeFavorite:
+            return .favoriteItem
+        case .duplicate:
+            return .duplicateItem
+        case .restoreFromTrash:
+            return .restoreTrashedItem
+        }
     }
 
     private static func activityKind(

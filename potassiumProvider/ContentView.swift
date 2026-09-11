@@ -36,6 +36,15 @@ struct ContentView: View {
                     Label("Activities", systemImage: "clock.arrow.circlepath")
                 }
                 .tag(ProviderAppTab.activities)
+
+            #if os(macOS) && STABILITY
+            StabilityLabView(model: model)
+                .providerNavigationAnimation()
+                .tabItem {
+                    Label("Stability Lab", systemImage: "testtube.2")
+                }
+                .tag(ProviderAppTab.stabilityLab)
+            #endif
         }
         .onAppear {
             selectedTab = ProviderAppTabSelectionPolicy.defaultSelection(
@@ -49,6 +58,9 @@ enum ProviderAppTab: Hashable {
     case status
     case setup
     case activities
+    #if os(macOS) && STABILITY
+    case stabilityLab
+    #endif
 }
 
 enum ProviderAppTabSelectionPolicy {

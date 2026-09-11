@@ -25,7 +25,7 @@ final class potassiumProviderUITests: XCTestCase {
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        let app = UITestApplication.make(for: self)
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -57,7 +57,7 @@ final class potassiumProviderUITests: XCTestCase {
         availableDrive.tap()
         #endif
 
-        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5), app.windows["net.weavee.potassiumProvider.main-window"].debugDescription)
         XCTAssertTrue(app.buttons["drive.createEncryptedVault"].exists)
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
@@ -123,21 +123,25 @@ final class potassiumProviderUITests: XCTestCase {
 
         let addAccount = app.buttons["setup.addAccount"]
         XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        #if os(macOS)
+        XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
+        #endif
         addAccount.tap()
 
         XCTAssertTrue(app.buttons["addAccount.oauth"].waitForExistence(timeout: 5))
         #if os(macOS)
         XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
-        let advanced = app.descendants(matching: .any)["addAccount.advanced"]
+        let advanced = app.disclosureTriangles["Advanced"]
         XCTAssertTrue(advanced.waitForExistence(timeout: 5))
-        advanced.tap()
+        advanced.click()
         #endif
-        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Advanced"].exists)
-
+        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5), app.windows["net.weavee.potassiumProvider.main-window"].debugDescription)
         #if os(macOS)
-        XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
+        XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
+        #else
+        XCTAssertTrue(app.staticTexts["Advanced"].exists)
         #endif
+
     }
 
     #if os(macOS)
@@ -150,9 +154,9 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
         addAccount.click()
 
-        XCTAssertTrue(app.staticTexts["Sign in to Infomaniak"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text(containing: "Sign in to Infomaniak", in: app).waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["addAccount.oauth"].exists)
-        XCTAssertTrue(app.staticTexts["Advanced"].exists)
+        XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
         XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
     }
 
@@ -202,8 +206,8 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(
             app.staticTexts["No Owned kDrives Available"].waitForExistence(timeout: 5)
         )
-        XCTAssertFalse(app.buttons["Load Drives"].exists)
-        XCTAssertFalse(app.buttons["Refresh Drives"].exists)
+        XCTAssertFalse(app.scrollViews.buttons["Load Drives"].exists)
+        XCTAssertFalse(app.scrollViews.buttons["Refresh Drives"].exists)
         XCTAssertTrue(app.buttons["account.refreshDrives"].waitForExistence(timeout: 5))
     }
     #endif
@@ -394,16 +398,29 @@ final class potassiumProviderUITests: XCTestCase {
     #endif
 
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+    func testLaunchToSetupReadinessPerformance() throws {
+        let app = UITestApplication.make(for: self)
+        let options = XCTMeasureOptions()
+        options.invocationOptions = [.manuallyStart]
+        // Measure the complete launch-to-interaction interval. XCTest's system
+        // launch signposts intermittently omit samples on the hosted Mac even
+        // when every app launch and window assertion succeeds. This benchmark
+        // includes automation overhead and is not a first-frame measurement.
+        measure(metrics: [XCTClockMetric()], options: options) {
+            app.terminate()
+            startMeasuring()
+            app.launch()
+            app.activate()
+            openSetup(in: app)
+            let addAccount = app.buttons["setup.addAccount"]
+            XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+            XCTAssertTrue(addAccount.isEnabled)
         }
     }
 
     @MainActor
     private func launchSetupFixture(named fixtureName: String = "setup-navigation") -> XCUIApplication {
-        let app = XCUIApplication()
+        let app = UITestApplication.make(for: self)
         app.launchEnvironment["POTASSIUM_UI_TEST_FIXTURE"] = fixtureName
         app.launch()
         return app

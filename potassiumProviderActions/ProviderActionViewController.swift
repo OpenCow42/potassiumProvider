@@ -5,6 +5,9 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
+#if STABILITY
+import Combine
+#endif
 #else
 import UIKit
 #endif
@@ -12,6 +15,12 @@ import UIKit
 @objc(ProviderActionViewController)
 public final class ProviderActionViewController: FPUIActionExtensionViewController {
     private var actionModel: ProviderActionViewModel?
+    private var loadTask: Task<Void, Never>?
+    #if os(macOS) && STABILITY
+    private var panelIdentityObservation: AnyCancellable?
+    #endif
+
+    deinit { loadTask?.cancel() }
 
     #if os(macOS)
     public override func loadView() {
@@ -27,6 +36,7 @@ public final class ProviderActionViewController: FPUIActionExtensionViewControll
         forAction actionIdentifier: String,
         itemIdentifiers: [NSFileProviderItemIdentifier]
     ) {
+        loadTask?.cancel()
         guard let domainIdentifier = extensionContext.domainIdentifier?.rawValue,
               itemIdentifiers.count == 1,
               let itemIdentifier = itemIdentifiers.first,
@@ -44,10 +54,24 @@ public final class ProviderActionViewController: FPUIActionExtensionViewControll
         install(
             ProviderActionRootView(
                 model: model,
-                complete: { [weak self] in self?.extensionContext.completeRequest() }
+                complete: { [weak self] in
+                    self?.loadTask?.cancel()
+                    self?.extensionContext.completeRequest()
+                }
             )
         )
-        Task { await model.load() }
+        #if os(macOS) && STABILITY
+        // FileProviderUI's hosted NavigationStack does not expose its SwiftUI
+        // identifier through AX. Publish the verified identity on the native root.
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.group)
+        view.setAccessibilityIdentifier(nil)
+        panelIdentityObservation = model.$stabilityPanelAlias.sink { [weak self] alias in
+            guard let alias else { return }
+            self?.view.setAccessibilityIdentifier("provider.stability.action." + alias.uuidString)
+        }
+        #endif
+        loadTask = Task { await model.load() }
     }
 
     private func cancel(with message: String) {
@@ -61,6 +85,10 @@ public final class ProviderActionViewController: FPUIActionExtensionViewControll
     }
 
     private func install<Content: View>(_ content: Content) {
+        for child in children {
+            child.view.removeFromSuperview()
+            child.removeFromParent()
+        }
         #if os(macOS)
         let hostingController = NSHostingController(rootView: content)
         addChild(hostingController)

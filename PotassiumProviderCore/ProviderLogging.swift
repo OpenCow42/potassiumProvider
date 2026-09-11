@@ -31,7 +31,14 @@ public enum ProviderLog {
     public static let export = logger(.export)
 
     public static func logger(_ category: ProviderLogCategory) -> Logger {
+        #if STABILITY
+        // Existing development logs predate the Stability privacy contract and
+        // include identifiers and localized error text at many call sites.
+        // Stability uses the closed-schema JSONL recorder exclusively.
+        Logger(OSLog.disabled)
+        #else
         Logger(subsystem: ProviderConstants.logSubsystem, category: category.rawValue)
+        #endif
     }
 }
 

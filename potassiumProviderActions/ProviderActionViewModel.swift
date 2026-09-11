@@ -29,8 +29,11 @@ final class ProviderActionViewModel: ObservableObject {
 
     let mode: Mode
     let domainIdentifier: String
-    let itemIdentifier: NSFileProviderItemIdentifier
+    @Published private(set) var itemIdentifier: NSFileProviderItemIdentifier
 
+    #if STABILITY
+    @Published private(set) var stabilityPanelAlias: UUID?
+    #endif
     @Published private(set) var item: KDriveRemoteItem?
     @Published private(set) var vaultItem: VaultItem?
     @Published private(set) var shareLink: KDriveShareLinkSummary?
@@ -66,6 +69,13 @@ final class ProviderActionViewModel: ObservableObject {
         defer { isLoading = false }
         do {
             let runtime = try await ProviderActionRuntime.load(domainIdentifier: domainIdentifier)
+            let resolvedIdentifier = try await ProviderActionItemResolver.resolve(itemIdentifier, configuration: runtime.configuration)
+            try Task.checkCancellation()
+            itemIdentifier = resolvedIdentifier
+            #if STABILITY
+            stabilityPanelAlias = try await StabilityActionPanelIdentity.resolve(for: resolvedIdentifier.rawValue)
+            try Task.checkCancellation()
+            #endif
             if let vault = runtime.encryptedVault {
                 guard let identifier = VaultItemIdentifier(
                     fileProviderIdentifier: itemIdentifier.rawValue
@@ -103,6 +113,8 @@ final class ProviderActionViewModel: ObservableObject {
             case .versionHistory:
                 try await loadNextVersionPage()
             }
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
             initialLoadErrorMessage = error.localizedDescription
@@ -293,7 +305,10 @@ final class ProviderActionViewModel: ObservableObject {
         message = nil
         defer { isWorking = false }
         do {
-            try await operation()
+            let subject = item.flatMap { StabilityDiagnosticIdentity.activeAlias(for: String($0.id)) }
+            try await ProviderDiagnosticCorrelationContext.$subjectAlias.withValue(subject) {
+                try await operation()
+            }
         } catch {
             errorMessage = error.localizedDescription
             await recordFailure(error)

@@ -53,10 +53,16 @@ data.
   recovery limits, and the mandatory maintenance procedure.
 - [Conflicts](doc/CONFLICTS.md): conflict cases, current resolution behavior,
   design context, risks, and safer future direction.
+- [Conflict testing](doc/CONFLICT_TESTING.md): deterministic two-client cases, production
+  callback coverage, vault replay, and independently selected live Finder races.
 - [File Provider Cleanup](doc/FILE_PROVIDER_CLEANUP.md): local development
   uninstall script, reset modes, stale registration repair, and safety boundary.
 - [Testing And Development](doc/TESTING_AND_DEVELOPMENT.md): schemes,
-  dependencies, commands, and local-state caveats.
+  dependencies, commands, and the opt-in live Finder suite using the saved
+  Keychain account and an isolated lab inside `Private`. Permanent deletion is
+  deferred by default; `--include-permanent-deletion` enables its confirmation.
+- [Stability implementation audit](doc/STABILITY_LOOP_AUDIT.md): retained live
+  failures, focused fixes, finalized validation results, and remaining gates.
 
 ## Project Shape
 

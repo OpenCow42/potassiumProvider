@@ -409,6 +409,7 @@ private struct ProviderAccountRow: View {
 private struct ProviderAddAccountView: View {
     @ObservedObject var model: PotassiumProviderAppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var isAdvancedExpanded = false
 
     var body: some View {
         #if os(macOS)
@@ -518,7 +519,7 @@ private struct ProviderAddAccountView: View {
                     .accessibilityIdentifier("addAccount.oauth")
                 }
 
-                DisclosureGroup("Advanced") {
+                DisclosureGroup(isExpanded: $isAdvancedExpanded) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Manual tokens are intended for development and may stop working when they expire.")
                             .font(.subheadline)
@@ -545,8 +546,11 @@ private struct ProviderAddAccountView: View {
                         .accessibilityIdentifier("addAccount.saveManualToken")
                     }
                     .padding(.top, 10)
+                } label: {
+                    Text("Advanced")
+                        .contentShape(Rectangle())
+                        .onTapGesture { isAdvancedExpanded.toggle() }
                 }
-                .accessibilityIdentifier("addAccount.advanced")
             }
         }
         .navigationTitle("Add Account")
@@ -766,6 +770,7 @@ private struct ProviderAccountManagementView: View {
                                 ForEach(Array(driveDescriptors.enumerated()), id: \.element.id) { index, descriptor in
                                     NavigationLink(value: ProviderSetupRoute.drive(descriptor.id)) {
                                         ProviderDriveRow(descriptor: descriptor)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityIdentifier("account.drive.\(descriptor.driveID)")
@@ -1024,7 +1029,7 @@ private struct ProviderDriveManagementView: View {
     }
 
     private func driveForm(_ descriptor: ProviderDriveDescriptor) -> some View {
-        List {
+        let content = Group {
             Section("Drive") {
                 LabeledContent("Name", value: descriptor.name)
                 LabeledContent("Drive ID", value: String(descriptor.driveID))
@@ -1244,6 +1249,13 @@ private struct ProviderDriveManagementView: View {
                 }
             }
         }
+        #if os(macOS)
+        // A grouped form exposes its controls individually to Accessibility;
+        // macOS List rows otherwise combine the action into an unnamed row.
+        return Form { content }.formStyle(.grouped)
+        #else
+        return List { content }
+        #endif
     }
 
     @ViewBuilder

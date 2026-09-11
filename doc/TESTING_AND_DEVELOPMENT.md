@@ -7,6 +7,8 @@ source of truth.
 
 - Project: `potassiumProvider.xcodeproj`
 - Scheme: `potassiumProvider`
+- Stability schemes: `potassiumProvider-Stability` and
+  `potassiumProviderFileProvider-Stability`
 - App target: `potassiumProvider`
 - File Provider extension target: `potassiumProviderFileProvider`
 - File Provider UI extension target: `potassiumProviderActions`
@@ -14,9 +16,23 @@ source of truth.
 - Unit test target: `potassiumProviderTests`
 - UI test target: `potassiumProviderUITests`
 
-The shared `potassiumProvider` scheme runs `potassiumProviderTests` in its Test
-action. UI automation remains a separate Xcode test-target workflow and is not
-part of the shared scheme's command-line test path.
+The existing `potassiumProvider` scheme includes both unit and UI test bundles.
+The `potassiumProvider-Stability` Test action intentionally includes only the
+unit test bundle so a diagnostic-store test never drives Finder or consumes a
+live credential. The File Provider Stability scheme has no Test action because
+the unit target imports the shared core, not the extension executable.
+
+Both shared app Test actions set `codeCoverageEnabled="NO"`. This repository
+has no coverage-upload or reporting consumer, and explicitly disabling coverage
+keeps coverage collection out of macOS Test actions. It does not disable any
+test bundle or live-safety gate.
+
+The unit suite is compile-time profile separated. `FinderStabilityCommandTests`
+is compiled only for macOS `STABILITY`; ordinary-domain registration, reload,
+error-path, and concurrent-add expectations are compiled only for the standard
+profile. The Stability profile instead verifies that the ordinary `addDomain`
+path fails closed without registration or persisted domain state. Neither
+profile's Test action runs a live Finder scenario.
 
 Do not use Tuist or root-level SwiftPM commands for validation unless the
 project is intentionally migrated.
@@ -35,10 +51,283 @@ Swift package dependencies are resolved by Xcode:
 The app imports split potassiumChannel modules directly. It should not import an
 old monolithic `potassiumChannel` module name.
 
-The project requires the published potassiumChannel 0.2 release line.
-`Package.resolved` must stay locked to the validated 0.2.0 release unless a
-later compatible package version is adopted and the full validation matrix is
-rerun.
+The project requires potassiumChannel 0.3.0. `Package.resolved` is locked to
+tag `0.3.0` at commit
+`db829f1f2bd8c2113a529c9c521bd5cdfb5ef4dc`. Changing that pin requires the
+adapter evidence matrix and full validation matrix to be rerun.
+
+## Stability Profile
+
+The `Stability` configuration is an opt-in debug-shaped build profile. It uses
+the production app identity, app group, entitlements, and manual-token Keychain
+flow, while adding the `STABILITY` Swift compilation condition. It never reads
+credentials from scheme arguments, environment variables, scripts, or test
+fixtures. The Debug-only UI fixture and all existing unified loggers are
+compiled out/disabled in this profile. Live checks stay outside CI.
+
+List and inspect it with:
+
+```sh
+xcodebuild -list -project potassiumProvider.xcodeproj
+xcodebuild -showBuildSettings \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -configuration Stability \
+  -destination 'platform=macOS'
+```
+
+Run only the profile/JSONL unit slice on macOS:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -destination 'platform=macOS,arch=arm64' \
+  -only-testing:potassiumProviderTests/StabilityDiagnosticsTests
+```
+
+An active run must be created by the Stability Lab tab or command before production
+runtime processes append JSONL. The factory deliberately returns no event
+store when no run exists. Ordinary Debug and Release builds keep SQLite
+activity/conflict history. `Snapshots.sqlite3` remains the store for snapshots,
+anchors, and working-set state in every profile.
+
+`StabilityDiagnosticsTests` covers run-manifest/pointer selection, concurrent
+coordinators, a real subprocess writer, two in-process writers, interrupted
+tail recovery, complete-line corruption, capacity refusal, symlink rejection,
+post-finish append refusal, retention, redaction, paging/filtering, statistics,
+cross-store observation, tombstone clear/domain removal, export, and factory
+selection. Its subprocess check uses Xcode's bundled Python executable only to
+act as an independent POSIX-locking process; production code has no Python or
+script dependency.
+
+Run the callback/network and Lab safety slices without live credentials:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -destination 'platform=macOS,arch=arm64' \
+  -only-testing:potassiumProviderTests/ProviderDiagnosticSpanTests \
+  -only-testing:potassiumProviderTests/FileProviderOperationLifecycleTests \
+  -only-testing:potassiumProviderTests/StabilityLabSafetyTests \
+  -only-testing:potassiumProviderTests/StabilityLabRemoteCoordinatorTests
+```
+
+The exact network-outcome checks use Swift Testing identifiers including their
+parentheses:
+
+```sh
+xcodebuild test-without-building \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -destination 'platform=macOS' \
+  '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/kdriveServiceExposesLazyObservableDownloadOperation()' \
+  '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/missingShareLinkIsRecordedAsSuccessfulOptionalResult()' \
+  '-only-testing:potassiumProviderTests/PotassiumProviderCoreTests/concurrentLazyTransferStartAndCancelShareOneDiagnosticSpan()'
+```
+
+These tests use only in-memory recorders, fake kDrive services, and pure root observations. They do
+not read Keychain credentials, register a File Provider domain, or mutate a
+remote account. The hosted macOS test bundle must be signed on machines where
+the unsigned XCTest worker cannot materialize.
+
+### Stability Lab safety workflow
+
+The macOS Stability build exposes a dedicated Stability Lab tab. Provisioning
+is enabled only when no saved or system-registered File Provider domain is
+present. Connect the dedicated non-customer development account through the
+existing OAuth or manual-token Keychain login, load an internal non-maintenance drive reached by
+that account, and let the lab create one unique folder inside the verified server-created
+`Private` directory, plus a fixed-name ownership marker. The
+stable root and marker file IDs are stored in the domain configuration; the
+domain is registered only after that evidence is durable locally. A failed
+registration leaves the ownership record in place and never auto-deletes the
+remote folder.
+
+Drive discovery proves internal membership, not product ownership. Lab-root
+ownership is instead bound procedurally: this build creates a child of the verified `Private` directory and a random versioned marker, persists the exact root/marker
+IDs locally, and requires those remote objects and marker bytes to match on
+every preflight.
+
+Before using a shared-identity Stability build, inspect ordinary domains with:
+
+```sh
+scripts/uninstall-file-provider.sh --dry-run
+```
+
+If the plan is correct, use the explicit safe cleanup path:
+
+```sh
+scripts/uninstall-file-provider.sh --yes
+```
+
+The app, File Provider extension, and contextual-action runtime all reject a
+saved domain whose purpose does not match the current build profile. The lab
+never invokes `--hard-purge`. Reset requires the exact phrase
+`DELETE STABILITY LAB CONTENTS`. It fully consumes the root listing, preserves
+the root and marker, and immediately re-fetches the root, marker, and each
+planned child's current parent before calling the reversible trash endpoint.
+It also re-queries system registration isolation immediately before each
+mutation. It never calls permanent deletion. A cross-process lifecycle lease
+prevents a diagnostics run from starting during reset and rejects reset while a
+run is active. Live provisioning/reset is opt-in and was not executed by the
+automated test suite.
+
+### Finder Stability runner
+
+The macOS Stability app runs an opt-in native Accessibility/Apple Events suite.
+The ordinary app bundle must be signed; test-host products with XCTest injection
+are not valid live builds. The macOS Stability containing app runs outside App
+Sandbox because Apple excludes assistive Accessibility APIs from sandboxed apps.
+Hardened runtime remains enabled. The File Provider and action extensions remain
+sandboxed, as do the standard app profiles. Accessibility, Automation, and screen
+recording still require normal macOS consent.
+
+```sh
+# Build/reinstall after source changes at the stable LaunchServices location.
+scripts/run-finder-stability.sh --build --preflight
+# One-time creation, or safe registration resume for an existing owned lab.
+scripts/run-finder-stability.sh --provision --yes-live
+# Read-only authentication, ownership, domain, and permission checks.
+scripts/run-finder-stability.sh --preflight --request-permissions
+# Reuse the installed signed Stability bundle without compiling again.
+scripts/run-finder-stability.sh --run --yes-live --request-permissions
+# Optional full acceptance: also exercise permanent deletion with exact-item confirmation.
+scripts/run-finder-stability.sh --run --yes-live --include-permanent-deletion
+scripts/run-finder-stability.sh --app "$HOME/Applications/Potassium Stability.app" --watch
+scripts/run-finder-stability.sh --recover-stale-run --yes-recover
+```
+
+The wrapper launches the app through LaunchServices with a private local console
+log, giving the standalone runner its own permission identity. Credentials remain
+in the app's Keychain flow; OAuth refresh also stays inside the app. No credential,
+account ID, remote URL, or root path is accepted as a runner argument. Exit 0 means
+ready or fully passed (according to the chosen mode), 3 means an unresolved
+checkpoint, 2 a safety rejection, and 1 failure or incomplete evidence. Exit 4 means
+the 15 selected scenarios passed and permanent deletion was deliberately deferred;
+it is a completed selection with a sealed report, not full sixteen-scenario acceptance.
+
+The default install is `~/Applications/Potassium Stability.app`; `--build` is
+explicit after the first install, refuses a running containing app, retains a
+local backup, verifies signing, and registers the installed extensions. `--app`
+selects an existing bundle without replacing it. A release copy in `/Applications`
+can have the same bundle identifier with a different designated signing
+requirement. Grant permissions to the installed Stability path, and compare
+signing requirements/registrations when Settings shows an enabled grant that the
+running app cannot use. Do not repeatedly compile or reset all privacy settings
+as a substitute for identifying the registered app.
+
+Every run creates a fresh owned subtree below the verified lab. The lab root,
+ownership marker, and previous contents are preserved. The runner binds each
+mutation target to its stable File Provider item and domain and re-fetches the
+ancestry of generated sources and destinations. It owns one Finder window, resolves
+fresh Accessibility state, and fails when a unique expected control is unavailable.
+UI observations use the remaining scenario deadline (90 seconds for ordinary
+scenarios), including delayed row rendering; they do not impose an earlier
+10-second observation cutoff. Failed row observations record only binding flags
+and matching-row counts, never window titles or other row contents.
+Initial fixture preparation has its own 90-second budget. It must finish within
+that budget before the first scenario receives its 90 seconds; setup failures
+cannot advance to navigation. The first report interval retains both phases and
+their diagnostics, so its total duration can exceed one scenario budget.
+File creation uses Finder copy/paste; editing opens Finder's selection in TextEdit
+and saves only the verified document.
+Hydration verifies the downloaded bytes, then closes the generated TextEdit
+document before eviction. Failure to release that presenter fails hydration.
+Eviction freshly binds the exact item and invokes Remove Download without a
+domain-wide stabilization prerequisite; it verifies the resulting menu/download
+state without reading the evicted file. Final diagnostic settling remains required.
+
+For independent two-client conflict testing, use `--conflicts --yes-live`, optionally
+with `--case content-after-preflight` (or another case listed in
+[Conflict testing](CONFLICT_TESTING.md)). Each selected case owns fresh fixtures and
+an immutable profile manifest. Unrelated scenarios are explicitly unselected; a
+conflict-profile pass never satisfies the original sixteen-scenario acceptance.
+
+The 16 scenarios cover navigation/change anchors, hydration, eviction, download,
+file/directory creation, edit/upload, rename, move, trash, restore, permanent
+selected-item deletion, concurrent preserve-both, cancellation/progress, actual
+working-set membership, and contextual actions. Trash expects `modifyItem`;
+permanent deletion expects `deleteItem`. Restore and deletion require an exactly
+identified provider-managed trashed fixture. Scenario 12 is deferred by default,
+before re-trashing the restored fixture or presenting a confirmation. Scenarios
+13–16 continue with their independent fixtures. `--include-permanent-deletion`
+selects scenario 12 and its exact-fixture confirmation, followed by rebinding.
+The flag is accepted only with `--run`; it does not grant confirmation itself.
+Empty Trash is never used.
+For a bound trashed fixture, the runner navigates its owned Finder window to the
+exact parent with Finder's native Apple Events target command, verifies that
+destination, and rebinds the item/domain before selecting its contextual action.
+Ordinary folder navigation continues to use Go to Folder. The native target path
+does not broaden Trash selection or bypass the destination/identity guards.
+Unavailable UI or inaccessible trash identity is incomplete coverage, never a pass.
+Metadata lookup checks the active endpoint first, then the typed Trash endpoint
+only after HTTP 404. The resolved drive/item identity must match exactly. Only
+absence from both endpoints becomes `noSuchItem`; the handled active 404 remains
+in diagnostics and needs successful correlated recovery evidence. This metadata
+fallback does not allow content or mutation preflight to operate on trashed items.
+Restore verification waits for the exact provider callback to complete, then polls
+active metadata within the existing deadline. A temporary 404 is pending; it cannot
+establish success. Identity, drive, parentage, contents, Finder visibility, and the
+final correlated diagnostic validation are still required. The resolved local URL
+must also have the expected restored parent and filename before Finder selection;
+an identity-bound URL that still points into Trash cannot pass.
+
+The Stability-only conflict barrier holds the exact local mutation after its real
+version preflight while the runner performs a competing typed remote replacement.
+Release sends the original real conditional request; no response is fabricated.
+The barrier is cancellable and bounded. Cancellation uses a 64 MiB generated
+transfer, retries with 256 MiB if necessary, and requires observed progress, actual
+Finder cancellation, one cancellation terminal, and a subsequent successful fetch
+for the same fixture. Contextual actions exercise favorite/unfavorite, duplicate,
+inherited-access share-link create/update/disable, and version restore as a copy.
+
+Ordinary scenario budgets are 90 seconds and transfer budgets 10 minutes. Operator
+pauses retain the same monitored run and extend the active deadline only on resume.
+The runner panel rechecks permissions and safety before continuing. Polling backs
+off and observes retry-after values. Callback waits reject late/double completion.
+After a scenario failure later scenarios are skipped and fixtures remain intact;
+the runner closes its dedicated Finder window after capturing evidence, on both
+success and failure. Cleanup addresses only the created window ID and verifies
+Finder's kernel process start time, so relaunches and reused IDs cannot close an
+unrelated window. Monitoring continues through closure and callback settlement.
+Cleanup failures remain visible and prevent certification. Started work must
+settle before final sealing.
+
+Version 2 and 3 reports require UI observations, fresh remote verification, item-specific
+spans, and the expected extension code hash/process identity. Missing starts,
+telemetry, conflicting terminals, cached hydration, root-only working-set evidence,
+and untriggered conflict/cancellation cannot certify a pass. Version 3 adds the
+scenario-12-only skip reason `permanentDeletionNotSelected`; its assertions remain
+not evaluated. Versions 1 and 2 remain readable as historical evidence. A successful
+full acceptance requires all 16 scenarios, including explicitly selected deletion,
+on both a fresh extension and an already running extension; unit tests and permission
+checkpoints do not establish live acceptance. See `STABILITY_LOOP_AUDIT.md` for the
+current completed evidence and outstanding live coverage.
+Recording begins before context preflight. A failed context load preserves an
+unsealed bundle requiring explicit stale-owner recovery after the runner exits.
+The launcher may register the extension before this point, so recording order
+alone is insufficient evidence of a fresh extension launch.
+
+Screenshots are cropped to generated selected Finder rows and retained locally in
+`visual-evidence`, outside ordinary diagnostic exports. Closed failure reasons,
+run-local aliases, a chronological diagnostic timeline, and immutable reports support
+diagnosis. A writer-health failure latch prevents sealing after a recorder gap.
+`--watch` reads active scenario/state, sanitized errors, cancellations, retries,
+and lifecycle events. The Test action and
+CI never invoke this live command. Stale-run recovery requires the recorded owner
+to have exited, preserves an immutable abandonment record, and only releases the
+local lease; it performs no remote mutation.
+
+TextEdit editing uses native Select All, Paste, and Save menu-item actions,
+without opening a menu-tracking loop or assuming a US physical keyboard layout.
+The runner verifies the replacement text before Save, observes the close button's
+edited flag clearing, then closes only the bound document. The local menu probe
+and the subsequent real provider edit/upload scenario both passed; the full
+16-scenario cold/warm acceptance remains open.
+Permanent deletion requires absence from active-file, existence, and Trash API
+checks; disappearance from Trash alone could mean restoration.
 
 ## Commands
 
@@ -91,6 +380,23 @@ xcodebuild test \
   -scheme potassiumProvider \
   -destination 'platform=macOS'
 ```
+
+Run the isolated Stability unit suite on the same Mac destination:
+
+```sh
+xcodebuild test \
+  -project potassiumProvider.xcodeproj \
+  -scheme potassiumProvider-Stability \
+  -configuration Stability \
+  -destination 'platform=macOS,arch=arm64'
+```
+
+Do not add credentials to either command. Accept a run only when its
+`.xcresult` summary reports `result: Passed`, zero failed tests, and zero
+cancelled tests. The standard scheme includes its UI action; its completion is
+separate from the ordinary and Stability unit-profile acceptance checks. See
+[`STABILITY_LOOP_AUDIT.md`](STABILITY_LOOP_AUDIT.md) for the dated macOS result
+bundle evidence and any current local-host limitation.
 
 Use `xcodebuild -showdestinations` to copy the exact Mac destination if local
 Xcode requires a more specific macOS variant.
@@ -185,14 +491,16 @@ and visionOS Files:
    and can still be permanently deleted.
 3. Verify Download Now and Remove Download are system-provided for normal files
    and folders.
-4. Create public and password-protected links, update options, copy/share the
-   URL, and disable the link. Inspect activity export and unified logs to ensure
-   the URL and password never appear.
+4. Create public, inherited-access, and password-protected links. Set and then
+   clear an expiration, copy/share the URL, and disable the link. Inspect
+   activity export and unified logs to ensure the URL, password, access value,
+   and expiration never appear. An unknown returned access value must stop the
+   action instead of being displayed as public.
 5. Page a document's version history and restore a version as a collision-safe
    copy in its current parent. Confirm the current file is unchanged.
 6. Exercise Show in Finder/Files and Sync Now for every configured drive.
 
-## 0.2.0 Transfer Gates
+## 0.3.0 Transfer Gates
 
 Run these checks on macOS with a development File Provider domain and a test
 kDrive account. Do not use customer data.
@@ -207,6 +515,16 @@ kDrive account. Do not use customer data.
    below 125% of the single-transfer baseline.
 3. Repeat cancellation while the second transfer is waiting. Confirm it never
    starts and the next transfer can acquire the released permit.
+4. Confirm a direct create or replacement at exactly `1_000_000_000` bytes is
+   admitted by the pure request preflight, while one byte above is rejected
+   before callback content loading or request construction with the
+   session-required error. Automated coverage uses a sparse oversized file to
+   exercise the pre-buffer boundary without allocating or sending a one-gigabyte
+   payload. Use an official session-capable client for larger files until this
+   provider has a file-backed session path.
+5. With a sanitized mock response, confirm HTTP 408 and 429 map to File Provider
+   `.serverUnreachable`, a numeric Retry-After value is parsed, and invalid or
+   HTTP-date values are discarded without entering diagnostics.
 
 Automated `AsyncOperationLimiter` tests cover the concurrency cap, cancellation
 while waiting, and permit release after errors. These manual checks cover the
@@ -223,3 +541,156 @@ known logical names, paths, types, dates, hashes, device names, or plaintext
 bytes. Benchmark 100,000 items, 10,000 siblings, and multi-gigabyte files. Safe
 migration/rekey design and independent review with all high-severity findings
 resolved are required before default enablement.
+
+
+### Mac setup accessibility and concurrent regression tests
+
+The Mac drive management screen uses a grouped Form to expose action controls.
+The Advanced disclosure control is identified by its native disclosure role and
+label, leaving the token/save controls' own identifiers intact. Both the arrow and
+label toggle its expansion state. Drive navigation rows include their spacer in
+the hit area, so a normal centre click opens the destination. UI tests distinguish
+inline empty-state controls from toolbar refresh and accept the combined accessible
+sign-in heading. Synthetic fixtures remain isolated from saved accounts and tokens.
+
+Diagnostic change subscriptions cover appends immediately after registration.
+Their cross-store test waits for the observation under the test's overall deadline,
+without assuming a worker starts within a subsecond sleep. The SQLite initialization
+contention test runs its blocking opener and lock-release timer on dedicated queues;
+this preserves real WAL contention without depending on cooperative executor width.
+Working-set batch tests use explicit suspension gates to verify the four-folder
+limit, complete ordered results, and no cursor/watermark advancement after cancellation
+or HTTP 429. Live deadlines and original sixteen-scenario acceptance are unchanged.
+
+The Mac UI runner launches its sibling app product by URL to avoid another checkout's
+Launch Services registration. All launch and performance tests use synthetic setup
+state, and diagnostic trees are scoped to the app window. When sharing a SwiftPM
+product between the core framework and extensions, retain its host-app product
+dependency: Xcode must embed and sign the generated package framework. A build-only
+or unsigned CI pass cannot establish successful local library validation.
+
+`testLaunchToSetupReadinessPerformance` measures elapsed time from launching the
+synthetic app through opening Setup and observing its enabled Add Account control.
+Termination happens before measurement. It uses `XCTClockMetric`, so every sample
+covers the whole verified interaction, including XCTest automation overhead. It is
+not comparable to the former first-frame/responsive-launch signpost benchmark.
+Two CI runs lost built-in launch signpost samples despite successful app/window
+checks; both failures remain retained. Missing timing samples or failed readiness
+assertions still fail the new benchmark.
+
+Finder permanent-deletion confirmation uses the exact display name obtained from
+the verified selected URL before opening the contextual command. Hidden extensions
+must not be guessed or stripped from paths. Only one newly opened dialog or sheet
+of the owned window may match the complete quoted name with exactly Cancel/Delete
+controls. Different selections, partial names, or distinct matching dialogs fail
+closed. Exact-fixture operator confirmation and provider/domain rebinding remain
+required, and only a `deleteItem` callback plus authoritative absence proves deletion.
+
+Poll-scheduling tests hold fake I/O behind explicit cancellable gates. Start
+notifications establish ordering; queue-count observations are bounded by the
+overall one-minute test deadline rather than a short executor-scheduling assumption.
+CI runs both Mac profiles and retains `.xcresult` bundles for 14 days for every
+destination, including failures. Interrupted/incomplete bundles remain diagnostic
+evidence only and must never be treated as passing results.
+
+Finder context menus use a secondary click on the unique display-name field of the
+verified selection, with fresh geometry contained in the owned window. The driver
+does not require an advertised `AXShowMenu` action for this mouse route: Finder can
+omit that action while still exposing the native contextual menu. Ambiguous fields
+and missing/out-of-window geometry remain hard failures.
+
+Download Now is dispatched by a native click inside the uniquely identified popup
+menu and returns once that popup dismisses. Its transfer completion is observed
+through diagnostics, allowing cancellation while work is active; the command does
+not wait for AX action completion or a later Finder Apple Event. Other contextual
+actions keep their result checks.
+
+Preserve-both, cancellation/progress, working-set refresh and contextual actions
+are independent continuation cases:
+they each prepare a new run-owned fixture and repeat safety preflight even when
+an earlier scenario failed. The failed step stays failed, and the bundle cannot
+be certified as passing. Dependent steps still stop after a prerequisite failure.
+
+Transfer cancellation registers an incremental diagnostic cursor before Download
+Now and checks appended local records every 50 ms. This does not contact the API;
+remote verification retains bounded backoff and Retry-After. A callback must match
+the scenario, item alias, extension build, process, and parent span. Intermediate
+progress excludes 0% and 100%. A completed transfer ends the cancel-control search
+and triggers the larger-fixture retry; it never counts as cancellation. Recovery
+uses another pre-dispatch cursor and requires a new successful fetch.
+
+The cancellation driver also recognizes Finder's active AX progress indicator in
+the exact bound row. It can send one native click to its fresh, confined center
+when no labeled Cancel control exists. A click is only an attempted UI action;
+actual cancellation, exactly one terminal and a subsequent successful fetch remain
+mandatory. Empty/completed/nonfinite progress and ambiguous or unconfined geometry
+are rejected.
+
+Actions extension registration is checked separately during preflight. Finder can
+launch an older Actions copy while the replicated instance uses the correct build.
+Discovery must contain exactly the selected app's Actions extension; missing,
+duplicate or malformed discovery is rejected. See `FILE_PROVIDER_CLEANUP.md` for
+registration-only repair. This does not replace final Actions code-hash evidence.
+
+Finder contextual command selection is confined to the single visible transient
+root menu and its direct commands. Expanded submenus are subordinate to that root;
+application menu-bar commands and ambiguous independent popups are excluded.
+
+Native Finder clicks move before pressing and revalidate the bound target after
+that movement. Ordinary menu/control observations retain a 90-second limit inside
+a transfer scenario; only transfer progress/completion waits use the longer budget.
+
+For Remove Download and Download Now, the driver prefers Finder's named Actions
+toolbar control in its bound window after verifying the single selected item. The
+toolbar omits provider actions and selected-item deletion, so those retain the item
+context menu. An absent toolbar control also retains the confined secondary-click
+path. Both paths must expose one actual popup containing the exact enabled command
+before any action is invoked.
+
+
+Actions panels on macOS can receive an opaque system selection identifier and
+expose their Accessibility tree in the Actions process rather than Finder. The
+production UI resolves the canonical provider identifier and verifies its domain
+before loading action data. Stability binds the panel's run-local alias to that
+canonical identifier and requires the installed Actions executable path/code hash.
+Do not use filenames, raw document IDs, a panel title, or the first window as a
+fallback. Resolution uses one bounded 90-second callback budget and retains no URL
+or raw system error in its messages. Negative resolver/panel-target tests cover
+wrong domains/engines, old code, ambiguous panels, timeout and cancellation.
+The sealed `212e54e` run passed 13 scenarios; cancellation and contextual actions
+failed and deletion was deferred. This is not completed Mac acceptance.
+
+Hosted Actions sheets may have an empty `AXWindows` array and a valid `AXMainWindow`.
+Stability includes that main window only from the attested Actions process and
+still requires the resolved run-local alias, explicitly published on the native
+AppKit root. Discovery deduplicates the same listed/main window. A visible form
+without this identity cannot produce a passing result or authorize cleanup.
+
+A containing-app permission preflight does not establish the Actions extension's
+first-use data-access consent. A live retry encountered that macOS prompt while
+opening its shared diagnostic coordinator file; the operator accepted it. Alias
+discovery now runs off the UI actor with bounded waiting and publishes a cached
+value; SwiftUI layout and AX binding perform no shared-store I/O. Done can dismiss
+a loading panel, while mutation-in-progress still disables it. Consent remains a
+system requirement; a blocked lookup or unbound panel cannot count as a pass.
+
+
+Stability preflight qualifies shared-container provisioning for the installed app,
+replicated extension, and Actions extension. A valid signature is insufficient:
+each embedded profile must authorize the signed explicit application identity and
+existing App Group, and be unexpired. Rejection reports only the affected target
+role; profile contents, developer identifiers and certificates are never exported.
+Both extension targets enable `REGISTER_APP_GROUPS = YES`. `--build` permits
+Xcode's normal automatic provisioning refresh using its saved developer account.
+See [Apple's container authorization guidance](https://developer.apple.com/documentation/xcode/accessing-app-group-containers).
+Repeated data-access prompts require inspecting provisioning before requesting
+another permission grant; do not reset TCC or migrate the app/Keychain group.
+
+
+A frontmost Finder process and valid event-posting permission do not prove that
+Finder receives a mouse click. Native pointer actions now require a system-wide
+AX hit belonging to the exact selected Finder row or popup item. Verification runs
+before moving and again after hover. An obstructed target records environment /
+uiUnavailable with local reason `pointerTargetObstructed`, without reading the
+other app's UI. Its failure screenshot is omitted to exclude unrelated content.
+The failed result remains unaccepted; clear the obstruction before rerunning.

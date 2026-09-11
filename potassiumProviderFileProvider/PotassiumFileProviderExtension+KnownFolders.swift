@@ -17,6 +17,12 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
         }
 
         Task {
+            let span = await ProviderDiagnosticSpan.start(
+                source: .fileProviderExtension,
+                operation: .knownFolderLocations,
+                recorder: diagnosticRecorder
+            )
+            await span.withCorrelation {
             do {
                 let runtime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
                 if let vault = runtime.encryptedVault {
@@ -47,6 +53,7 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
                             filename: "Documents"
                         )
                     }
+                    await span.complete(statusClass: .success)
                     completionHandler(locations, nil)
                     return
                 }
@@ -93,6 +100,7 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
                 }
 
                 FileProviderLog.replicatedExtension.info("resolved known folders under kDrive parent item(\(parentFileID, privacy: .public)) for domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public))")
+                await span.complete(statusClass: .success)
                 completionHandler(locations, nil)
             } catch {
                 let mappedError: Error
@@ -104,7 +112,9 @@ extension PotassiumFileProviderExtension: NSFileProviderKnownFolderSupporting {
                     mappedError = providerErrorMapping(error).mappedError
                 }
                 FileProviderLog.replicatedExtension.error("failed to resolve the kDrive known-folder location for domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public)): \(error.localizedDescription, privacy: .private)")
+                await span.fail(error: mappedError)
                 completionHandler(nil, mappedError)
+            }
             }
         }
     }
