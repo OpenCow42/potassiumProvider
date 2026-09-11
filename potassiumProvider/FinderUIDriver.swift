@@ -382,7 +382,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
             deletionDialogExpectation = FinderDeletionDialogExpectation(selectedURL: url, displayName: displayName)
             print("finder stability UI: deletion display name bound; differsFromFilename=\(displayName != url.lastPathComponent)")
         }
-        try await showSelectedContextMenu()
+        try await showSelectedContextMenu(for: title)
         do {
             var commandItem: AXUIElement?
             var commandMenu: AXUIElement?
@@ -448,7 +448,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
     func hasContextAction(_ title: String, on url: URL) async throws -> Bool {
         try await select(url)
         try await activateFinder()
-        try await showSelectedContextMenu()
+        try await showSelectedContextMenu(for: title)
         do {
             try await wait { self.contextMenu() != nil }
             guard let menu = contextMenu() else { throw FinderUIError.controlUnavailable }
@@ -840,14 +840,14 @@ final class SystemFinderUIDriver: FinderUIDriving {
             fields: candidates.map { .init(name: string($0, kAXValueAttribute), bounds: rect($0)) })
     }
 
-    private func showSelectedContextMenu() async throws {
+    private func showSelectedContextMenu(for title: String) async throws {
         // Finder exposes the selected item's contextual commands through its
         // Actions toolbar menu too. Prefer this named Accessibility control.
         guard let selectionURL, try verifySelection(selectionURL), let window = finderWindowAX() else {
             throw FinderUIError.selectionMismatch
         }
         let toolbars = elements(window).filter { string($0, kAXRoleAttribute) == kAXToolbarRole }
-        if toolbars.count == 1, let toolbar = toolbars.first, let windowBounds = rect(window), let toolbarBounds = rect(toolbar) {
+        if FinderToolbarActionTarget.supports(command: title), toolbars.count == 1, let toolbar = toolbars.first, let windowBounds = rect(window), let toolbarBounds = rect(toolbar) {
             let buttons = elements(toolbar).filter { string($0, kAXRoleAttribute) == kAXMenuButtonRole }
             if let index = FinderToolbarActionTarget.index(window: windowBounds, toolbar: toolbarBounds,
                 buttons: buttons.map { .init(description: string($0, kAXDescriptionAttribute),

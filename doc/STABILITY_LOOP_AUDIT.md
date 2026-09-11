@@ -2066,3 +2066,28 @@ Toolbar selection regressions finalized successfully in
 standard Mac build passed (`potassium-toolbar-menu-standard-mac-01.log`). The
 preceding transfer scenario's duration fell to 106 seconds including fixture
 preparation and failure capture; its menu lookup used the 90-second UI cap.
+
+### Limit the toolbar route to observed commands (2026-09-11)
+
+Run `f8f56eaf-4755-4f02-aa8b-462cbf4eff63` on `7209e06` passed scenarios
+1–10. Remove Download and Download Now worked through the toolbar; the download
+dispatch returned in 0.72 seconds. Restore then exposed an important UI distinction:
+the toolbar menu omits `Restore from kDrive Trash`. Computer use observed only
+Finder's built-in commands, including Empty Trash, which was never invoked. The
+contextual-actions menu likewise omitted the provider's favorite command. Toolbar
+routing is now limited to the two verified built-in download commands. Provider
+actions and selected-item permanent deletion retain their item-context route, with
+parameterized regression coverage for that distinction.
+
+Native pointer delivery moves from the HID entry point to the logged-in session's
+public event tap, retaining permission, target revalidation, modifier, click and
+release checks. A boolean cursor-position observation after movement distinguishes
+a posted request from actual pointer movement; no coordinates are exported. This
+is a candidate routing correction requiring live confirmation. A missed native
+click still cannot count as a completed operation or cancellation.
+
+The toolbar run eventually sealed **12 passed, three failed, one skipped** after
+its outstanding callbacks settled. No evidence was recovered or forcibly sealed.
+All owned windows closed. The command-routing/session-pointer regressions finalized
+in `potassium-session-pointer-stability-mac-01.xcresult` with zero failures/skips;
+the standard Mac build passed (`potassium-session-pointer-standard-mac-01.log`).

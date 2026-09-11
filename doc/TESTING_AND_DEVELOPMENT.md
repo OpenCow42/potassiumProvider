@@ -640,7 +640,9 @@ Native Finder clicks move before pressing and revalidate the bound target after
 that movement. Ordinary menu/control observations retain a 90-second limit inside
 a transfer scenario; only transfer progress/completion waits use the longer budget.
 
-For contextual menus, the driver prefers Finder's named Actions toolbar control
-in its bound window after verifying the single selected item. If that control is
-absent, it retains the confined secondary-click path. Both paths must expose one
-actual popup containing the exact enabled command before any action is invoked.
+For Remove Download and Download Now, the driver prefers Finder's named Actions
+toolbar control in its bound window after verifying the single selected item. The
+toolbar omits provider actions and selected-item deletion, so those retain the item
+context menu. An absent toolbar control also retains the confined secondary-click
+path. Both paths must expose one actual popup containing the exact enabled command
+before any action is invoked.

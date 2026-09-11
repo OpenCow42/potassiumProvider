@@ -9,7 +9,7 @@ enum FinderPointerClick {
     static func perform(at point: CGPoint, button: CGMouseButton,
                         mayClick: () throws -> Bool,
                         canPostEvents: () -> Bool = { CGPreflightPostEventAccess() },
-                        post: (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
+                        post: (CGEvent) -> Void = { $0.post(tap: .cgSessionEventTap) },
                         settle: () async throws -> Void = { try await Task.sleep(for: .milliseconds(40)) }) async throws -> Bool {
         let permitted = canPostEvents()
         print("finder stability UI: native pointer permission=\(permitted)")
@@ -17,6 +17,8 @@ enum FinderPointerClick {
         guard try mayClick() else { return false }
         post(try event(.mouseMoved, at: point, button: button))
         try await settle()
+        let cursor = CGEvent(source: nil)?.location
+        print("finder stability UI: session pointer position confirmed=\(cursor.map { abs($0.x - point.x) < 2 && abs($0.y - point.y) < 2 } == true)")
         guard try mayClick() else { return false }
         let down = try event(button == .right ? .rightMouseDown : .leftMouseDown, at: point, button: button)
         let up = try event(button == .right ? .rightMouseUp : .leftMouseUp, at: point, button: button)

@@ -2,6 +2,12 @@
 import CoreGraphics
 
 enum FinderToolbarActionTarget {
+    // Live Finder's toolbar omits provider commands and selected-item deletion.
+    // Use it only for the two built-in download commands verified through it.
+    static func supports(command: String) -> Bool {
+        ["Remove Download", "Download Now"].contains(command)
+    }
+
     struct Button {
         let description: String?
         let enabled: Bool

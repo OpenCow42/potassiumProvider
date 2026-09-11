@@ -15,6 +15,13 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+The toolbar path passed the first ten live scenarios but omitted provider Restore
+and favorite actions. It is now limited to the two verified built-in download
+commands; provider actions and selected deletion retain their item context menu.
+Parameterized routing regressions protect this distinction. Native session-level
+pointer delivery and cursor-position observations still require live verification.
+No missing command is replaced by broader selection or Empty Trash; CR-013 stays open.
+
 Granted event-posting permission and the revised pointer sequence did not resolve
 the subsequent missing-menu trace. The harness now prefers Finder's named Actions
 toolbar menu for the exact bound selection, with negative confinement regressions.

@@ -8,6 +8,17 @@ struct FinderToolbarActionTargetTests {
     let toolbar = CGRect(x: 0, y: 0, width: 500, height: 60)
     let button = CGRect(x: 300, y: 10, width: 30, height: 30)
 
+    @Test(arguments: ["Restore from kDrive Trash", "Add to kDrive Favorites", "Remove from kDrive Favorites",
+                      "Duplicate on kDrive", "Share kDrive Link…", "Version History…", "Delete Immediately…"])
+    func providerAndSelectedDeletionCommandsKeepTheirItemContextMenu(_ command: String) {
+        #expect(!FinderToolbarActionTarget.supports(command: command))
+    }
+
+    @Test(arguments: ["Remove Download", "Download Now"])
+    func verifiedBuiltInDownloadsUseTheToolbar(_ command: String) {
+        #expect(FinderToolbarActionTarget.supports(command: command))
+    }
+
     @Test func choosesTheExactEnabledActionsControlWithinTheBoundToolbar() {
         #expect(FinderToolbarActionTarget.index(window: window, toolbar: toolbar, buttons: [
             .init(description: "Group", enabled: true, bounds: button),

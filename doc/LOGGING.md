@@ -384,3 +384,8 @@ and exact enabled-command count without exporting file names or URLs.
 Native pointer dispatch records the boolean result of the read-only event-posting
 permission check before emitting input. Denial fails immediately without presenting
 a consent dialog; the trace does not conflate a denied event with a missing command.
+
+Session pointer delivery also records whether the observed cursor reached its
+requested target after movement. This is a boolean diagnostic, not a substitute
+for an observed menu, invoked action or real provider callback. Coordinates remain
+local to the driver and are not exported.
