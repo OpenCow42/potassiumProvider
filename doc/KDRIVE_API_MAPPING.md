@@ -182,9 +182,32 @@ Share access supports the three documented values: `public`, `inherit`, and
 Share updates retain potassiumChannel's typed method, path, response envelope,
 and API client. The app replaces only the encoded body because the 0.3.0
 synthesized encoder omits a nil optional, while the endpoint defines
-`valid_until` as nullable. A missing local expiration is therefore encoded as
-JSON null to clear an existing expiration. Request bodies, passwords, and
-returned share URLs never enter diagnostics.
+`valid_until` as nullable. Read the current link first and send only changed
+capabilities, access policy, and expiration, except that comment intent always
+remains explicit: the [official update contract](https://developer.infomaniak.com/docs/api/put/2/drive/%7Bdrive_id%7D/files/%7Bfile_id%7D/link)
+defaults omitted/null `can_comment` to `can_edit`, rather than preserving its
+previous value. Encode JSON null only to clear an
+existing expiration, and omit the field when it is already absent or unchanged.
+An explicit changed date is encoded directly. Password rotation remains explicit
+because the current password cannot be read; an otherwise unchanged configuration
+returns the authoritative read without issuing an empty PUT. This avoids
+invoking a plan-gated expiration setting during an unrelated edit; Infomaniak's
+official client omits the field for free drives. A failed preflight does not update
+the link. This is not a conditional-write guarantee: concurrent changes can still
+race with the request. Request bodies, passwords, and returned share URLs never
+enter diagnostics. `KDriveAPIEvidenceTests` covers set, clear, unchanged absence,
+failed preflight, minimal comments updates, no-op saves, access changes and password
+rotation, including preservation of comments during an independent download restriction.
+
+After create/update, the Actions view compares all reported settings with the
+request before claiming success. It displays the authoritative response and an
+unapplied-settings error if any reported capability, access mode, or expiration
+differs. The check excludes passwords, which the API does not return, and normalizes
+expiration to whole seconds. It neither retries with broader access nor rolls back
+a partially applied write. `ShareLinkSettingsVerificationTests` covers every
+reported field and those representation boundaries. A generated-file live probe
+confirmed that HTTP 200 can accompany an unchanged comments setting; the server's
+reason remains unconfirmed.
 
 Favorite, trash restore, share update/delete, and permanent trash deletion do
 not have a documented conditional version token. Their exact last-writer and

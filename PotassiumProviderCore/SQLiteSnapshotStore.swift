@@ -1,6 +1,10 @@
 import Foundation
 @preconcurrency import SQLite
 
+/// Snapshot saves and working-set writes reserve the SQLite writer before reading
+/// their predicates. A deferred transaction cannot wait when upgrading a WAL snapshot
+/// while another connection owns the writer; the existing busy timeout applies
+/// to the initial immediate reservation instead. No network work holds that lock.
 public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotStatisticsProviding, KDriveWorkingSetStateStoring {
     private let databaseURL: URL
     private let database: Connection
@@ -84,7 +88,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         containerIdentifier: String,
         condition: KDriveSnapshotSaveCondition
     ) throws {
-        try database.transaction {
+        try database.transaction(.immediate) {
             try saveSnapshot(
                 snapshot,
                 domainIdentifier: domainIdentifier,
@@ -498,7 +502,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         minimumInterval: TimeInterval
     ) throws -> Bool {
         var claimed = false
-        try database.transaction {
+        try database.transaction(.immediate) {
             let query = WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
             if let row = try database.pluck(query) {
                 if let lastAttempt = row[WorkingSetSchema.lastPollAttemptAt],
@@ -529,7 +533,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
         condition: KDriveWorkingSetCommitCondition = .unconditional
     ) throws -> KDriveWorkingSetSnapshot {
         var committedSnapshot: KDriveWorkingSetSnapshot?
-        try database.transaction {
+        try database.transaction(.immediate) {
             if case .matchingAnchor(let expected) = condition,
                try workingSetSnapshot(domainIdentifier: domainIdentifier)?.anchor != expected {
                 throw KDriveSnapshotStoreError.staleSnapshot(domainIdentifier: domainIdentifier, containerIdentifier: "working-set")
@@ -586,7 +590,7 @@ public actor KDriveSnapshotSQLiteStore: KDriveSnapshotStoring, KDriveSnapshotSta
     public func publishKnownWorkingSetItem(_ item: KDriveRemoteItem, replacing expectedItem: KDriveRemoteItem?,
                                           domainIdentifier: String, recordedAt: Date) throws -> Bool {
         var published = false
-        try database.transaction {
+        try database.transaction(.immediate) {
             let query = WorkingSetSchema.pollState.filter(WorkingSetSchema.domainIdentifier == domainIdentifier)
             let row = try database.pluck(query)
             let previous = try workingSetSnapshot(domainIdentifier: domainIdentifier)

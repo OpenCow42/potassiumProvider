@@ -682,7 +682,7 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                             throw error
                         }
                     }
-                if let updated = result.item,
+                if !result.trashed, let updated = result.item,
                    !changedFields.intersection([.contents, .filename, .parentItemIdentifier, .contentModificationDate]).isEmpty {
                     await self.publishKnownWorkingSetItem(updated,
                         replacing: updated.id == fileID ? knownBefore : nil, runtime: loadedRuntime)
@@ -698,7 +698,8 @@ public final class PotassiumFileProviderExtension: NSObject, NSFileProviderRepli
                 await signalRecoverableProviderErrorsResolved(for: self.domain)
                 await lifecycle.finish(markProgressComplete: true,
                     diagnosticItemMetadataAlias: StabilityDiagnosticIdentity.activeMetadataAlias(for: result.item)) {
-                    completionHandler(result.item.map { FileProviderItem(remoteItem: $0, rootFileID: loadedRuntime.configuration.rootFileID) },
+                    completionHandler(result.item.map { FileProviderItem(remoteItem: $0,
+                        rootFileID: loadedRuntime.configuration.rootFileID, isTrashed: result.trashed) },
                         result.remainingFields, false, nil)
                 }
             } catch is CancellationError {

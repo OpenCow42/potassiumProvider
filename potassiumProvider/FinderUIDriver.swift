@@ -35,6 +35,8 @@ protocol FinderUIDriving: FinderUINavigating, FinderDocumentUIDriving {
     func hasContextAction(_ title: String, on url: URL) async throws -> Bool
     func trash(_ url: URL) async throws
     func cancelDownload(_ url: URL, whilePending: () throws -> Bool) async throws -> Bool
+    func copyAndCancelDownload(_ source: URL, to parent: URL,
+                               observation: () throws -> FinderCopyCancellationState) async throws -> Bool
     func confirmPermanentDeletion(_ url: URL, fixtureAlias: UUID) async throws
     func panelAction(_ action: FinderPanelAction) async throws
     func capture(in directory: URL, sequence: Int) async throws
@@ -78,6 +80,7 @@ final class SystemFinderUIDriver: FinderUIDriving {
     private var deletionDialogExpectation: FinderDeletionDialogExpectation?
     private var lastDeletionDialogObservation: String?
     private var lastRowObservation: String?
+    private var lastActionPanelObservation: String?
     private var ownedEditorDocuments: [URL: FinderProcessIdentity] = [:]
 
     func useDeadline(_ remaining: @escaping @MainActor () -> Duration) { remainingTime = remaining }
@@ -130,9 +133,11 @@ final class SystemFinderUIDriver: FinderUIDriving {
         }
     }
 
-    private func closeOwnedFinderWindows() async throws {
-        let cleanupDeadline = StabilityDeadline(budget: .seconds(90))
-        remainingTime = { cleanupDeadline.remaining() }
+    private func closeOwnedFinderWindows(preservingDeadline: Bool = false) async throws {
+        if !preservingDeadline {
+            let cleanupDeadline = StabilityDeadline(budget: .seconds(90))
+            remainingTime = { cleanupDeadline.remaining() }
+        }
         guard let ownership = windowOwner else { return }
         guard ownership.process == finderProcessIdentity() else {
             windowID = nil; windowOwner = nil; currentURL = nil; selectionURL = nil; menuIsOpen = false
@@ -396,6 +401,8 @@ final class SystemFinderUIDriver: FinderUIDriving {
             var commandItem: AXUIElement?
             var commandMenu: AXUIElement?
             var lastMenuObservation: String?
+            var windowRefresh = FinderMenuWindowRefresh()
+            let menuOpenedAt = ContinuousClock.now
             try await wait {
                 guard let menu = self.contextMenu() else {
                     let count = self.elements(self.finderAX()).filter { self.string($0, kAXRoleAttribute) == kAXMenuRole &&
@@ -409,7 +416,28 @@ final class SystemFinderUIDriver: FinderUIDriving {
                 }
                 let observation = "commandMatchCount=\(matches.count) enabled=\(matches.first.map { (self.attribute($0, kAXEnabledAttribute) as? Bool) != false } ?? false)"
                 if observation != lastMenuObservation { print("finder stability UI: contextual command observation; " + observation); lastMenuObservation = observation }
-                guard matches.count == 1, let item = matches.first else { return false }
+                guard matches.count == 1, let item = matches.first else {
+                    if windowRefresh.claim(command: title, matchingCommands: matches.count,
+                                           elapsed: menuOpenedAt.duration(to: .now)) {
+                        try await self.dismissContextMenu()
+                        guard try self.verifySelection(url), let oldWindow = self.finderWindowAX(),
+                              !self.elements(oldWindow).contains(where: { self.string($0, kAXRoleAttribute) == kAXSheetRole }) else {
+                            throw FinderUIError.windowMismatch
+                        }
+                        // Preserve this action's deadline and close only our
+                        // recorded window ID, without touching editor documents.
+                        try await self.closeOwnedFinderWindows(preservingDeadline: true)
+                        try await self.navigate(to: url.deletingLastPathComponent())
+                        try await self.select(url)
+                        try await self.activateFinder()
+                        self.windowsBeforeAction = self.attribute(self.finderAX(), kAXWindowsAttribute) as? [AXUIElement] ?? []
+                        self.windowBeforeAction = self.finderWindowAX()
+                        try await self.showSelectedContextMenu(for: title)
+                        lastMenuObservation = nil
+                        print("finder stability UI: missing command retried in a new owned window")
+                    }
+                    return false
+                }
                 guard (self.attribute(item, kAXEnabledAttribute) as? Bool) != false else { return false }
                 commandItem = item; commandMenu = menu
                 return true
@@ -587,48 +615,138 @@ final class SystemFinderUIDriver: FinderUIDriving {
     }
 
     func cancelDownload(_ url: URL, whilePending: () throws -> Bool) async throws -> Bool {
-        guard try whilePending() else { return false }
-        try await select(url)
+        var phase = "verifyPending"
+        do {
+            guard try whilePending() else { return false }
+            phase = "verifyTransferSelection"
+            // Download Now already selected and activated this exact item.
+            // Do not reassign Finder selection while its short transfer runs.
+            guard FinderUIURLIdentity.matches(selectionURL, url), try verifySelection(url),
+                  NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
+                throw FinderUIError.selectionMismatch
+            }
+            phase = "observeCancelControl"
+            var invoked = false
+            try await wait {
+                guard try whilePending() else { return true }
+                guard let selected = self.selectedElement() else { return false }
+                let nodes = self.elements(selected)
+                if let cancel = nodes.first(where: {
+                    let label = self.string($0, kAXDescriptionAttribute) ?? self.string($0, kAXTitleAttribute) ?? ""
+                    return label.localizedCaseInsensitiveContains("cancel")
+                }) {
+                    guard try whilePending() else { return true }
+                    phase = "pressCancelControl"
+                    guard AXUIElementPerformAction(cancel, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
+                } else {
+                    guard let window = self.finderWindowAX(), let windowBounds = self.rect(window), let rowBounds = self.rect(selected),
+                          let point = FinderTransferCancellationTarget.point(window: windowBounds, row: rowBounds,
+                            indicators: nodes.filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
+                                .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
+                            }) else { return false }
+                    guard try whilePending() else { return true }
+                    phase = "clickProgressIndicator"
+                    if let indicator = nodes.first(where: { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }) {
+                        var names: CFArray?
+                        let result = AXUIElementCopyActionNames(indicator, &names)
+                        let actions = names as? [String] ?? []
+                        print("finder stability UI: transfer indicator; actionsAvailable=\(result == .success) press=\(actions.contains(kAXPressAction)) cancel=\(actions.contains(kAXCancelAction))")
+                    }
+                    if let bar = (self.attribute(self.finderAX(), kAXChildrenAttribute) as? [AXUIElement])?
+                        .first(where: { self.string($0, kAXRoleAttribute) == kAXMenuBarRole }),
+                       let windowMenu = (self.attribute(bar, kAXChildrenAttribute) as? [AXUIElement])?
+                        .first(where: { self.string($0, kAXTitleAttribute) == "Window" }) {
+                        let commands = self.elements(windowMenu).filter {
+                            self.string($0, kAXRoleAttribute) == kAXMenuItemRole && self.string($0, kAXTitleAttribute) == "Show Progress Window"
+                        }
+                        print("finder stability UI: transfer progress window command; matchCount=\(commands.count) enabled=\(commands.first.map { (self.attribute($0, kAXEnabledAttribute) as? Bool) == true } ?? false)")
+                    }
+                    guard try await FinderPointerClick.perform(at: point, button: .left, mayClick: {
+                        guard try whilePending() else { return false }
+                        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder",
+                              let fresh = self.selectedElement(), CFEqual(fresh, selected),
+                              let freshWindow = self.finderWindowAX(), let freshWindowBounds = self.rect(freshWindow),
+                              let freshRowBounds = self.rect(fresh) else { throw FinderUIError.selectionMismatch }
+                        let freshPoint = FinderTransferCancellationTarget.point(window: freshWindowBounds, row: freshRowBounds,
+                            indicators: self.elements(fresh).filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
+                                .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
+                            })
+                        guard freshPoint.map({ abs($0.x - point.x) < 1 && abs($0.y - point.y) < 1 }) == true,
+                              let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else { return false }
+                        try FinderPointerTarget.verify(at: point, processIdentifier: finder.processIdentifier, scope: fresh)
+                        // AX/Apple Events revalidation may outlast the transfer.
+                        return try whilePending()
+                    }) else { return true }
+                    print("finder stability UI: active generated transfer indicator clicked; awaiting cancellation callback")
+                }
+                invoked = true
+                return true
+            }
+            if invoked { actionCount += 1 }
+            return invoked
+        } catch {
+            print("finder stability UI: cancellation failed; phase=\(phase)")
+            throw error
+        }
+    }
+
+    func copyAndCancelDownload(_ source: URL, to parent: URL,
+                               observation: () throws -> FinderCopyCancellationState) async throws -> Bool {
+        try await select(source)
         try await activateFinder()
+        let before = attribute(finderAX(), kAXWindowsAttribute) as? [AXUIElement] ?? []
+        guard !before.contains(where: { string($0, kAXIdentifierAttribute) == "Progress" }),
+              (try FileManager.default.contentsOfDirectory(atPath: parent.path)).isEmpty else {
+            throw FinderUIError.controlUnavailable
+        }
+        try key(8, flags: .maskCommand)
+        try await navigate(to: parent)
+        try await activateFinder()
+        try key(9, flags: .maskCommand)
+        actionCount += 1
         var invoked = false
+        var stoppedWindow: AXUIElement?
         try await wait {
-            guard try whilePending() else { return true }
-            guard let selected = self.selectedElement() else { return false }
-            let nodes = self.elements(selected)
-            if let cancel = nodes.first(where: {
-                let label = self.string($0, kAXDescriptionAttribute) ?? self.string($0, kAXTitleAttribute) ?? ""
-                return label.localizedCaseInsensitiveContains("cancel")
-            }) {
-                guard try whilePending() else { return true }
-                guard AXUIElementPerformAction(cancel, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
-            } else {
-                guard let window = self.finderWindowAX(), let windowBounds = self.rect(window), let rowBounds = self.rect(selected),
-                      let point = FinderTransferCancellationTarget.point(window: windowBounds, row: rowBounds,
-                        indicators: nodes.filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
-                            .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
-                        }) else { return false }
-                guard try whilePending() else { return true }
-                guard try await FinderPointerClick.perform(at: point, button: .left, mayClick: {
-                    guard try whilePending() else { return false }
-                    guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder",
-                          let fresh = self.selectedElement(), CFEqual(fresh, selected),
-                          let freshWindow = self.finderWindowAX(), let freshWindowBounds = self.rect(freshWindow),
-                          let freshRowBounds = self.rect(fresh) else { throw FinderUIError.selectionMismatch }
-                    let freshPoint = FinderTransferCancellationTarget.point(window: freshWindowBounds, row: freshRowBounds,
-                        indicators: self.elements(fresh).filter { self.string($0, kAXRoleAttribute) == kAXProgressIndicatorRole }.map {
-                            .init(fraction: (self.attribute($0, kAXValueAttribute) as? NSNumber)?.doubleValue, bounds: self.rect($0))
-                        })
-                    guard freshPoint.map({ abs($0.x - point.x) < 1 && abs($0.y - point.y) < 1 }) == true,
-                          let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else { return false }
-                    try FinderPointerTarget.verify(at: point, processIdentifier: finder.processIdentifier, scope: fresh)
-                    return true
-                }) else { return true }
-                print("finder stability UI: active generated transfer indicator clicked; awaiting cancellation callback")
+            switch try observation() {
+            case .finished: return true
+            case .waiting: return false
+            case .cancellable: break
+            }
+            guard try self.verifyWindow(parent),
+                  NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
+                throw FinderUIError.windowMismatch
+            }
+            let windows = (self.attribute(self.finderAX(), kAXWindowsAttribute) as? [AXUIElement] ?? []).filter { candidate in
+                self.string(candidate, kAXIdentifierAttribute) == "Progress" && !before.contains(where: { CFEqual($0, candidate) })
+            }
+            guard windows.count == 1, let window = windows.first else { return false }
+            let nodes = self.elements(window)
+            let labels = nodes.flatMap {
+                [self.string($0, kAXValueAttribute), self.string($0, kAXTitleAttribute), self.string($0, kAXDescriptionAttribute)].compactMap { $0 }
+            }
+            guard FinderCopyCancellationTarget.matches(sourceName: source.lastPathComponent,
+                destinationName: parent.lastPathComponent, labels: labels) else { return false }
+            let buttons = nodes.filter {
+                self.string($0, kAXRoleAttribute) == kAXButtonRole &&
+                    [self.string($0, kAXTitleAttribute), self.string($0, kAXDescriptionAttribute)].contains("stop progress") &&
+                    (self.attribute($0, kAXEnabledAttribute) as? Bool) != false
+            }
+            guard buttons.count == 1, let button = buttons.first,
+                  case .cancellable = try observation() else { return false }
+            guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else {
+                throw FinderUIError.controlUnavailable
             }
             invoked = true
+            stoppedWindow = window
+            self.actionCount += 1
+            print("finder stability UI: exact generated copy Stop invoked; awaiting fetch cancellation")
             return true
         }
-        if invoked { actionCount += 1 }
+        if let stoppedWindow {
+            try await wait {
+                !(self.attribute(self.finderAX(), kAXWindowsAttribute) as? [AXUIElement] ?? []).contains { CFEqual($0, stoppedWindow) }
+            }
+        }
         return invoked
     }
 
@@ -655,16 +773,34 @@ final class SystemFinderUIDriver: FinderUIDriving {
     func panelAction(_ action: FinderPanelAction) async throws {
         switch action {
         case .inheritAccess:
-            try await pressControl(title: "Access", role: kAXPopUpButtonRole)
+            try await pressControl(role: kAXPopUpButtonRole, identifier: "provider.share.access")
             try await pressControl(title: "Inherit Access", role: kAXMenuItemRole)
-        case .createLink: try await pressControl(title: "Create Link")
-        case .toggleComments: try await pressControl(title: "Allow comments", role: kAXCheckBoxRole)
-        case .saveLink: try await pressControl(title: "Save Changes")
-        case .disableLink, .confirmDisableLink: try await pressControl(title: "Disable Link")
+        case .createLink:
+            try await pressControl(title: "Create Link")
+            try await waitForShareResult("Created share link.")
+        case .toggleComments:
+            // The server can expose the newly created link before the panel
+            // finishes applying its response. Wait for the editable form, then
+            // verify the checkbox change before submitting another operation.
+            try await wait { self.panelControl(title: "Save Changes", role: kAXButtonRole) != nil }
+            guard let checkbox = panelControl(title: "Allow comments", role: kAXCheckBoxRole),
+                  let value = attribute(checkbox, kAXValueAttribute) as? NSNumber,
+                  value.boolValue == false else { throw FinderUIError.selectionMismatch }
+            try await pressControl(title: "Allow comments", role: kAXCheckBoxRole)
+            try await wait {
+                guard let checkbox = self.panelControl(title: "Allow comments", role: kAXCheckBoxRole) else { return false }
+                return (self.attribute(checkbox, kAXValueAttribute) as? NSNumber)?.boolValue == true
+            }
+            print("finder stability UI: comments checkbox verified enabled")
+        case .saveLink:
+            try await pressControl(title: "Save Changes")
+            try await waitForShareResult("Saved share-link settings.")
+        case .disableLink: try await pressControl(title: "Disable Link")
+        case .confirmDisableLink: try await pressActionConfirmation(.disableShareLink)
         case .done: try await pressControl(title: "Done")
         case .restoreVersion(let versionID):
             try await pressControl(identifier: "provider.version.restore." + KDriveMutationIdentity.clientToken([String(versionID)]))
-        case .confirmRestore: try await pressControl(title: "Restore as Copy")
+        case .confirmRestore: try await pressActionConfirmation(.restoreVersion)
         case .confirmSystemDeletion:
             guard selectedDeletionRequested, let dialog = selectedDeletionDialog() else { throw FinderUIError.selectionMismatch }
             let buttons = elements(dialog).filter { string($0, kAXRoleAttribute) == kAXButtonRole && string($0, kAXTitleAttribute) == "Delete" }
@@ -676,25 +812,117 @@ final class SystemFinderUIDriver: FinderUIDriving {
         actionCount += 1
     }
 
-    private func pressControl(title: String? = nil, role: String = kAXButtonRole, identifier: String? = nil) async throws {
+    private func panelControl(title: String, role: String) -> AXUIElement? {
+        guard let scope = actionPanelScope() else { return nil }
+        let matches = elements(scope).filter {
+            string($0, kAXRoleAttribute) == role &&
+                [string($0, kAXTitleAttribute), string($0, kAXDescriptionAttribute)].contains(title) &&
+                (attribute($0, kAXEnabledAttribute) as? Bool) != false
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    private func waitForShareResult(_ successMessage: String) async throws {
         try await wait {
             guard let scope = self.actionPanelScope() else { return false }
-            let matches = self.elements(scope).filter {
+            let values = self.elements(scope).flatMap {
+                [self.string($0, kAXValueAttribute), self.string($0, kAXTitleAttribute), self.string($0, kAXDescriptionAttribute)].compactMap { $0 }
+            }
+            if let mismatchMessage = KDriveContextActionError.shareLinkSettingsNotApplied.errorDescription,
+               values.contains(mismatchMessage) {
+                throw KDriveContextActionError.shareLinkSettingsNotApplied
+            }
+            return values.contains(successMessage)
+        }
+    }
+
+    private func pressActionConfirmation(_ action: FinderActionConfirmation) async throws {
+        var lastObservation: String?
+        try await wait {
+            guard let scope = self.actionPanelScope() else { return false }
+            let dialogs = self.elements(scope).filter { candidate in
+                self.string(candidate, kAXRoleAttribute) == kAXSheetRole &&
+                    !self.elements(candidate).contains {
+                        !CFEqual($0, candidate) && self.string($0, kAXRoleAttribute) == kAXSheetRole
+                    }
+            }
+            let observations = dialogs.map { dialog in
+                let nodes = self.elements(dialog)
+                return FinderActionConfirmationObservation(
+                    texts: nodes.flatMap {
+                        [self.string($0, kAXValueAttribute), self.string($0, kAXTitleAttribute),
+                         self.string($0, kAXDescriptionAttribute)].compactMap { $0 }
+                    },
+                    enabledButtonTitles: nodes.filter {
+                        self.string($0, kAXRoleAttribute) == kAXButtonRole &&
+                            (self.attribute($0, kAXEnabledAttribute) as? Bool) != false
+                    }.compactMap {
+                        [self.string($0, kAXTitleAttribute), self.string($0, kAXDescriptionAttribute)]
+                            .compactMap { $0 }.first { !$0.isEmpty }
+                    })
+            }
+            let index = action.uniqueMatchIndex(in: observations)
+            let observation = "leafSheetCount=\(dialogs.count) exactMatch=\(index != nil)"
+            if observation != lastObservation {
+                print("finder stability UI: contextual confirmation; " + observation)
+                lastObservation = observation
+            }
+            guard let index else { return false }
+            let buttons = self.elements(dialogs[index]).filter {
+                self.string($0, kAXRoleAttribute) == kAXButtonRole &&
+                    [self.string($0, kAXTitleAttribute), self.string($0, kAXDescriptionAttribute)].contains(action.buttonTitle) &&
+                    (self.attribute($0, kAXEnabledAttribute) as? Bool) != false
+            }
+            guard buttons.count == 1, let button = buttons.first else { return false }
+            guard !action.hasSuccessfulResult(in: self.panelTexts(scope)) else { throw FinderUIError.controlUnavailable }
+            let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
+            print("finder stability UI: bound contextual confirmation attempted; AX code \(result.rawValue)")
+            // Closing a remote sheet can invalidate AXPress after the action
+            // executes. Never press again: require a new success result, then
+            // let the caller independently verify server state and exact bytes.
+            return true
+        }
+        try await wait {
+            guard let scope = self.actionPanelScope() else { return false }
+            return action.hasSuccessfulResult(in: self.panelTexts(scope))
+        }
+        print("finder stability UI: contextual confirmation result verified")
+    }
+
+    private func panelTexts(_ scope: AXUIElement) -> [String] {
+        elements(scope).flatMap {
+            [string($0, kAXValueAttribute), string($0, kAXTitleAttribute),
+             string($0, kAXDescriptionAttribute)].compactMap { $0 }
+        }
+    }
+
+    private func pressControl(title: String? = nil, role: String = kAXButtonRole, identifier: String? = nil) async throws {
+        var lastObservation: String?
+        try await wait {
+            guard let scope = self.actionPanelScope() else { return false }
+            let nodes = self.elements(scope)
+            let matches = nodes.filter {
                 if let identifier { return self.string($0, kAXIdentifierAttribute) == identifier }
                 return self.string($0, kAXRoleAttribute) == role &&
                     [self.string($0, kAXTitleAttribute), self.string($0, kAXDescriptionAttribute)].contains(title)
             }
             let enabled = matches.filter { (self.attribute($0, kAXEnabledAttribute) as? Bool) != false }
+            let observation = "roleCount=\(nodes.filter { self.string($0, kAXRoleAttribute) == role }.count) matchCount=\(matches.count) enabledCount=\(enabled.count)"
+            if observation != lastObservation {
+                print("finder stability UI: panel control \(title ?? "bound identifier"); \(observation)")
+                lastObservation = observation
+            }
             guard enabled.count == 1, let element = enabled.first else { return false }
-            guard AXUIElementPerformAction(element, kAXPressAction as CFString) == .success else { throw FinderUIError.controlUnavailable }
+            let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
+            print("finder stability UI: panel control press; AX code \(result.rawValue)")
+            guard result == .success else { throw FinderUIError.controlUnavailable }
             return true
         }
     }
 
     private func actionPanelScope() -> AXUIElement? {
-        guard let actionPanelIdentifier else { return nil }
-        var windows: [AXUIElement] = []
-        if let window = finderWindowAX() { windows.append(window) }
+        guard let actionPanelIdentifier, let host = finderWindowAX() else { return nil }
+        var windows: [AXUIElement] = [host]
         let extensionURL = Bundle.main.bundleURL.appendingPathComponent("Contents/PlugIns/potassiumProviderActions.appex")
         if let bundle = Bundle(url: extensionURL), let identifier = bundle.bundleIdentifier, let executable = bundle.executableURL {
             let expectedHash = StabilityDiagnosticIdentity.codeHash(at: extensionURL)
@@ -710,8 +938,25 @@ final class SystemFinderUIDriver: FinderUIDriving {
         }
         var uniqueWindows: [AXUIElement] = []
         for window in windows where !uniqueWindows.contains(where: { CFEqual($0, window) }) { uniqueWindows.append(window) }
-        let identifiers = uniqueWindows.map { elements($0).compactMap { string($0, kAXIdentifierAttribute) } }
-        guard let index = FinderActionPanelTarget.index(alias: actionPanelIdentifier, windowIdentifiers: identifiers) else { return nil }
+        let panels = uniqueWindows.map { window in
+            // Stop at the native alias root; a nested SwiftUI alias is the
+            // same panel, while sibling roots must remain distinguishable.
+            var result: [AXUIElement] = [], queue = [window], visited = 0
+            while let node = queue.popLast(), visited < 5_000 {
+                visited += 1
+                if string(node, kAXIdentifierAttribute) == actionPanelIdentifier { result.append(node) }
+                else { queue += attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] }
+            }
+            return result
+        }
+        let index = FinderActionPanelTarget.windowIndex(alias: actionPanelIdentifier, panels: panels,
+            identifier: { string($0, kAXIdentifierAttribute) }, equal: { CFEqual($0, $1) })
+        let observation = "candidateCount=\(uniqueWindows.count) matchingWindowCount=\(panels.filter { !$0.isEmpty }.count) panelRootCount=\(panels.map(\.count)) bound=\(index != nil)"
+        if observation != lastActionPanelObservation {
+            print("finder stability UI: action panel observation; \(observation)")
+            lastActionPanelObservation = observation
+        }
+        guard let index else { return nil }
         return uniqueWindows[index]
     }
 

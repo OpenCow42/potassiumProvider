@@ -38,7 +38,8 @@ data.
 - [File Provider Lifecycle](doc/FILE_PROVIDER_LIFECYCLE.md): Apple callbacks,
   known-folder locations, mutations, enumeration, and SQLite touch points.
 - [Contextual Actions](doc/CONTEXTUAL_ACTIONS.md): Finder/Files favorite,
-  duplicate, restore, share-link, and version-history actions.
+  duplicate, restore, share-link, and version-history actions, including verification
+  of returned sharing settings before reporting success.
 - [Listing And Versioning](doc/LISTING_AND_VERSIONING.md): how Apple
   enumeration, sync anchors, kDrive listing APIs, SQLite caching, and item
   versions fit together.

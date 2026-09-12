@@ -151,6 +151,13 @@ final class ProviderActionViewModel: ObservableObject {
             self.shareLink = link
             self.apply(link.configuration)
             self.password = ""
+            // The service can acknowledge an update while retaining a different
+            // capability value. Show the authoritative form, but never report
+            // that the requested settings were saved in that case.
+            guard requestConfiguration.hasSameReportedSettings(as: link.configuration) else {
+                await self.signalParentAndWorkingSet(runtime: runtime, parentID: item.parentID)
+                throw KDriveContextActionError.shareLinkSettingsNotApplied
+            }
             self.message = createsLink ? "Created share link." : "Saved share-link settings."
             await self.record(
                 kind: .shareLink,

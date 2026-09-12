@@ -36,4 +36,24 @@ struct StabilityDiagnosticSettlementTests {
             #expect(!initial && !later)
         }
     }
+
+    @Test func deliveredMembersDoNotSettleAnOlderCallbackBeforeItsTerminal() {
+        let oldStep = UUID(), callback = UUID(), member = UUID(), metadata = UUID(), now = ContinuousClock.now
+        let start = ProviderDiagnosticEvent(spanID: callback, correlationID: oldStep,
+            source: .fileProviderExtension, operation: .enumerateChanges, phase: .started)
+        let delivered = [ProviderDiagnosticPhase.started, .completed].map {
+            ProviderDiagnosticEvent(spanID: member, parentSpanID: callback, itemMetadataAlias: $0 == .completed ? metadata : nil,
+                correlationID: oldStep, source: .fileProviderExtension, operation: .workingSetRefresh, phase: $0)
+        }
+        let end = ProviderDiagnosticEvent(spanID: callback, correlationID: oldStep,
+            source: .fileProviderExtension, operation: .enumerateChanges, phase: .completed)
+        var fence = StabilityDiagnosticSettlement()
+        let initiallySettled = fence.observe([start] + delivered, at: now)
+        let settledWithoutParent = fence.observe([start] + delivered, at: now.advanced(by: .seconds(30)))
+        let settled = [start] + delivered + [end]
+        let beforeQuietPeriod = fence.observe(settled, at: now.advanced(by: .seconds(31)))
+        let afterQuietPeriod = fence.observe(settled, at: now.advanced(by: .seconds(32)))
+        #expect(!initiallySettled && !settledWithoutParent && !beforeQuietPeriod && afterQuietPeriod)
+        #expect(settled.allSatisfy { $0.correlationID == oldStep })
+    }
 }

@@ -2304,3 +2304,383 @@ finalized **19 passed**, zero failures/skips. The standard Mac build also passed
 (`potassium-pointer-ownership-standard-mac-01.log`). The signed ordinary `27e5dc9` install
 is retained while awaiting resolution; the pointer guard still needs a live rerun.
 CR-013 remains open. No full fresh/warm acceptance is claimed.
+
+### 2026-09-12 — Desktop retry and reproduced WAL write contention
+
+The operator confirmed moving desktop windows during run
+`13dbc241-f71d-423e-a46c-bfccbc3a8b14`. Its sealed zero-pass, five-failure report
+remains failed; that interrupted observation cannot establish a provider regression.
+No run lease remained when execution resumed.
+
+The next fresh run on installed `98e93d6`,
+`4e42af18-dd4c-4956-a037-bf32c9930528`, sealed **13 passed, two failed, one
+unselected**. Restore passed through its actual menu/callback, authoritative bytes,
+and restored destination. All first eleven scenarios, preserve-both and working-set
+refresh passed. Cancellation stopped with `selectionMismatch` before native click
+dispatch. Favorite/unfavorite/duplicate completed and the current Actions extension
+loaded the Share form without a permission prompt, but interaction with its Access
+control timed out before a share mutation. The runner closed its owned windows.
+Closed cancellation stages and panel candidate/control counts were added to locate
+the remaining automation failures; no selectors or acceptance guards were relaxed.
+
+The earlier one-millisecond storage-code-5 refresh motivated
+`SnapshotWriteContentionTests`: four production-store operations execute while an
+independent connection holds a temporary WAL write reservation. On the unchanged
+deferred implementation all four cases failed with `database is locked (code: 5)`
+in `/private/tmp/potassium-resume-contention-before.xcresult`. SQLite.swift 0.16.0
+defaults its transaction to deferred; SQLite documents that upgrading a WAL read
+under another writer can fail immediately despite a busy timeout.
+
+Snapshot saves, poll claims, working-set commits and mutation publication now use
+`BEGIN IMMEDIATE`, reserving the writer before reading their current predicates.
+The existing five-second timeout, stale-state comparisons, transactional rollback,
+and successful-watermark rules are unchanged; no remote work holds the lock. This
+reproduces and corrects a storage defect consistent with the old live trace, but
+does not identify that trace's exact statement or lock owner. CR-025 tracks that
+distinction; CR-023 remains the separate initialization finding.
+
+Finalized validation so far: **27 passed** on iPhone 17/iOS 26.5 and **27 passed**
+on Apple Vision Pro/visionOS 26.5, in `potassium-resume-contention-after.xcresult`
+and `potassium-resume-contention-vision.xcresult`. Both include all four new
+contention cases plus snapshot-generation, working-set, and initialization
+regressions. Full Stability macOS `potassium-resume-stability-mac-01.xcresult`
+finalized **535 passed**, zero failed/skipped/expected failures. Standard macOS
+`potassium-resume-standard-mac-01.xcresult` finalized **412 unit tests passed**
+with coverage disabled; the signed generic visionOS build
+`potassium-resume-vision-build-01.log` succeeded. The updated signed live rerun
+remains pending.
+
+The diagnostic build's fresh run `8393e4a2-89d4-41ee-bd13-f766d1b63d8e` then
+sealed **12 passed, three failed, one skipped**. Restore opened a native popup
+containing only standard Finder commands and timed out; the registered provider
+and Actions paths were unique and current. The 256 MiB transfer completed in about
+4.7 seconds despite a native progress-ring click, without a cancelled callback.
+Share reported two matching host windows and refused to bind. Working-set refresh
+and preserve-both passed. These observations do not establish full acceptance.
+
+The next driver revision identifies the native alias-bearing panel roots and
+deduplicates only equal AX objects across Finder and the attested Actions process;
+different panels bearing the same alias remain rejected. It avoids redundant
+selection/activation after Download Now and rechecks pending telemetry after the
+expensive pointer ancestry validation. Missing provider menu commands can trigger
+at most three same-selection reopens, two seconds apart inside the original
+deadline. System commands, disabled commands and ambiguous matches do not qualify.
+Focused macOS Stability regressions finalized **20 passed**, zero failures or
+skips (`potassium-resume-finder-driver-02.xcresult`). The signed build passed
+preflight and its fresh live run is in progress.
+
+Sources: [SQLite transaction modes](https://www.sqlite.org/lang_transaction.html),
+[WAL isolation](https://www.sqlite.org/isolation.html), and the pinned
+SQLite.swift `Connection.transaction` default. Apple's replicated File Provider
+documentation was rechecked on 2026-09-12. No conflict or permanent-delete policy
+changed; CR-013 remains open and deletion remains optional.
+
+
+The next fresh run, `42dabdc7-e3c3-4e31-9bc9-0721f93b2d2f`, verified that the
+Finder host and Actions main window contain the **same AX panel root**. Share
+therefore bound successfully, then failed at the Access picker (`roleCount=1`,
+`matchCount=0`). A stable picker identifier now replaces its label selector.
+Done dismissed the real sheet, but the detached Actions main window retained the
+alias; this caused cleanup/evidence sealing to fail. `finder-evidence-rejected.json`
+retains the report, and the exited owner was safely abandoned through the documented
+recovery command. This is not an accepted or sealed successful run.
+
+Panel binding now also requires the alias in the owned Finder host, rejecting a
+stale detached main window. A regression covers that dismissal boundary. Restore
+remained unavailable through all three same-item menu reopens; that ineffective
+retry was removed. Cancellation still completed after the native ring click despite
+removing redundant selection and adding a final pending check. The next diagnostic
+build adds a confined generated-row capture during the 256 MiB transfer and closed
+AX action-availability observations. These observations must not count as cancellation.
+
+
+Apple's local macOS 26.5 `NSFileProviderReplicatedExtension.h` (modify callback
+contract, lines 629–634) defines a nil result as a request to delete the local replica.
+The plaintext executor returned nil after every successful Trash request. It now
+returns managed Trash metadata, and the callback sets the Trash parent/user info.
+A preserved local conflict copy keeps its own identity/version when both versions
+are trashed. Active working-set publication excludes those items. Existing remote
+Trash order, preservation, and permanent-deletion policy are unchanged. CR-026 tracks
+this callback defect; simple and combined-field regressions were expanded. Validation
+and causal confirmation of the missing Restore menu are pending. The current live
+run uses the earlier installed runtime and cannot validate this source change.
+
+
+Diagnostic run `29c73070-350d-42bc-83d8-c8737c5f703b` sealed **four passed,
+three failed, nine skipped**. The hydration case passed but Finder offered Download
+Now instead of Remove Download; eviction failed and dependent cases were skipped.
+iOS unit tests ran alongside this diagnostic run, so desktop interaction overlap
+cannot be excluded. Subsequent live acceptance runs will run alone.
+
+Share binding, picker selection, Create Link and Save Changes all dispatched
+successfully. The actual update failed with **HTTP 403 / permission** in the current
+Actions extension; the scenario then reported a harness deadline waiting for an
+unchanged server property. Cleanup now closed the sheet and run-owned Finder windows.
+The transfer capture contains only the generated row: its pie indicator exposed
+neither AXPress nor AXCancel, and a confined native click still produced no cancelled
+fetch. The temporary capture was removed after inspection. A generic `.dat` fixture
+replaces the MacBinary archive type to avoid an archive preview consumer, and local
+pointer timestamps will distinguish dispatch from transfer start/finish.
+
+Infomaniak's official iOS `ShareLinkSettings.encode` omits `validUntil` for free
+drives. Our adapter sent null unconditionally even while merely changing comments.
+It now preflights an absent selected expiration, sends null only to clear an existing
+date, omits already absent expiration, and sends explicit dates unchanged. This is a
+payload correction consistent with the 403, not proof of the lab plan or server's
+rejection reason. Tests cover all three states and failed preflight. Existing
+last-writer-wins risk remains; no account permissions are altered.
+
+Public reference: [Infomaniak ShareLink model](https://github.com/Infomaniak/ios-kDrive/blob/master/kDriveCore/Data/Models/ShareLink.swift),
+read 2026-09-12. Full macOS Stability validation before this latest share-body change
+finalized **538 passed**, zero failures/skips (`potassium-resume-stability-mac-02.xcresult`).
+The Trash selection passed **17 tests** on iOS (`potassium-resume-trash-ios-01.xcresult`).
+
+
+The corrected shared code finalized **415 standard macOS unit tests passed**
+(`potassium-resume-standard-mac-02.xcresult`) and **19 passed each** on iOS and
+visionOS Simulator (`potassium-resume-share-trash-ios-02.xcresult` and
+`potassium-resume-share-trash-vision-02.xcresult`), with zero failures/skips.
+These include the set/clear/absent-expiration request cases and the combined Trash
+regressions. Fresh live confirmation remains pending.
+
+The isolated fresh retry `ec30a74b-1c10-4d36-a2f2-67c72475dc57` produced a
+candidate with **11 passed, four failed, one skipped**. The first ten scenarios
+and preserve-both passed. Restore again omitted its custom command; cancellation
+again completed without a cancelled fetch. Working-set refresh timed out with
+cancelled refresh operations (about 31–37 seconds), without a recorded SQLite
+code-5 failure. Share update now returned **HTTP 200**, but the following reads
+still reported comments disabled. This resolves the observed HTTP rejection only;
+it does not establish a successful settings change. Evidence assembly rejected the
+candidate, so the retained `finder-evidence-rejected.json` is ineligible for
+acceptance. The exited owner was recovered with the documented preserve-evidence
+command. Its diagnostics contain two replicated-provider process instance IDs,
+with invalidation followed by a new process initialization between scenarios.
+The launch controller requires one process throughout the selected run; this
+explains the unverified-build assembly boundary without weakening that requirement.
+
+A read-only `fileproviderctl evaluate` check matched the exact generated trashed
+item using its existing run-salted diagnostic alias. The daemon reported
+`isTrashed=true` and evaluated the Restore activation rule as true. Only these
+closed results were emitted; no raw identifiers, paths or command output were
+retained. Finder's missing menu therefore disagrees with the daemon's state at
+inspection time. Finder was relaunched through its native UI before the next retry;
+neither the predicate nor acceptance requirements changed.
+
+Native pointer timestamps place the 256 MiB cancellation click about 3.4 seconds
+into a 5.1-second fetch. The exact active indicator still exposed neither AXPress
+nor AXCancel, and Show Progress Window was disabled during the transfer. This
+rules out a completed fetch at dispatch as the sole explanation for that attempt.
+The `.dat` fixture did not resolve cancellation.
+
+Share automation now waits for the enabled Save Changes form after creation and
+verifies the checkbox changes from false to true before submitting the update.
+This separates panel response-application timing from server persistence. The
+focused macOS Stability selection finalized **27 passed**, zero failures/skips
+(`potassium-resume-finder-driver-04.xcresult`). The signed generic visionOS build
+also passed (`potassium-resume-vision-build-02.log`). The next isolated fresh retry
+is pending; no full fresh/warm acceptance or CR-013 closure is claimed.
+
+Fresh run `99d0e147-c40d-41e3-82ed-8d076b64a82d` after Finder relaunch sealed
+**13 passed, two failed, one unselected**. Restore completed its real custom
+callback, exact destination and byte checks; working-set refresh also passed.
+Cancellation failed before starting a transfer because Download Now was absent.
+Contextual actions failed before favorite dispatch because the command was absent.
+Both popups remained open without gaining their missing provider commands. One
+provider process served the whole run, so this report sealed normally.
+
+After the runner exited, manual CUA navigation to the same retained generated
+actions file in a new Finder window exposed Download Now and all four applicable
+custom commands. A new driver correction permits one replacement of its owned
+window when a recognized provider command is absent after two seconds. It preserves
+the existing deadline, exact parent/selection checks and process/window ownership;
+disabled or ambiguous commands, arbitrary commands and permanent deletion cannot
+trigger this path. `FinderMenuWindowRefreshTests` covers these boundaries. This
+differs from the previously ineffective same-window popup reopening.
+
+Manual Share interaction on that file verified Inherit Access creation, an actual
+false-to-true comments checkbox change, and a false value returned after Save while
+the old UI claimed success. A separate download restriction remained selected after
+Save. The Actions view now compares every reported configuration field with the
+request, shows authoritative values, and reports an unapplied-settings error on
+mismatch. It does not guess the server's reason, retry with broader access, or claim
+to roll back a partial write. Passwords cannot be compared because they are not
+returned, and expiration comparison respects whole-second transport precision.
+The live harness recognizes that explicit error instead of waiting for unchanged
+server metadata until its deadline. The original comments assertion remains strict.
+
+The updated macOS Stability unit suite finalized **547 passed**, zero failed/skipped
+(`potassium-resume-stability-mac-03.xcresult`); the iOS selection finalized
+**21 passed**, zero failed/skipped (`potassium-resume-sharing-verification-ios-01.xcresult`).
+The latest share-result UI wait and non-trapping date comparison were added after
+that Mac build and require subsequent build/live verification.
+
+A confined manual copy from a retained 256 MiB generated file to a new local
+temporary directory exposed Finder's genuine `stop progress` button in its Copy
+window. The transfer completed before the attempted stop, so no cancellation is
+claimed. This remains a diagnostic observation, outside the sealed run. Two local
+copy probes and the failed remote fixtures remain available; no sealed evidence was
+changed and no permanent deletion was selected.
+
+The cancellation scenario now adds one 256 MiB copy attempt after the existing
+64/256 MiB ring attempts. It copies a new generated item to a new empty local
+temporary directory and targets only Finder's newly created Copy progress window,
+with both exact quoted names and one enabled Stop button. Existing/ambiguous
+progress windows and missing/mismatched labels cannot be cancelled. Real telemetry
+must show intermediate progress and a cancelled fetch; Stop itself never passes
+the case. A separate Download Now must complete for the same item, with exact local
+and server bytes. Failure retains the probe; successful cancellation plus verified
+recovery permits removal of only the owned local temporary directory. No transfer
+throttle or direct provider/API cancellation is used. This path awaits live proof.
+
+The corrected shared code finalized **418 standard Mac unit tests passed**
+(`potassium-resume-standard-mac-03.xcresult`) and **21 visionOS Simulator tests
+passed** (`potassium-resume-sharing-verification-vision-01.xcresult`), zero failures
+or skips. The focused Finder copy/selection/transfer and share-verification suite
+also passed (`potassium-resume-finder-copy-mac-01.xcresult`). Signed installation
+and a new isolated live run remain necessary before acceptance.
+
+Fresh run `c6d8e57e-ce9b-4179-b9c8-444835c00023` then sealed **14 passed,
+one failed, one unselected**. Restore, preserve-both and working-set refresh passed.
+The new exact-target Copy Stop produced one cancelled download and one cancelled
+provider fetch after intermediate progress, followed by a new successful fetch for
+the same item and exact local/server bytes. Cancellation is now live-verified on
+that runtime; the original progress-ring attempts still did not cancel.
+
+Contextual actions reached the Share update. The checkbox was independently
+verified true before Save; the new unapplied-settings error stopped the case with
+API/remoteError evidence rather than a deadline. Cleanup dismissed the bound sheet
+and the report sealed. Thus only the contextual-actions scenario remains failed
+in this selected fresh run; permanent deletion remains deliberately unselected.
+
+The next share adapter revision uses the endpoint's optional update fields as a
+patch: read the current link, send only changed capabilities/access/date, explicitly
+clear an existing expiration when requested, and keep password rotation explicit.
+An unchanged configuration returns the authoritative read without an empty PUT.
+This tests whether resending unchanged editing/access policy resets independent
+comments; that causal hypothesis still requires live confirmation. Post-write
+comparison stays strict, and there is still no conditional version or rollback.
+
+### Comments-only follow-up and remaining action coverage
+
+A manual retained-fixture check with the installed minimal update again verified
+comments checked before Save and unchecked in the authoritative response, with
+the new explicit mismatch error. Redundant access fields were therefore not the
+cause in this probe. Disabling that generated link succeeded. No public access,
+editing permission or destructive deletion was added as a workaround.
+
+The official PUT contract (retrieved 2026-09-12) states that omitted/null
+`can_comment` inherits `can_edit`. Updates now always include comment intent;
+a regression preserves existing comments when downloads are restricted. Other
+unchanged fields and already-absent expiration remain omitted. The public source is
+https://developer.infomaniak.com/docs/api/put/2/drive/%7Bdrive_id%7D/files/%7Bfile_id%7D/link. No live body, URL or identifier was recorded.
+
+The native version list combined its row into one accessibility element, hiding
+the Restore button. The plaintext row now contains separate children. Case 16
+continues its disable and historical-copy checks after the specific unapplied-share
+warning, but retains and returns that failure even when the later checks succeed.
+All other errors still stop normally. Fresh current-build validation remains pending.
+
+Current regression validation: the full macOS Stability unit target passed 553
+tests (`potassium-resume-stability-mac-04.xcresult`). The shared API, returned-setting
+and mutation-callback selection passed 24 tests on iOS Simulator and 24 on visionOS
+Simulator (`potassium-resume-share-patch-ios-02.xcresult` and
+`potassium-resume-share-patch-vision-02.xcresult`). The current normal signed app
+passed installation/permission/ownership preflight before isolated Finder execution.
+A sanitized reproduction is in [SHARE_SETTINGS_REPRODUCTION.md](SHARE_SETTINGS_REPRODUCTION.md).
+
+Fresh `17d1e74b-8bb0-4672-89cf-fb84e3c7bf20` sealed 14 passed, one failed and
+deletion unselected. Cancellation produced real cancelled fetch/download terminals
+again, then independently recovered exact bytes. Trash restoration and working-set
+refresh passed. After the expected comments mismatch, Disable Link confirmation
+found two enabled matches across the form and dialog and timed out. The new driver
+selects one leaf confirmation sheet within the bound panel, requiring its exact
+prompt, safety message and Cancel/confirmation pair; duplicates and wrong actions
+fail closed. Regression tests cover both link disable and Restore as Copy.
+
+Manual version validation: child containment alone did not expose Restore from the
+hosted List. Changing the plaintext history container to Form exposed the independent
+button with its stable identifier. Native activation opened the exact Restore as
+Copy confirmation, and the retained synthetic version was restored as a new copy.
+The current-byte and historical-byte assertions remain required in the live runner.
+The confirmation/panel/share selection passed 12 Mac tests
+(`potassium-resume-confirmation-mac-01.xcresult`).
+
+Warm `db0ab199-ecfb-4f86-86eb-401067df178d` sealed 13 passed, two failed and
+deletion unselected. Cancellation passed again. The working-set target's exact new
+metadata arrived at 18:15:26Z, 17 seconds after scenario 15 began, through an
+enumeration that started at 18:14:59Z during cancellation. Its original correlation
+correctly did not satisfy scenario 15. This was an evidence-boundary race, not
+missing server metadata. Before creating the next working-set fixture, the runner
+now waits for prior diagnostics to settle within a separate 90-second preparation;
+the actual scenario keeps its 90-second budget and every existing correlation,
+parent-callback, metadata and process gate. No event is reassigned to another step.
+The settlement regression requires the older parent callback to finish even when
+its member delivery has completed. CR-028 tracks current live verification.
+
+The same run verified the link-disable confirmation and successful API deletion.
+Restore as Copy found its exact sheet; the API succeeded in 341 ms even though
+AXPress reported failure as the remote UI dismissed. Confirmation activation now
+happens exactly once, followed by a new explicit success result and the unchanged
+independent server/byte assertions. A pre-existing success is rejected; a failed
+AX return never causes a second restore. Result matching has positive and negative
+regressions. The comments mismatch remains a mandatory scenario failure.
+
+The full macOS Stability target passed 558 unit tests
+(`potassium-resume-stability-mac-06.xcresult`). An initial compile failure in the
+new settlement test's mutating expression was corrected by evaluating before the
+Swift Testing expectation macro; the subsequent full run passed. The current version
+form also builds for iOS Simulator and generic visionOS.
+
+A controlled temporary public link to the retained synthetic-only text fixture also
+returned comments disabled after Save, disproving inherited access as the sole cause
+in this probe. It was immediately disabled; a newly opened share panel performed
+a fresh read and showed Create Link with no existing link. The automated case still
+uses inherited access, and the comments assertion is unchanged. No credentials or
+private URL were recorded. See the sanitized reproduction document for follow-up.
+
+Current warm run `07253623-3e2b-4e3b-8362-14eaa4f471be` sealed 14 passed,
+one failed and permanent deletion unselected. The prior-callback preparation
+settled, and scenario 15 then passed its original correlation/metadata requirements.
+Cancellation again produced a real cancelled fetch and exact same-item recovery.
+Case 16 reproduced unapplied comments, then verified link deletion and historical
+restore independently. Restore AXPress returned -25205, but the newly appearing
+success result was verified without a second activation. The restored copy's bytes
+matched the historical fixture and the original retained its current bytes. Only
+then did the case return the preserved share-settings failure (`api / remoteError`).
+Thus comments are the sole failing selected scenario condition in this sealed run;
+no success gate was removed, and permanent deletion still prevents full acceptance.
+CR-028 is mitigated by the warm evidence. Targeted fresh/warm conflict validation
+is continuing against the same installed build.
+
+### Current conflict matrix and remaining input
+
+All six targeted cases passed with fresh and already-running extensions on the
+current installed build. Each independent report sealed one selected pass and
+15 unrelated scenarios skipped; these are conflict-profile passes, not full-suite
+acceptance. Both command groups exited 0.
+
+| Conflict case | Fresh extension run | Already-running extension run |
+| --- | --- | --- |
+| Content before preflight | `047bfac9-ac58-45e1-9bf5-7557ae0694f1` | `d09303e8-df9b-47d9-b968-ac2a719977e3` |
+| Content after preflight | `218356d2-3dc3-4563-ae5a-dddb94812e7f` | `c202ac3a-e19d-47c7-9c0f-e3b312288dc6` |
+| Rename / rename | `59ecc6bb-fd7b-4947-adf1-178088db8f07` | `4110acbc-5b2b-49cb-9e7b-df5e3286b6e9` |
+| Move / move | `8e76f00c-d808-493c-b0ee-d7c36efd3c44` | `3bb9d138-eaca-40d4-b58c-b2d3c5dbf0ce` |
+| Edit / rename | `ff8ea036-cbb9-4c81-bac1-b548290d8994` | `994fa794-1e08-47a8-83dd-ba1612d51969` |
+| Edit / move | `95185192-51ae-4316-b821-c6abac64032a` | `bae70b22-e0ed-42b8-9756-27622302f5ae` |
+
+The current full selected warm suite remains 14 passed, one failed and permanent
+deletion unselected. Its sole failure is `supportedContextualActions`: kDrive
+acknowledges the comment-setting update but reports comments disabled. The app now
+shows that discrepancy; link disable and historical-copy/current-byte checks passed.
+An official-client comparison on the same lab account or a vendor explanation is
+still needed. No browser login was assumed and no vendor message was sent. The
+sanitized reproduction is ready for review. Permanent deletion remains optional
+and requires an explicit operator request; CR-013 remains open.
+
+At the pre-commit validation snapshot, GitHub PR #22 CI was green at `98e93d6`;
+those remote jobs predate these fixes. Local evidence for this change is the
+558-pass macOS Stability
+unit suite, 24 focused iOS Simulator tests, 24 focused visionOS Simulator tests,
+final iOS/visionOS version-form builds, the selected live suite, and the 12 targeted
+conflict reports above. No XCTest UI suite was rerun in this continuation; the
+installed Finder/Actions flows were validated through native UI and server checks.

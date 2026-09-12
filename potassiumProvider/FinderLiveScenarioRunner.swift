@@ -40,6 +40,15 @@ struct LiveFinderStabilityScenarioRunner: FinderStabilityScenarioRunning {
                 session.subjects = []
                 session.deadline = StabilityDeadline(budget: scenario == .cancellationAndProgress ? .seconds(600) : .seconds(90))
                 ui.useDeadline { [weak session] in session?.deadline.remaining() ?? .zero }
+                if scenario == .workingSetRefresh {
+                    // A callback started during cancellation can deliver the
+                    // next fixture under its original correlation. Settle that
+                    // work before creating the new fixture; never relabel it or
+                    // accept another scenario's callback as current evidence.
+                    print("finder stability: settling prior callbacks before working-set fixture; 90-second preparation budget")
+                    try await session.drain()
+                    session.deadline = StabilityDeadline(budget: .seconds(90))
+                }
                 let (proof, stepObservations) = try await ProviderDiagnosticCorrelationContext.withCorrelation(correlationID) { @MainActor in
                     var stepObservations: [StabilityFinderAPIObservation] = []
                     if session.root == nil {

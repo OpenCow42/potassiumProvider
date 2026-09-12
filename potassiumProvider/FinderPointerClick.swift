@@ -22,6 +22,7 @@ enum FinderPointerClick {
         guard try mayClick() else { return false }
         let down = try event(button == .right ? .rightMouseDown : .leftMouseDown, at: point, button: button)
         let up = try event(button == .right ? .rightMouseUp : .leftMouseUp, at: point, button: button)
+        print("finder stability UI: native pointer down; timestamp=\(Date.now.timeIntervalSince1970)")
         post(down)
         // Release even if the task is cancelled while the button is down.
         defer { post(up) }

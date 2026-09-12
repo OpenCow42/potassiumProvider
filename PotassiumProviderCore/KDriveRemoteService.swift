@@ -793,15 +793,26 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
         fileID: Int,
         configuration: KDriveShareLinkConfiguration
     ) async throws -> KDriveShareLinkSummary {
+        // Update options are a patch. Avoid reapplying unchanged access/editing
+        // policy while changing an independent setting. Expiration is also
+        // plan-gated: null is needed only when clearing an existing date.
+        guard let current = try await shareLink(driveID: driveID, fileID: fileID) else {
+            throw KDriveContextActionError.invalidShareLinkURL
+        }
+        if configuration.hasSameReportedSettings(as: current.configuration),
+           configuration.access != .password || configuration.password == nil {
+            return current
+        }
+        let clearsExpiration = configuration.validUntil == nil && current.configuration.validUntil != nil
         _ = try await performNetworkOperation(.updateShareLink) {
-            let options = Self.updateShareLinkOptions(configuration)
+            let options = Self.updateShareLinkOptions(configuration, current: current.configuration)
             let potassiumRequest = try KDriveRequests.updateFileShareLink(
                 driveId: driveID,
                 fileId: fileID,
                 options: options
             )
             let body = try JSONEncoder().encode(
-                UpdateShareLinkRequestBody(options: options)
+                UpdateShareLinkRequestBody(options: options, clearsExpiration: clearsExpiration)
             )
             let request = APIRequest<InfomaniakResponse<Bool>>(
                 method: potassiumRequest.method,
@@ -893,18 +904,21 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     }
 
     private static func updateShareLinkOptions(
-        _ configuration: KDriveShareLinkConfiguration
+        _ configuration: KDriveShareLinkConfiguration,
+        current: KDriveShareLinkConfiguration
     ) -> UpdateKDriveFileShareLinkOptions {
         UpdateKDriveFileShareLinkOptions(
+            // Omission/null inherits can_edit; it does not preserve comments.
             canComment: configuration.allowsComments,
-            canDownload: configuration.allowsDownload,
-            canEdit: configuration.allowsEditing,
-            canRequestAccess: configuration.allowsAccessRequests,
-            canSeeInfo: configuration.showsFileInformation,
-            canSeeStats: configuration.showsStatistics,
+            canDownload: configuration.allowsDownload == current.allowsDownload ? nil : configuration.allowsDownload,
+            canEdit: configuration.allowsEditing == current.allowsEditing ? nil : configuration.allowsEditing,
+            canRequestAccess: configuration.allowsAccessRequests == current.allowsAccessRequests ? nil : configuration.allowsAccessRequests,
+            canSeeInfo: configuration.showsFileInformation == current.showsFileInformation ? nil : configuration.showsFileInformation,
+            canSeeStats: configuration.showsStatistics == current.showsStatistics ? nil : configuration.showsStatistics,
             password: configuration.access == .password ? configuration.password : nil,
-            right: configuration.access.rawValue,
-            validUntil: configuration.validUntil.map(unixTimestamp)
+            right: configuration.access == current.access ? nil : configuration.access.rawValue,
+            validUntil: configuration.validUntil.map(unixTimestamp) == current.validUntil.map(unixTimestamp)
+                ? nil : configuration.validUntil.map(unixTimestamp)
         )
     }
 
@@ -937,6 +951,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
     /// clear an existing expiration while retaining the pinned typed route.
     private struct UpdateShareLinkRequestBody: Encodable {
         let options: UpdateKDriveFileShareLinkOptions
+        let clearsExpiration: Bool
 
         private enum CodingKeys: String, CodingKey {
             case canComment = "can_comment"
@@ -962,7 +977,7 @@ public struct PotassiumKDriveService: KDriveFileProviding, KDriveWorkingSetRemot
             try container.encodeIfPresent(options.right, forKey: .right)
             if let validUntil = options.validUntil {
                 try container.encode(validUntil, forKey: .validUntil)
-            } else {
+            } else if clearsExpiration {
                 try container.encodeNil(forKey: .validUntil)
             }
         }

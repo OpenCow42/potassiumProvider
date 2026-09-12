@@ -54,12 +54,16 @@ public struct KDriveModificationExecutor: Sendable {
         if requestsTrash {
             let original = try await coordinator.trashItem(fileID: fileID, baseVersion: baseVersion)
             parents.insert(original.parentID)
+            var trashedItem = original
             if let updated, updated.id != fileID {
-                _ = try await coordinator.trashItem(fileID: updated.id,
+                trashedItem = try await coordinator.trashItem(fileID: updated.id,
                     baseVersion: KDriveItemBaseVersion(contentVersion: updated.contentVersion, metadataVersion: updated.metadataVersion))
             }
             remaining.remove(.parentItemIdentifier)
-            return Result(item: nil, remainingFields: remaining, affectedParentIDs: parents, trashed: true)
+            // nil tells the replicated provider to delete the local replica.
+            // Retain managed Trash metadata, including the identity/bytes of a
+            // preserved local conflict copy when both versions were trashed.
+            return Result(item: trashedItem, remainingFields: remaining, affectedParentIDs: parents, trashed: true)
         }
         let result: KDriveRemoteItem
         if let updated { result = updated } else { result = try await lookup(fileID) }

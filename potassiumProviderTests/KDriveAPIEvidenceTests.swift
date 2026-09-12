@@ -41,7 +41,7 @@ struct KDriveAPIEvidenceTests {
 
     @Test("Share-link update explicitly clears expiration and preserves inherit access")
     func shareLinkUpdateEncodesExplicitNullExpiration() async throws {
-        await KDriveAPIEvidenceURLProtocol.reset(returningShareLinkRight: "inherit")
+        await KDriveAPIEvidenceURLProtocol.reset(returningShareLinkRight: "inherit", expiration: 1700000400)
         let session = evidenceSession()
         defer { session.invalidateAndCancel() }
         let service = PotassiumKDriveService(
@@ -70,9 +70,106 @@ struct KDriveAPIEvidenceTests {
         let json = try #require(
             try JSONSerialization.jsonObject(with: body) as? [String: Any]
         )
-        #expect(json["right"] as? String == "inherit")
+        #expect(json["right"] == nil)
         #expect(json["valid_until"] is NSNull)
         #expect(json["can_download"] as? Bool == false)
+    }
+
+    @Test("Unchanged absent expiration does not invoke a plan-gated setting")
+    func shareLinkUpdateOmitsAlreadyAbsentExpiration() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "inherit")
+        defer { session.invalidateAndCancel() }
+        _ = try await service.updateShareLink(driveID: 11, fileID: 22,
+            configuration: .init(access: .inherit, allowsComments: true))
+        let requests = await KDriveAPIEvidenceURLProtocol.recordedRequests()
+        #expect(requests.map { $0.request.httpMethod } == ["GET", "PUT", "GET"])
+        let update = try #require(requests.first { $0.request.httpMethod == "PUT" })
+        let body = try #require(update.body)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(!json.keys.contains("valid_until"))
+        #expect(json["can_comment"] as? Bool == true)
+        #expect(Set(json.keys) == ["can_comment"])
+    }
+
+    @Test("An explicit expiration patch does not resend unchanged settings")
+    func shareLinkUpdateSetsExpiration() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "inherit")
+        defer { session.invalidateAndCancel() }
+        _ = try await service.updateShareLink(driveID: 11, fileID: 22,
+            configuration: .init(access: .inherit, validUntil: Date(timeIntervalSince1970: 1700000900)))
+        let requests = await KDriveAPIEvidenceURLProtocol.recordedRequests()
+        #expect(requests.map { $0.request.httpMethod } == ["GET", "PUT", "GET"])
+        let update = try #require(requests.first { $0.request.httpMethod == "PUT" })
+        let body = try #require(update.body)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["valid_until"] as? Int == 1700000900)
+        #expect(Set(json.keys) == ["valid_until", "can_comment"])
+    }
+
+    @Test("Unchanged comments remain explicit when restricting downloads")
+    func downloadRestrictionPreservesIndependentComments() async throws {
+        await KDriveAPIEvidenceURLProtocol.reset(returningShareLinkRight: "inherit", allowsComments: true)
+        let session = evidenceSession()
+        defer { session.invalidateAndCancel() }
+        let service = PotassiumKDriveService(bearerToken: "", apiBaseURL: evidenceBaseURL, session: session)
+        _ = try await service.updateShareLink(driveID: 11, fileID: 22,
+            configuration: .init(access: .inherit, allowsDownload: false, allowsComments: true))
+        let requests = await KDriveAPIEvidenceURLProtocol.recordedRequests()
+        let update = try #require(requests.first { $0.request.httpMethod == "PUT" })
+        let body = try #require(update.body)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["can_comment"] as? Bool == true)
+        #expect(json["can_download"] as? Bool == false)
+        #expect(json["can_edit"] == nil)
+        #expect(Set(json.keys) == ["can_download", "can_comment"])
+    }
+
+    @Test("Saving unchanged settings does not issue an empty update")
+    func unchangedShareLinkDoesNotMutate() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "inherit")
+        defer { session.invalidateAndCancel() }
+        _ = try await service.updateShareLink(driveID: 11, fileID: 22, configuration: .init(access: .inherit))
+        #expect(await KDriveAPIEvidenceURLProtocol.recordedRequests().map { $0.request.httpMethod } == ["GET"])
+    }
+
+    @Test("A changed access policy and password remain explicit patch fields")
+    func changedShareAccessRemainsExplicit() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "inherit")
+        defer { session.invalidateAndCancel() }
+        _ = try await service.updateShareLink(driveID: 11, fileID: 22,
+            configuration: .init(access: .password, password: "synthetic-only"))
+        let requests = await KDriveAPIEvidenceURLProtocol.recordedRequests()
+        let update = try #require(requests.first { $0.request.httpMethod == "PUT" })
+        let body = try #require(update.body)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(Set(json.keys) == ["right", "password", "can_comment"])
+        #expect(json["right"] as? String == "password")
+        #expect(json["password"] as? String == "synthetic-only")
+    }
+
+    @Test("Password rotation is not mistaken for an unchanged reported configuration")
+    func unchangedPasswordAccessStillSendsANewPassword() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "password")
+        defer { session.invalidateAndCancel() }
+        _ = try await service.updateShareLink(driveID: 11, fileID: 22,
+            configuration: .init(access: .password, password: "synthetic-rotation"))
+        let requests = await KDriveAPIEvidenceURLProtocol.recordedRequests()
+        let update = try #require(requests.first { $0.request.httpMethod == "PUT" })
+        let body = try #require(update.body)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(Set(json.keys) == ["password", "can_comment"])
+        #expect(json["password"] as? String == "synthetic-rotation")
+    }
+
+    @Test("An unrecognized current share configuration prevents an update")
+    func failedExpirationPreflightDoesNotMutate() async throws {
+        let (service, session) = await makeService(returningShareLinkRight: "unrecognized")
+        defer { session.invalidateAndCancel() }
+        await #expect(throws: KDriveContextActionError.unsupportedShareLinkAccess) {
+            _ = try await service.updateShareLink(driveID: 11, fileID: 22,
+                configuration: .init(access: .inherit, allowsComments: true))
+        }
+        #expect(await KDriveAPIEvidenceURLProtocol.recordedRequests().map { $0.request.httpMethod } == ["GET"])
     }
 
     @Test("Duplicate request carries an explicit caller-selected name")
@@ -266,10 +363,14 @@ private struct KDriveAPIEvidenceCapturedRequest: Sendable {
 
 private actor KDriveAPIEvidenceTransportState {
     private var shareLinkRight = "inherit"
+    private var expiration: Int?
+    private var allowsComments = false
     private var requests: [KDriveAPIEvidenceCapturedRequest] = []
 
-    func reset(returningShareLinkRight right: String) {
+    func reset(returningShareLinkRight right: String, expiration: Int?, allowsComments: Bool) {
         shareLinkRight = right
+        self.expiration = expiration
+        self.allowsComments = allowsComments
         requests.removeAll()
     }
 
@@ -325,7 +426,7 @@ private actor KDriveAPIEvidenceTransportState {
                 "url": "\(syntheticShareLink)",
                 "file_id": 22,
                 "right": "\(shareLinkRight)",
-                "valid_until": null,
+                "valid_until": \(expiration.map(String.init) ?? "null"),
                 "created_by": 1,
                 "created_at": 1700000000,
                 "updated_at": 1700000001,
@@ -334,7 +435,7 @@ private actor KDriveAPIEvidenceTransportState {
                   "can_see_stats": false,
                   "can_see_info": true,
                   "can_download": true,
-                  "can_comment": false,
+                  "can_comment": \(allowsComments),
                   "can_request_access": false
                 },
                 "access_blocked": false,
@@ -349,8 +450,8 @@ private actor KDriveAPIEvidenceTransportState {
 private final class KDriveAPIEvidenceURLProtocol: URLProtocol {
     private static let state = KDriveAPIEvidenceTransportState()
 
-    static func reset(returningShareLinkRight right: String) async {
-        await state.reset(returningShareLinkRight: right)
+    static func reset(returningShareLinkRight right: String, expiration: Int? = nil, allowsComments: Bool = false) async {
+        await state.reset(returningShareLinkRight: right, expiration: expiration, allowsComments: allowsComments)
     }
 
     static func recordedRequests() async -> [KDriveAPIEvidenceCapturedRequest] {

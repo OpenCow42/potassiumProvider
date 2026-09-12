@@ -14,6 +14,9 @@ struct ModificationCallbackTests {
         Shape(fields: [.contents, .parentItemIdentifier], trash: false, operations: ["move", "replace"]),
         Shape(fields: [.contents, .filename, .parentItemIdentifier], trash: false, operations: ["move", "replace"]),
         Shape(fields: [.contents, .parentItemIdentifier], trash: true, operations: ["replace", "trash"]),
+        Shape(fields: [.parentItemIdentifier], trash: true, operations: ["trash"]),
+        Shape(fields: [.filename, .parentItemIdentifier], trash: true, operations: ["rename", "trash"]),
+        Shape(fields: [.contents, .filename, .parentItemIdentifier], trash: true, operations: ["rename", "replace", "trash"]),
         Shape(fields: [.filename, .tagData], trash: false, operations: ["rename"]),
         Shape(fields: [.contents, .filename, .tagData], trash: false, operations: ["rename", "replace"]),
         Shape(fields: [.tagData], trash: false, operations: [])
@@ -59,17 +62,16 @@ struct ModificationCallbackTests {
                 deviceName: "Synthetic", date: Date(timeIntervalSince1970: 1), timeZone: TimeZone(secondsFromGMT: 0)!) : requestedName
             #expect(state.items[localID]?.name == expectedName)
             #expect(try await remote.downloadFile(driveID: 7, fileID: localID) == local)
+            #expect(result.item?.id == localID)
             if remoteChanged {
                 #expect(localID != 3 && state.bytes[3] == other)
                 if shape.trash { #expect(state.trash == [3, localID]) }
             } else { #expect(localID == 3) }
         }
-        if shape.trash { #expect(result.item == nil && state.trash.contains(3)) }
-        else {
-            let item = try #require(result.item)
-            #expect(state.items[item.id] == item)
-            #expect(item.parentID == expectedParent)
-        }
+        let item = try #require(result.item)
+        #expect(state.items[item.id] == item)
+        #expect(item.parentID == expectedParent)
+        if shape.trash { #expect(state.trash.contains(item.id) && state.trash.contains(3)) }
     }
 
     @Test func malformedCombinedCallbackDoesNotRenameBeforeFailing() async throws {

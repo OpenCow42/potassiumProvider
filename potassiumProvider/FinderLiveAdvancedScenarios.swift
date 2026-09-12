@@ -105,7 +105,9 @@ extension FinderLiveRunSession {
     func cancelTransfer() async throws {
         for mebibytes in [64, 256] {
             let data = Data(repeating: 0x5A, count: mebibytes * 1_024 * 1_024)
-            let item = try await upload(name: "transfer-\(mebibytes).bin", parent: require(root), data: data)
+            // Use generic data rather than a MacBinary archive type, so an
+            // archive preview is not an additional consumer of the transfer.
+            let item = try await upload(name: "transfer-\(mebibytes).dat", parent: require(root), data: data)
             transfer = item
             try await signal(NSFileProviderItemIdentifier(String(item.parentID)))
             let url = try await visible(item)
@@ -143,7 +145,49 @@ extension FinderLiveRunSession {
             try await waitBytes(item, expected: data)
             return
         }
-        throw FinderLiveError.cancellationNotExercised
+        // Some Finder versions expose the download pie only as status. Copying
+        // an evicted item to a new local folder exposes Finder's actual Stop
+        // control while the system hydrates it. This still must cancel the real
+        // provider fetch and permit a byte-exact recovery download.
+        try await cancelCopyTransfer()
+    }
+
+    private func cancelCopyTransfer() async throws {
+        let data = Data(repeating: 0x5A, count: 256 * 1_024 * 1_024)
+        let item = try await upload(name: "transfer-copy-256.dat", parent: require(root), data: data)
+        transfer = item
+        try await signal(NSFileProviderItemIdentifier(String(item.parentID)))
+        let url = try await visible(item)
+        let probe = FileManager.default.temporaryDirectory
+            .appendingPathComponent("finder-copy-cancellation-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: false)
+        let subject = StabilityDiagnosticIdentity.alias(for: String(item.id), runID: run.runID)
+        let tail = try StabilityDiagnosticTail(eventsURL: run.eventsURL)
+        let attempt = FinderTransferObservation(subject: subject, correlation: correlationID, codeHash: expectedExtensionCodeHash)
+        let invoked = try await ui.copyAndCancelDownload(url, to: probe) {
+            try attempt.ingest(tail.readAvailable())
+            if attempt.fetchCancelled || attempt.fetchCompleted { return .finished }
+            return attempt.canCancel ? .cancellable : .waiting
+        }
+        guard invoked else { throw FinderLiveError.cancellationNotExercised }
+        try await waitForLocalObservation {
+            try attempt.ingest(tail.readAvailable())
+            return attempt.fetchCancelled || attempt.fetchCompleted
+        }
+        guard attempt.fetchCancelled else { throw FinderLiveError.cancellationNotExercised }
+        cancellationObserved = true
+        let recoveryTail = try StabilityDiagnosticTail(eventsURL: run.eventsURL)
+        let recovery = FinderTransferObservation(subject: subject, correlation: correlationID, codeHash: expectedExtensionCodeHash)
+        try await ui.contextAction("Download Now", on: url)
+        try await waitForLocalObservation {
+            try recovery.ingest(recoveryTail.readAvailable())
+            return recovery.fetchCompleted
+        }
+        guard try Data(contentsOf: url) == data else { throw FinderLiveError.assertionFailed }
+        try await waitBytes(item, expected: data)
+        // Failure retains the probe. Remove only our own temporary copy after
+        // Stop dismissed its window and the independent recovery was verified.
+        try FileManager.default.removeItem(at: probe)
     }
 
     func contextActions() async throws {
@@ -176,8 +220,16 @@ extension FinderLiveRunSession {
         try await poll { try await actions.shareLink(driveID: self.context.domain.driveID, fileID: item.id)?.configuration.access == .inherit }
         try await ui.panelAction(.toggleComments)
         try await bind(url, item: item)
-        try await ui.panelAction(.saveLink)
-        try await poll { try await actions.shareLink(driveID: self.context.domain.driveID, fileID: item.id)?.configuration.allowsComments == true }
+        var unappliedShareSettings = false
+        do {
+            try await ui.panelAction(.saveLink)
+            try await poll { try await actions.shareLink(driveID: self.context.domain.driveID, fileID: item.id)?.configuration.allowsComments == true }
+        } catch KDriveContextActionError.shareLinkSettingsNotApplied {
+            // Keep this case failed, but verify the independent disable/recovery
+            // operations on this generated fixture before returning the failure.
+            unappliedShareSettings = true
+            print("finder stability UI: share mismatch retained; checking remaining contextual actions")
+        }
         try await ui.panelAction(.disableLink)
         try await bind(url, item: item)
         try await ui.panelAction(.confirmDisableLink)
@@ -200,6 +252,8 @@ extension FinderLiveRunSession {
         remember(restoredItem)
         try await ui.panelAction(.done)
         try await ui.select(visible(restoredItem))
+        print("finder stability UI: link disabled and historical copy verified; current bytes preserved")
+        if unappliedShareSettings { throw KDriveContextActionError.shareLinkSettingsNotApplied }
     }
 
     /// Allow every run-related started callback to reach a terminal before sealing.

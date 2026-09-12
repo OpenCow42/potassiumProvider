@@ -192,6 +192,7 @@ private struct ShareLinkActionView: View {
                     Text("Inherit Access").tag(KDriveShareLinkConfiguration.Access.inherit)
                     Text("Password Protected").tag(KDriveShareLinkConfiguration.Access.password)
                 }
+                .accessibilityIdentifier("provider.share.access")
                 if model.configuration.access == .password {
                     SecureField(
                         model.shareLink == nil ? "Password" : "New password (leave blank to keep current)",
@@ -267,7 +268,9 @@ private struct VersionHistoryActionView: View {
     @State private var pendingRestore: KDriveFileVersionSummary?
 
     var body: some View {
-        List {
+        // A hosted macOS List flattens the row and hides its Restore control.
+        // Form preserves the separate button and its stable accessibility identity.
+        Form {
             Section {
                 Label(item.name, systemImage: "doc")
                     .lineLimit(2)
@@ -346,5 +349,6 @@ private struct VersionRow: View {
                 .accessibilityIdentifier("provider.version.restore." + KDriveMutationIdentity.clientToken([String(version.id)]))
                 .buttonStyle(.borderless)
         }
+        .accessibilityElement(children: .contain)
     }
 }

@@ -46,6 +46,18 @@ public struct KDriveShareLinkConfiguration: Equatable, Sendable {
     public func isValid(preservingPasswordFor existingAccess: Access?) -> Bool {
         isValid || (access == .password && existingAccess == .password)
     }
+
+    /// Compare the settings kDrive reports after a write. Passwords are not
+    /// returned by the service, and expiration is transported in whole seconds.
+    /// A successful HTTP response alone does not prove that these values stuck.
+    public func hasSameReportedSettings(as other: Self) -> Bool {
+        access == other.access &&
+            validUntil.map { $0.timeIntervalSince1970.rounded(.towardZero) } ==
+                other.validUntil.map { $0.timeIntervalSince1970.rounded(.towardZero) } &&
+            allowsDownload == other.allowsDownload && allowsComments == other.allowsComments &&
+            allowsEditing == other.allowsEditing && allowsAccessRequests == other.allowsAccessRequests &&
+            showsFileInformation == other.showsFileInformation && showsStatistics == other.showsStatistics
+    }
 }
 
 public struct KDriveShareLinkSummary: Equatable, Sendable {
@@ -133,6 +145,7 @@ public enum KDriveContextActionError: Error, Equatable, LocalizedError, Sendable
     case passwordRequired
     case restoredItemUnavailable
     case unsupportedShareLinkAccess
+    case shareLinkSettingsNotApplied
 
     public var errorDescription: String? {
         switch self {
@@ -144,6 +157,8 @@ public enum KDriveContextActionError: Error, Equatable, LocalizedError, Sendable
             return "kDrive restored the version, but its metadata is not available yet."
         case .unsupportedShareLinkAccess:
             return "kDrive returned an unsupported share-link access policy."
+        case .shareLinkSettingsNotApplied:
+            return "kDrive did not apply all requested sharing settings. The current server settings are shown; review them before sharing the link."
         }
     }
 }

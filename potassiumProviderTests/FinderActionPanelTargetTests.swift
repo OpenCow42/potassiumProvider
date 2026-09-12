@@ -30,5 +30,28 @@ struct FinderActionPanelTargetTests {
         #expect(FinderActionPanelTarget.index(alias: alias, windowIdentifiers: [["Action Unavailable"], ["provider.stability.action.unbound"]]) == nil)
         #expect(FinderActionPanelTarget.index(alias: "provider.stability.action.unbound", windowIdentifiers: [["provider.stability.action.unbound"]]) == nil)
     }
+
+    @Test func twoHostsOfTheSameRemotePanelResolveToTheLastAttestedWindow() {
+        #expect(FinderActionPanelTarget.windowIndex(alias: alias, panels: [[7], [7]],
+            identifier: { _ in alias }, equal: ==) == 1)
+        #expect(FinderActionPanelTarget.windowIndex(alias: alias, panels: [[7], []],
+            identifier: { _ in alias }, equal: ==) == 0)
+    }
+
+    @Test func detachedMainWindowCannotKeepADismissedPanelBound() {
+        #expect(FinderActionPanelTarget.windowIndex(alias: alias, panels: [[], [7]],
+            identifier: { _ in alias }, equal: ==) == nil)
+    }
+
+    @Test func distinctPanelsWithTheSameAliasRemainAmbiguousAcrossOrWithinWindows() {
+        for panels in [[[7], [8]], [[7, 8]], [[7], [7, 8]]] {
+            #expect(FinderActionPanelTarget.windowIndex(alias: alias, panels: panels,
+                identifier: { _ in alias }, equal: ==) == nil)
+        }
+        #expect(FinderActionPanelTarget.windowIndex(alias: alias, panels: [[7]],
+            identifier: { _ in "unrelated" }, equal: ==) == nil)
+        #expect(FinderActionPanelTarget.windowIndex(alias: "provider.stability.action.unbound", panels: [[7]],
+            identifier: { _ in "provider.stability.action.unbound" }, equal: ==) == nil)
+    }
 }
 #endif

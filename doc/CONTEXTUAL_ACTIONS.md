@@ -65,10 +65,19 @@ failures propagate.
 New links default to public read-only access, downloads enabled, file
 information visible, and comments, editing, access requests, statistics, and
 expiry disabled. The user can choose public, inherited, or password access,
-expiry, downloads, and comments. Clearing expiry explicitly sends nullable
-`valid_until`; an unknown returned access value fails closed instead of
+expiry, downloads, and comments. Clearing an existing expiry explicitly sends
+nullable `valid_until`; an already absent expiry is omitted so an unrelated edit
+does not request a plan-gated setting. Updates omit unchanged settings except
+comments, whose API omission inherits editing; comment intent remains explicit.
+An unknown returned access value fails closed instead of
 defaulting to public. Existing links can be copied, sent through the system
 share sheet, updated, or disabled after destructive confirmation.
+
+After create or update, the form shows the settings returned by kDrive. If any
+reported setting differs from the request, the panel reports that the requested
+settings were not all applied, rather than claiming success. Review those values
+before sharing the link. This does not roll back a partially applied update;
+passwords cannot be verified from the response because kDrive does not return them.
 
 Passwords and returned URLs remain in view-model memory only. They are never
 logged, persisted, placed in activity summaries, or exported in diagnostics.
@@ -101,3 +110,8 @@ For encrypted items, favorite, duplicate, trash restore, and logical version
 restore call `EncryptedVaultProviding`. Thumbnails and versions are local
 authenticated vault operations. Share-link panels stop before any kDrive
 sharing call and explain that recipient-key sharing is not supported in v2.
+
+The plaintext version history uses a Form container so the macOS hosted view
+exposes Restore as an independent accessible button with its stable identifier.
+A List flattened that control even with explicit child containment. Confirmation
+still restores a new copy, preserving current file bytes.
