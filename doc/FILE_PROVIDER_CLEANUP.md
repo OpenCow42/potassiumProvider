@@ -118,3 +118,26 @@ The cleanup script also does not directly delete Finder storage,
 Provider system state is corrupt beyond the supported APIs and the stale archive
 repair, diagnose with `fileproviderctl dump` or `fileproviderctl check` first and
 document any new cleanup path before automating it.
+
+## Stability Actions Registration
+
+Finder discovers Actions extensions separately from the active replicated provider.
+An older installed or DerivedData copy with the same Actions identifier can be
+launched even when the provider process is correctly attested. Stability preflight
+therefore requires exactly one matching Actions registration at the selected app's
+embedded extension path. This is a registration repair, not a domain or data reset.
+
+Inspect copies before changing registration:
+
+```sh
+pluginkit -m -A -D -v -i net.weavee.potassiumProvider.Actions
+```
+
+After a live run has finished and its owned windows are closed, use `pluginkit -r`
+with the exact inspected `.appex` paths for stale copies, then `pluginkit -a` with
+the selected ordinary app's embedded Actions extension. Do not remove app bundles,
+domains, CloudStorage files or credentials to repair this mismatch. Reopening an
+older app or building another profile may register another copy again; rerun
+preflight. User election by identifier applies to all copies, so `pluginkit -e use`
+does not select one particular physical copy. Never accept a loading panel without
+the expected Actions code hash and the run's exact item binding.

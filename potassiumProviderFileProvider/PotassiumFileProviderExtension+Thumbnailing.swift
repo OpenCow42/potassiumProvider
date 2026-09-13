@@ -18,8 +18,18 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
         FileProviderLog.replicatedExtension.debug("fetchThumbnails(count:\(itemIdentifiers.count, privacy: .public) width:\(dimensions.width, privacy: .public) height:\(dimensions.height, privacy: .public)) domain(\(self.fileProviderDomain.identifier.rawValue, privacy: .public))")
 
         let progress = Progress(totalUnitCount: Int64(itemIdentifiers.count))
+        let diagnosticSpanTask = Task {
+            await ProviderDiagnosticSpan.start(
+                source: .fileProviderExtension,
+                operation: .thumbnail,
+                optionShape: [.thumbnailDimensions, .cancellableTransfer],
+                recorder: diagnosticRecorder
+            )
+        }
 
         let task = Task {
+            let span = await diagnosticSpanTask.value
+            await span.withCorrelation {
             var runtime: FileProviderRuntime?
             do {
                 let loadedRuntime = try await FileProviderRuntime.load(domain: self.fileProviderDomain)
@@ -35,12 +45,19 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
                         perThumbnailCompletionHandler: perThumbnailCompletionHandler
                     )
                     progress.completedUnitCount += 1
+                    let denominator = max(progress.totalUnitCount, 1)
+                    await span.progress(
+                        fractionCompleted: Double(progress.completedUnitCount)
+                            / Double(denominator)
+                    )
                 }
 
                 try Task.checkCancellation()
                 FileProviderLog.replicatedExtension.info("fetched thumbnails count(\(itemIdentifiers.count, privacy: .public))")
+                await span.complete(statusClass: .success)
                 completionHandler(nil)
             } catch is CancellationError {
+                await span.cancel()
                 completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
             } catch {
                 let mappedError = await self.recordProviderFailure(
@@ -53,12 +70,18 @@ extension PotassiumFileProviderExtension: NSFileProviderThumbnailing {
                     summary: "fetch thumbnails."
                 )
                 FileProviderLog.replicatedExtension.error("fetchThumbnails failed: \(mappedError.localizedDescription, privacy: .public)")
+                await span.fail(error: mappedError)
                 completionHandler(mappedError)
+            }
             }
         }
         progress.cancellationHandler = {
             FileProviderLog.replicatedExtension.debug("cancel fetchThumbnails(count:\(itemIdentifiers.count, privacy: .public))")
             task.cancel()
+            Task {
+                let span = await diagnosticSpanTask.value
+                await span.cancel()
+            }
         }
 
         return progress

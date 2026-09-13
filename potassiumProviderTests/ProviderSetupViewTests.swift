@@ -128,6 +128,7 @@ struct ProviderSetupViewTests {
         #expect(model.accounts == [account])
     }
 
+    #if !STABILITY
     @Test func duplicateAddIsGuardedAndActionStateClears() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -174,6 +175,44 @@ struct ProviderSetupViewTests {
         #expect(model.activeDriveAction(for: key) == nil)
         #expect(model.isConfigured(accountIdentifier: account.accountIdentifier, driveID: drive.id))
     }
+    #endif
+
+    #if STABILITY
+    @Test func ordinaryDomainAdditionIsRejectedByTheStabilityProfile() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-a",
+            displayName: "Account",
+            authenticationKind: .oauth
+        )
+        let drive = makeDrive(id: 10, name: "Projects", role: "admin")
+        let domainStore = DomainConfigurationFileStore(
+            directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+        )
+        let registrar = StabilityProfileDomainRegistrar()
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: SetupTestOAuthAuthenticator(),
+            domainRegistrar: registrar,
+            automaticallyReloadStoredState: false,
+            initialAccounts: [account],
+            initialDrivesByAccountIdentifier: [account.accountIdentifier: [drive]]
+        )
+
+        await model.addDomain(accountIdentifier: account.accountIdentifier, drive: drive)
+
+        #expect(model.errorMessage == "The Stability build registers only a verified Stability Lab root. Use the Stability Lab tab.")
+        #expect(registrar.addCallCount == 0)
+        #expect(try await domainStore.allConfigurations().isEmpty)
+    }
+    #endif
 
     @Test func explicitRenamePersistsOnlyTheSubmittedNormalizedName() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -289,6 +328,19 @@ private struct SetupTestDomainRegistrar: ProviderDomainRegistering {
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
 }
+
+#if STABILITY
+@MainActor
+private final class StabilityProfileDomainRegistrar: ProviderDomainRegistering {
+    private(set) var addCallCount = 0
+
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        addCallCount += 1
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+}
+#endif
 
 private actor BlockingSetupAccountStore: ProviderAccountStoring {
     private var accounts: [ProviderAccount]

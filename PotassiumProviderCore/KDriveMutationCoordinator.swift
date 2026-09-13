@@ -139,6 +139,7 @@ public struct KDriveMutationCoordinator: Sendable {
     private let conflictDate: @Sendable () -> Date
     private let conflictTimeZone: @Sendable () -> TimeZone
     private let contentConflictObserver: ContentConflictObserver?
+    private let trashedItemLookup: @Sendable (Int) async throws -> KDriveRemoteItem
 
     public init(
         configuration: ProviderDomainConfiguration,
@@ -147,7 +148,8 @@ public struct KDriveMutationCoordinator: Sendable {
         conflictDeviceName: @escaping @Sendable () -> String = { "This Mac" },
         conflictDate: @escaping @Sendable () -> Date = { Date() },
         conflictTimeZone: @escaping @Sendable () -> TimeZone = { .current },
-        contentConflictObserver: ContentConflictObserver? = nil
+        contentConflictObserver: ContentConflictObserver? = nil,
+        trashedItemLookup: (@Sendable (Int) async throws -> KDriveRemoteItem)? = nil
     ) {
         self.configuration = configuration
         self.remote = remote
@@ -156,6 +158,15 @@ public struct KDriveMutationCoordinator: Sendable {
         self.conflictDate = conflictDate
         self.conflictTimeZone = conflictTimeZone
         self.contentConflictObserver = contentConflictObserver
+        self.trashedItemLookup = trashedItemLookup ?? { fileID in
+            if let actions = remote as? any KDriveContextActionProviding {
+                return try await actions.trashedItem(driveID: configuration.driveID, fileID: fileID)
+            }
+            // Compatibility for metadata-only adapters. Production kDrive
+            // supplies the typed Trash endpoint above; active 404 is not proof
+            // that a provider-managed trashed identity has been deleted.
+            return try await remote.item(driveID: configuration.driveID, fileID: fileID)
+        }
     }
 
     public func createFile(
@@ -225,6 +236,11 @@ public struct KDriveMutationCoordinator: Sendable {
         // the exact local bytes remain available for a later retry or recovery.
         let stagedURL = try await conflictStager.stageConflictContents(contents, itemIdentifier: itemIdentifier)
         let contentHash = KDriveMutationIdentity.contentHash(contents)
+        #if STABILITY
+        if configuration.purpose == .stabilityLab {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: String(fileID), point: .beforeContentPreflight)
+        }
+        #endif
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
         guard let baseVersion = KDriveItemContentVersion(data: baseContentVersion),
               baseVersion.authoritativelyMatches(latestItem),
@@ -254,6 +270,11 @@ public struct KDriveMutationCoordinator: Sendable {
             expectedETag,
             contentHash,
         ])
+        #if STABILITY
+        if configuration.purpose == .stabilityLab {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: String(fileID))
+        }
+        #endif
         let operation = try remote.replaceFileOperation(
             driveID: configuration.driveID,
             fileID: fileID,
@@ -308,6 +329,11 @@ public struct KDriveMutationCoordinator: Sendable {
         name: String
     ) async throws -> KDriveRemoteItem {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
+        #if STABILITY
+        if configuration.purpose == .stabilityLab {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: String(fileID), point: .afterRenamePreflight)
+        }
+        #endif
         if latestItem.name == name {
             return latestItem
         }
@@ -331,6 +357,11 @@ public struct KDriveMutationCoordinator: Sendable {
         name: String?
     ) async throws -> KDriveRemoteItem {
         let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
+        #if STABILITY
+        if configuration.purpose == .stabilityLab {
+            try await StabilityConflictBarrier.arriveIfArmed(itemIdentifier: String(fileID), point: .afterMovePreflight)
+        }
+        #endif
         let baseName = KDriveItemMetadataVersion(data: baseMetadataVersion)?.name
         let desiredName = name ?? latestItem.name
         if latestItem.parentID == destinationParentID, latestItem.name == desiredName {
@@ -348,6 +379,15 @@ public struct KDriveMutationCoordinator: Sendable {
     }
 
     public func updateModificationDate(fileID: Int, date: Date) async throws -> KDriveRemoteItem {
+        let current = try await remote.item(driveID: configuration.driveID, fileID: fileID)
+        if current.isDirectory {
+            // The server owns directory timestamps and rejects last-modified
+            // writes for directories. Apple's modifyItem contract propagates
+            // a returned authoritative field to disk when it is not pending.
+            // Resolve the automatic local directory mtime change to that value;
+            // never report a file-only HTTP mutation as if it had succeeded.
+            return current
+        }
         try await remote.updateModificationDate(
             driveID: configuration.driveID,
             fileID: fileID,
@@ -363,7 +403,7 @@ public struct KDriveMutationCoordinator: Sendable {
     }
 
     public func deleteTrashedItem(fileID: Int, baseVersion: KDriveItemBaseVersion) async throws -> KDriveRemoteItem {
-        let latestItem = try await remote.item(driveID: configuration.driveID, fileID: fileID)
+        let latestItem = try await trashedItemLookup(fileID)
         guard KDriveVersionConflictResolver.itemVersionMatchesAllowingMetadataTimestampDrift(
             contentVersion: baseVersion.contentVersion,
             metadataVersion: baseVersion.metadataVersion,

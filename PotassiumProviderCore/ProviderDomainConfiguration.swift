@@ -39,6 +39,31 @@ public enum ProviderEncryptionMode: String, Codable, Equatable, Sendable {
     }
 }
 
+/// Distinguishes ordinary user domains from the single disposable domain used
+/// by the opt-in Stability Lab. Legacy records decode as `.ordinary`.
+public enum ProviderDomainPurpose: String, Codable, Equatable, Sendable {
+    case ordinary
+    case stabilityLab
+}
+
+/// Local ownership evidence for a disposable Stability Lab root. Remote IDs
+/// are private operational state and must never be copied into diagnostics.
+public struct ProviderStabilityLabConfiguration: Codable, Equatable, Sendable {
+    public var driveRootFileID: Int
+    public var markerFileID: Int
+    public var ownershipMarker: StabilityLabOwnershipMarker
+
+    public init(
+        driveRootFileID: Int,
+        markerFileID: Int,
+        ownershipMarker: StabilityLabOwnershipMarker
+    ) {
+        self.driveRootFileID = driveRootFileID
+        self.markerFileID = markerFileID
+        self.ownershipMarker = ownershipMarker
+    }
+}
+
 public struct ProviderVaultConfiguration: Codable, Equatable, Sendable {
     public var vaultIdentifier: VaultIdentifier
     public var vaultRootFileID: Int
@@ -201,6 +226,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     public var knownFolderLayout: ProviderKnownFolderLayout
     public var encryptionMode: ProviderEncryptionMode
     public var vault: ProviderVaultConfiguration?
+    public var purpose: ProviderDomainPurpose
+    public var stabilityLab: ProviderStabilityLabConfiguration?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -214,6 +241,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         knownFolderLayout: ProviderKnownFolderLayout = .machineNamespace,
         encryptionMode: ProviderEncryptionMode = .legacyPlaintext,
         vault: ProviderVaultConfiguration? = nil,
+        purpose: ProviderDomainPurpose = .ordinary,
+        stabilityLab: ProviderStabilityLabConfiguration? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -226,6 +255,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         self.knownFolderLayout = knownFolderLayout
         self.encryptionMode = encryptionMode
         self.vault = vault
+        self.purpose = purpose
+        self.stabilityLab = stabilityLab
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -233,6 +264,44 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
     public static func finderDisplayName(forDriveName driveName: String) -> String {
         let trimmedDriveName = driveName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedDriveName.isEmpty ? "kDrive" : trimmedDriveName
+    }
+
+    /// Fails closed when a Stability Lab record is incomplete or its locally
+    /// persisted ownership evidence no longer identifies this exact domain.
+    public var hasConsistentPurposeConfiguration: Bool {
+        switch purpose {
+        case .ordinary:
+            return stabilityLab == nil
+        case .stabilityLab:
+            guard encryptionMode == .legacyPlaintext,
+                  vault == nil,
+                  rootFileID > 0,
+                  let stabilityLab,
+                  stabilityLab.driveRootFileID == ProviderConstants.defaultRootFileID,
+                  stabilityLab.markerFileID > 0 else {
+                return false
+            }
+            return stabilityLab.ownershipMarker.driveID == driveID
+                && stabilityLab.ownershipMarker.rootFileID == rootFileID
+                && rootFileID != stabilityLab.driveRootFileID
+                && markerFileIDIsDistinct(stabilityLab.markerFileID, from: stabilityLab)
+        }
+    }
+
+    public func isCompatible(with profile: ProviderRuntimeProfile) -> Bool {
+        switch profile {
+        case .standard:
+            return purpose == .ordinary && hasConsistentPurposeConfiguration
+        case .stability:
+            return purpose == .stabilityLab && hasConsistentPurposeConfiguration
+        }
+    }
+
+    private func markerFileIDIsDistinct(
+        _ markerFileID: Int,
+        from stabilityLab: ProviderStabilityLabConfiguration
+    ) -> Bool {
+        markerFileID != rootFileID && markerFileID != stabilityLab.driveRootFileID
     }
 
     @discardableResult
@@ -257,6 +326,8 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         case knownFolderLayout
         case encryptionMode
         case vault
+        case purpose
+        case stabilityLab
         case createdAt
         case updatedAt
     }
@@ -282,6 +353,14 @@ public struct ProviderDomainConfiguration: Codable, Equatable, Identifiable, Sen
         vault = try container.decodeIfPresent(
             ProviderVaultConfiguration.self,
             forKey: .vault
+        )
+        purpose = try container.decodeIfPresent(
+            ProviderDomainPurpose.self,
+            forKey: .purpose
+        ) ?? .ordinary
+        stabilityLab = try container.decodeIfPresent(
+            ProviderStabilityLabConfiguration.self,
+            forKey: .stabilityLab
         )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)

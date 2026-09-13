@@ -55,8 +55,9 @@ flowchart LR
 - `PotassiumProviderCore` owns typed provider models, persistence protocols,
   OAuth utilities, and the `PotassiumKDriveService` adapter.
 - `potassiumChannel` owns the typed request builders and service calls for
-  Infomaniak APIs. The Xcode project requires the published 0.2 release line,
-  while `Package.resolved` locks validated builds to potassiumChannel 0.2.0.
+  Infomaniak APIs. `Package.resolved` locks validated builds to tag `0.3.0` at
+  commit `db829f1f2bd8c2113a529c9c521bd5cdfb5ef4dc`; the version-pinned adapter
+  matrix in `doc/STABILITY_LOOP_AUDIT.md` must be rerun before changing it.
 - The app group is the shared storage boundary between app and extension.
 - The keychain access group is the shared credential boundary. Tokens are keyed
   by local account identifier.

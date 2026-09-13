@@ -1,16 +1,199 @@
 # Logging
 
-`potassiumProvider` uses three complementary diagnostic layers:
+`potassiumProvider` uses complementary diagnostic layers selected by build
+profile:
 
 - Unified logging (`OSLog`) for developer diagnostics in the app and File
   Provider extension.
 - `Snapshots.sqlite3` activity/conflict rows for the user-visible Activities
   timeline and retained support context.
 - A redacted JSON support-log export created from the Activities tab.
+- In the opt-in `Stability` profile only, one versioned JSONL run bundle in the
+  app-group container for activity, conflict, callback, and API-shape evidence.
 
 These layers are deliberately separate. Unified logging can be more granular
-for local development, while the SQLite trail and exported document only carry
+for local development, while durable trails and exported documents carry only
 the small set of sanitized fields that are useful to users and support.
+
+## Stability Run Bundles
+
+Live edit, rename, and move evidence requires the corresponding `contents`,
+`filename`, or `parent` field on a successful `modifyItem` callback. Incidental
+last-used or timestamp callbacks cannot satisfy those scenarios. Finder Trash
+requires both `parent` and `trash`; permanent deletion requires `deleteItem`.
+
+`Stability` defines the `STABILITY` compilation condition on the app, shared
+core, File Provider, actions, unit-test, and UI-test targets. It preserves
+bundle identifiers, app groups, and the Keychain credential flow. The macOS
+Stability host alone runs outside App Sandbox to use assistive Accessibility;
+both extensions and the standard host remain sandboxed.
+The standard profile continues to store activity and conflict history in
+`Snapshots.sqlite3`.
+
+All existing unified `Logger` instances resolve to `OSLog.disabled` in
+Stability. The older debug log call sites include raw identifiers and localized
+error descriptions, so enabling them would violate the Stability privacy
+contract. Debug and Release keep unified logging; Stability uses only the
+closed-schema recorder. The environment-driven Debug UI fixture is also
+compiled out of Stability, even though the profile otherwise inherits Debug
+settings.
+
+After the operator explicitly starts a Stability run, every production event
+store construction site selects `KDriveProviderEventJSONLStore`. Snapshot,
+sync-anchor, enumerator, and working-set state still use SQLite; their table
+creation is intentionally independent from event-table creation. With no
+active run, the Stability factory returns no durable event recorder rather than
+falling back to SQLite or inventing a run.
+
+Each run is a complete directory under the app-group `StabilityRuns/runs`
+folder. `run.json` is exclusive-created and immutable; `events.jsonl` is
+append-only; `summary.json` marks completion. The Finder runner owns a newly
+created run through a private random-token and process-ID coordination file, atomically
+replaces the reserved `api-observations.jsonl` and `assertions.jsonl` files, and
+exclusive-creates immutable `finder-report.json` as their commit marker before
+the run is sealed. Final sealing decodes that report and rejects assertion,
+failure, or checkpoint totals that do not match it. A failed assembly never
+creates `summary.json` and retains
+ownership. Explicit stale-run recovery first proves the recorded owner process
+has exited, creates immutable `finder-abandoned.json`, removes any stale step
+pointer, and only then releases the active-run lease. An abandoned bundle stays
+incomplete and cannot be finalized by the ordinary app lifecycle.
+The `current-run.json` pointer contains only a random run UUID. Retention keeps the
+newest 20 completed bundles within 250 MiB and never prunes the active or an
+incomplete bundle. The active event file also rejects an append before it would
+exceed 250 MiB, preserving a replayable run that the operator can finish.
+
+JSONL writers use an advisory exclusive lock, one complete encoded record per
+write transaction, and `fsync`; readers take a shared lock. A second lifecycle
+lock serializes active-run selection, finish, append/read, and retention across
+the app, File Provider, and actions processes. Run paths reject symlinks and
+non-regular files, use owner-only permissions, and synchronize file and
+directory transitions. Replay ignores only an unterminated final record, which
+represents an interrupted append; the next writer truncates that tail before
+appending. A corrupt complete record is surfaced. Activity paging, statistics,
+observation, clear, domain removal, and support export use replay through the
+existing protocols; clear/removal are append-only tombstones.
+
+The Stability serializer removes names, paths, item and request identifiers,
+drive identifiers, recovery strings, staged paths, and arbitrary error domains
+before bytes reach the log. Domain identifiers become run-salted SHA-256
+pseudonyms, which remain stable only within that run. Callback/API diagnostics
+use closed enums for operation, phase,
+field/option shape, route template, and error/status class. They may include a
+random correlation UUID, bounded duration/progress values, booleans describing
+cursor/anchor state, and numeric status/error codes. They never include raw
+URLs, headers, request or response bodies, account identifiers, share links, or
+file data.
+
+The Stability Lab stores its remote root and ownership-marker identifiers only
+in the local domain configuration. The remote marker contains a random marker
+UUID plus drive/root identity, but no account identifier, display name, path,
+URL, or credential. None of these operational identifiers or marker bytes are
+copied into diagnostic events. Lab provisioning and reset use the same closed
+typed-network spans as other requests, so only route and option shapes are
+durable.
+
+Finder report version 2 adds run-local item aliases, observed UI action counts,
+expected extension code hashes, cancellation/conflict/working-set observations, and
+closed failure categories/reasons with supporting span IDs. Diagnostics version 3
+adds subject aliases, parent spans, process-instance UUIDs, code hashes, and safe
+numeric error codes. An optional `validationFields` array contains only known
+request-field classes from a 400 or 422 response; messages, values, and unknown keys
+are discarded. Version 1 Finder reports and older diagnostic records remain
+readable. New live reports require the newer evidence fields.
+
+Finder report version 3 adds `skipped(permanentDeletionNotSelected)`, valid only for
+scenario 12. Its UI/server assertions are not evaluated, and it contributes zero
+passes. All other live evidence requirements remain those of version 2. Historical
+versions 1/2 still decode; they cannot encode this new selection reason. A sealed
+15-pass/one-deferred report produces exit 4 and explicitly says full acceptance is
+incomplete. Missing telemetry and failed later steps still produce failure, not
+that completed-selection status.
+
+`concurrentSnapshot` identifies a rejected snapshot compare-and-swap without
+exporting the error's domain/container identifiers. Bounded working-set retries
+emit this class on nonterminal checkpoints; exhaustion emits a failed terminal.
+It never hides a remote failure or changes a successful watermark. Finder's
+scoped eviction alert maps to the closed `resourceBusy` failure reason; native
+Apple Event failures print numeric codes without private command text.
+
+Each passing step requires a baseline and postcondition, Finder-visible and remote
+assertions, and successful item-specific callback evidence from the expected build.
+Transfer sampling uses Foundation `Progress.fractionCompleted` so weighted child
+progress is visible before the parent's integer units advance. Only actual
+observations are bucketed; terminal completion is not intermediate progress.
+Cancellation accepts the expected cancelled fetch and requires real progress plus a
+later successful fetch for that same item. Trash uses `modifyItem`; permanent
+selected-item deletion uses `deleteItem`. Root enumeration cannot substitute for
+an actual working-set member event. Missing starts/terminals or contradictory
+terminals reject certification. Checkpoints are incomplete coverage.
+
+The timeline retains active-item HTTP 404 during Trash-aware metadata lookup.
+It is a handled intermediate failure only when the same subject, process/build,
+and enclosing metadata span have a subsequent successful `trashedItem` request
+and successful metadata callback. Missing or mismatched recovery, another status,
+or a failed enclosing callback remains a failure. This exception cannot satisfy
+the required Restore mutation evidence.
+
+`live-status.json` is a replaceable closed status snapshot for the read-only watch
+command. Watch shows scenario transitions, errors, cancellations, retry checkpoints,
+and extension lifecycle events; routine request successes stay in the timeline.
+The run recorder starts before context preflight can emit callbacks. A context
+preflight failure retains the incomplete unsealed bundle for explicit stale-owner
+recovery. This ordering alone does not attest a fresh extension launch, because
+registration may have launched it before the command starts.
+Selection diagnostics retain the last live window/parent binding flags, list-view
+state, and exact-name match counts. They contain no paths, titles, or row contents;
+an expired post-failure query cannot overwrite those observations.
+`diagnostic-timeline.json` is ordered by timestamp and event ID, and becomes
+immutable with the final report. `diagnostic-health.failed` latches a failed append;
+subsequent successful writes cannot erase that gap or certify the bundle. The runner
+retains monitoring through operator pauses and waits for outstanding spans to settle.
+Local screenshots live separately under `visual-evidence`; they are cropped to
+positively identified generated content and are excluded from ordinary exports.
+
+Successful plaintext modify callbacks also attach their returned item's
+`itemMetadataAlias` to the terminal event, allowing comparison with independently
+verified remote state. This reuses the optional version 3 field; historical
+events without it remain readable. The value contains no raw item metadata.
+
+Version 3 diagnostics optionally include `itemMetadataAlias`, a run-salted
+commitment to item identity, name, parent, and size. No raw metadata values are
+exported. The live report's optional `expectedWorkingSetMetadataAlias` becomes
+mandatory to certify scenario 15: its matching member terminal must be a child
+of a completed working-set enumeration. A newly introduced remote name change
+prevents stale membership from passing. Historical bundles remain decodable.
+
+The shared `ProviderDiagnosticSpan` emits one best-effort start and at most one
+terminal event even when completion, failure, and cancellation race. Every
+span has its own stable random span UUID; a separate Task-local random UUID
+correlates nested callback and request spans. During each Finder scenario, a
+private owner-only step pointer makes the same random correlation UUID visible
+to the app, File Provider extension, and action-extension processes; callback
+spans fall back to that value when there is no inherited task-local context.
+The pointer contains no domain, item, name, or path value and is removed before
+evidence finalization. Recorder
+failure never changes an API result. A terminal append is attempted before the
+system callback so finishing a run cannot silently turn a completed callback
+into start-only evidence.
+Task-local UUID propagation correlates a callback with its runtime-load and
+typed network spans without carrying domain, item, name, or path context.
+Instrumented surfaces include extension initialization/invalidation, runtime
+load, metadata, fetch, create/modify/delete, item/change/anchor enumeration,
+materialized and working-set refresh, thumbnails, known-folder resolution, and
+contextual actions. Long-lived app/extension/enumerator objects resolve the
+current Stability writer when each callback, app activity, view access, or
+service begins, so starting or rotating a run does not retain a missing or
+sealed writer. Transfer diagnostics
+start only when the lazy transfer is consumed or cancelled and use the same
+span for deduplicated progress, cancellation, and completion. An expected
+missing share link is recorded as a successful optional result.
+For an HTTP rejection, durable diagnostics keep only the numeric status and
+closed recovery class. The API adapter may retain a parsed nonnegative
+Retry-After delta-seconds integer for retry decisions, but never copies the raw
+header value or response body into JSONL, unified logs, activities, or exports.
+Share adapter diagnostics likewise never retain the selected access value,
+expiration, password, or returned URL.
 
 ## Categories And Correlation
 
@@ -21,13 +204,15 @@ the small set of sanitized fields that are useful to users and support.
 `ProviderLogContext` creates a correlation ID, operation name, optional domain,
 drive, and item context, plus a start time. File Provider activity rows receive
 a correlation ID and measured duration. The `PotassiumKDriveService` records
-sanitized unified-log spans for every kDrive request with an operation name,
-correlation ID, duration, outcome, status code when available, and error
-domain/code.
+sanitized unified-log spans in standard builds and closed-schema JSONL spans in
+Stability for every typed kDrive request. Durable spans contain an enum
+operation/route/option shape, correlation UUID, bounded duration, phase, and
+status/error class; they never retain an error domain or description.
 
 Network spans never include request URLs, query parameters, filenames, request
-or response bodies, bearer tokens, refresh tokens, remote account identifiers,
-or file bytes. The service does not currently expose a kDrive request ID, so the
+or response bodies, raw Retry-After values, bearer tokens, refresh tokens,
+remote account identifiers, or file bytes. The service does not currently
+expose a kDrive request ID, so the
 optional durable `remoteRequestID` field remains empty unless a future typed API
 surface provides one safely.
 
@@ -39,11 +224,11 @@ optional `correlationID`, `durationMilliseconds`, `networkOperation`,
 `httpStatusCode`, and `remoteRequestID` fields. Existing databases migrate these
 columns as nullable values.
 
-`KDriveProviderEventSQLiteStore` retains the newest 5,000 activity rows by
-default. This applies only to activity rows: unresolved, blocked, and failed
-conflict rows remain until a user action or domain cleanup removes them. The
-existing Clear action removes all activity rows and automatically resolved
-conflicts, preserving unresolved conflict state.
+In the standard profile, `KDriveProviderEventSQLiteStore` retains the newest
+5,000 activity rows by default. In Stability, whole completed run bundles are
+retained instead. In both profiles unresolved, blocked, and failed conflict
+events remain visible, and Clear removes activity plus automatically resolved
+conflicts while preserving unresolved conflict state.
 
 The Activities screen pages over this retained history in batches of 50. This
 only limits UI decoding and rendering; it does not reduce retention or support
@@ -83,3 +268,172 @@ log and cannot be used to recover omitted secrets or private URLs.
   remote account information, or customer data to either logging layer.
 - Add a migration and redaction test whenever a new durable diagnostic field is
   introduced.
+
+### Targeted conflict profile evidence
+
+`conflict-profile.json` schema 3 declares the run ID, selected closed conflict
+case, and optional required extension launch mode. Historical schemas 1/2 are readable. `conflict-request.json` carries only run/case/correlation identifiers, a salted
+subject alias, scheduling point, and unique attempt UUID. Attempt-specific arrival,
+release, and cancellation files prevent an earlier release from satisfying a later
+case. Report sealing verifies the selected case and gate against its actual
+callback evidence. Other entries are `notSelectedForConflictProfile`; the full
+sixteen-scenario certificate is unchanged. Failures and local screenshots retain
+the existing privacy and immutability boundaries.
+
+Both `--run` and `--conflicts` may require `--extension-state fresh|running`.
+The original runner declares this in `extension-launch-request.json` schema 1;
+conflict runs declare it in their profile. Missing requested evidence cannot pass. The immutable
+`extension-launch.json` (schema 2) records microsecond integer timestamps (preserving kernel birth ordering), the signed
+build hash, diagnostic process UUID, and preparation fence. Fresh evidence requires
+an initialization terminal before the tested mutation in a newly born process.
+Running evidence requires an earlier callback and an unchanged kernel process.
+Complete successful initialization/invalidation spans may describe replicated
+objects being recreated inside that process, as Apple's contract permits. Their
+events remain in the correlated timeline. Missing, duplicated, failed, cancelled,
+or misordered lifecycle spans prevent certification, as do missing or mixed process
+identities/build hashes. Version-1 proofs retain their original object-lifetime
+restrictions; rejected candidates are not recertified in place. A historical profile without this requirement remains a
+targeted result without cold/warm certification. No PID, path, account, or raw
+item identifier is exported by this record.
+
+Conflict profile version 3 requires a version 1
+`conflict-<attempt>-competitor-verified.json` record. It carries the exact ticket
+and a salted metadata fingerprint, written only after independent metadata/byte
+verification while that attempt is held. Cancellation invalidates it. The original
+preserve-both scenario requires the same record at sealing. Historical profile
+versions 1/2 remain readable; their results do not certify this stronger ordering.
+
+Confirmed plaintext mutation results can enter the existing working-set SQLite
+journal without waiting for a remote crawl. This is not itself working-set
+membership telemetry: item-specific `workingSetRefresh` events still arise only
+when a real enumeration delivers the item. Journal publication preserves poll
+watermarks; poll commits validate their original working-set anchor. No database
+schema migration or diagnostic schema change is needed for this delivery path.
+When a newer journal supersedes an in-flight poll, the poll stops between
+folder/activity requests, discards its prepared container changes, and preserves
+its previous successful watermark. Enumeration awaits that work before delivering
+the newer journal; it creates no detached refresh worker. Only actual emitted
+working-set members carry membership metadata.
+
+Live step validation selects callbacks by run-local subject, step correlation, and start time, then retains their complete spans through monitored settling. Missing starts or terminals and contradictory late terminals still reject acceptance. A sealing rejection retains `finder-evidence-rejected.json` (schema 1, `eligibleForAcceptance: false`) with the candidate report, observations, and a closed error reason; this file never substitutes for the immutable final report and summary. External error descriptions are excluded.
+
+Local recorder settling uses a one-second quiet interval after every span has exactly one start and terminal, sampled every 500 ms within the existing deadline. It does not use server Retry-After/backoff. New events reset the interval; missing or duplicate span records cannot settle. Extension lifecycle validation remains strict through sealing.
+
+The fallback XPC-reply-invalid wrapper is inspected through at most four underlying errors for diagnostic classification. Known SQLite errors retain only their numeric result code and storage category; their message and statement are discarded. This uses existing version-3 fields, and historical opaque wrapper records remain readable. It changes diagnostics, not the error returned to File Provider.
+
+Go to Folder failure traces contain a closed UI stage, sheet count, and a Boolean
+indicating whether the owned window still has its previous destination. They never
+print entered paths, sheet text, or external error descriptions. These local traces
+support diagnosis; they do not replace required item binding or final report proof.
+
+Finder destination observation prints only a closed lookup phase (`resolveItemURL`
+or `bindDestinationParent`), diagnostic category, and numeric error code when a
+lookup fails. Local paths, error descriptions, and user-info are excluded. A logged
+lookup failure is not evidence of a remote API failure or a successful move.
+
+
+Provider-instance invalidation cancels its owned materialization refresh tasks;
+the already-completed acknowledgement is not completed a second time. A cancelled
+working-set refresh records one `cancelled` terminal, separately from the successful
+instance-invalidation span. Object invalidation still does not imply process exit.
+A missing background terminal after observed process disappearance prevents sealing;
+never synthesize a terminal from process absence.
+
+
+Warm-launch preparation requests a working-set enumeration after verifying the lab
+and existing process. Its acknowledgement is not callback evidence. Failures before
+scenario execution retain `launch-preparation-failed.json` version 1, with a closed
+stage/reason, safe error class and numeric code, and `eligibleForAcceptance: false`.
+This diagnostic does not replace a Finder report or summary. Missing initial process,
+process replacement, and callback deadline failures remain distinct; payloads, error
+domains, URLs, and localized descriptions are excluded.
+
+Fixture preparation traces only the fixed roles `root`, `nested`, `deep`, `sibling`,
+and `seed`, with resolving/resolved/failed states. They exclude paths, file names,
+and raw item identifiers. These traces locate a failed placeholder binding without
+changing its 90-second deadline or treating native signal acknowledgement as proof.
+
+The native working-set signal target is distinct from a scenario’s fixture subjects.
+Signaling records only the intended changed containers; the explicit working-set
+scenario selects `.workingSet` itself. All other callbacks stay in the global
+timeline and settlement checks. Diagnostic waits print closed reason transitions
+(such as `pendingOperations`), without raw errors or private subjects.
+
+
+JSONL change subscriptions establish their initial file fingerprint before returning
+the stream. An append between subscription return and the polling task's first turn
+must therefore emit a change notification. This does not add payloads or change the
+diagnostic/report schema; the cross-store observation regression has no startup sleep.
+
+The Stability-only transfer cursor reads new complete JSONL records, up to 1 MiB
+per local observation, rather than decoding historical events at every tick.
+It opens a regular file without following symlinks, retains a bounded boundary
+anchor, and rejects replacement, truncation, boundary rewriting, malformed records,
+and the writer-health latch. Shared-lock contention defers that observation without
+blocking the UI. An interrupted final record is retained until complete. This is
+only a scheduling aid; final certification still validates the entire immutable
+bundle with the existing strict parser and callback requirements.
+
+Failure screenshot observation has its own bounded 15-second budget. The failed
+operation remains failed and its original deadline is not extended. The driver
+can dismiss its known transient menu, then revalidate the exact selected row before
+capturing it; unrelated windows and broader screenshot regions remain excluded.
+Closed numeric menu observations identify anchor lookup, event posting, popup count
+and exact enabled-command count without exporting file names or URLs.
+
+Native pointer dispatch records the boolean result of the read-only event-posting
+permission check before emitting input. Denial fails immediately without presenting
+a consent dialog; the trace does not conflate a denied event with a missing command.
+
+Session pointer delivery also records whether the observed cursor reached its
+requested target after movement. This is a boolean diagnostic, not a substitute
+for an observed menu, invoked action or real provider callback. Coordinates remain
+local to the driver and are not exported.
+
+
+Actions panels on macOS can receive an opaque system selection identifier and
+expose their Accessibility tree in the Actions process rather than Finder. The
+production UI resolves the canonical provider identifier and verifies its domain
+before loading action data. Stability binds the panel's run-local alias to that
+canonical identifier and requires the installed Actions executable path/code hash.
+Do not use filenames, raw document IDs, a panel title, or the first window as a
+fallback. Resolution uses one bounded 90-second callback budget and retains no URL
+or raw system error in its messages. Negative resolver/panel-target tests cover
+wrong domains/engines, old code, ambiguous panels, timeout and cancellation.
+The sealed `212e54e` run passed 13 scenarios; cancellation and contextual actions
+failed and deletion was deferred. This is not completed Mac acceptance.
+
+Hosted Actions sheets may have an empty `AXWindows` array and a valid `AXMainWindow`.
+Stability includes that main window only from the attested Actions process and
+still requires the resolved run-local alias, explicitly published on the native
+AppKit root. Discovery deduplicates the same listed/main window. A visible form
+without this identity cannot produce a passing result or authorize cleanup.
+
+A containing-app permission preflight does not establish the Actions extension's
+first-use data-access consent. A live retry encountered that macOS prompt while
+opening its shared diagnostic coordinator file; the operator accepted it. Alias
+discovery now runs off the UI actor with bounded waiting and publishes a cached
+value; SwiftUI layout and AX binding perform no shared-store I/O. Done can dismiss
+a loading panel, while mutation-in-progress still disables it. Consent remains a
+system requirement; a blocked lookup or unbound panel cannot count as a pass.
+
+
+Stability preflight qualifies shared-container provisioning for the installed app,
+replicated extension, and Actions extension. A valid signature is insufficient:
+each embedded profile must authorize the signed explicit application identity and
+existing App Group, and be unexpired. Rejection reports only the affected target
+role; profile contents, developer identifiers and certificates are never exported.
+Both extension targets enable `REGISTER_APP_GROUPS = YES`. `--build` permits
+Xcode's normal automatic provisioning refresh using its saved developer account.
+See [Apple's container authorization guidance](https://developer.apple.com/documentation/xcode/accessing-app-group-containers).
+Repeated data-access prompts require inspecting provisioning before requesting
+another permission grant; do not reset TCC or migrate the app/Keychain group.
+
+
+A frontmost Finder process and valid event-posting permission do not prove that
+Finder receives a mouse click. Native pointer actions now require a system-wide
+AX hit belonging to the exact selected Finder row or popup item. Verification runs
+before moving and again after hover. An obstructed target records environment /
+uiUnavailable with local reason `pointerTargetObstructed`, without reading the
+other app's UI. Its failure screenshot is omitted to exclude unrelated content.
+The failed result remains unaccepted; clear the obstruction before rerunning.
