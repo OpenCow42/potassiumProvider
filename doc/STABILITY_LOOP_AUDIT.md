@@ -2684,3 +2684,13 @@ unit suite, 24 focused iOS Simulator tests, 24 focused visionOS Simulator tests,
 final iOS/visionOS version-form builds, the selected live suite, and the 12 targeted
 conflict reports above. No XCTest UI suite was rerun in this continuation; the
 installed Finder/Actions flows were validated through native UI and server checks.
+
+### Accepted merge limitation (2026-09-13)
+
+The operator accepted the unapplied file-comments setting as non-blocking for this
+PR because comments are outside the critical path. Official-client comparison or
+vendor clarification is a follow-up, not required operator input before merging.
+CR-027 remains open; the UI warning and strict failed scenario result are preserved.
+The accepted limitation does not count as a passing test, establish full-suite
+acceptance, authorize permanent deletion, or close CR-013. Publish the current fixes
+and require CI for the updated PR head before assessing merge readiness.

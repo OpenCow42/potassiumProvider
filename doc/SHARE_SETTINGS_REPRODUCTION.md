@@ -4,6 +4,10 @@ Observed 2026-09-12 on the operator-authorized Stability Lab. This is an open
 integration failure, not a confirmed account limitation or a proven vendor defect.
 No credential, account/file identifier, private URL, or live body is needed here.
 
+On 2026-09-13, the operator accepted this as a non-blocking limitation for the
+stability PR because file comments are outside the critical path. Investigation
+remains a follow-up under CR-027; the warning and failing scenario are preserved.
+
 ## Reproduction
 
 1. Use a generated, disposable plain-text file inside the verified lab subtree.

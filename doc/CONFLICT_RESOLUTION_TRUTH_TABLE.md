@@ -15,6 +15,12 @@ below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
 
+2026-09-13 merge scope: the operator accepted the unapplied file-comments setting
+as a non-blocking limitation for this PR because comments are outside the critical
+path. CR-027 remains open as a follow-up; the app's warning, strict scenario failure,
+and retained evidence are unchanged. This decision does not establish full-suite
+acceptance or change CR-013 and the deferred permanent-deletion scenario.
+
 2026-09-12 continuation: fresh runs `c6d8e57e-ce9b-4179-b9c8-444835c00023`
 and `17d1e74b-8bb0-4672-89cf-fb84e3c7bf20` sealed 14 passed, one failed and
 permanent deletion unselected. Current warm run
