@@ -156,6 +156,40 @@ never silently discarded. An unavailable cleanup control leaves incomplete evide
 
 ## Acceptance and remaining limitations
 
+### Current OS-specific evidence
+
+The September 12 continuation passed all six live conflict cases in both fresh and
+already-running extension profiles on the same arm64 host running **macOS 26.6.2
+(25G83)**, using **Xcode 26.5 (17F42)**. The selected Finder/Actions suite recorded
+14 passes, one unapplied-comments failure accepted by the operator as non-blocking,
+and permanent deletion unselected. It is not complete sixteen-scenario acceptance.
+The full Mac Stability unit target passed 558 tests on that macOS version. Focused
+shared tests passed 24 each on **iOS Simulator 26.5 (23F73)** and **visionOS Simulator
+26.5 (23O470)**. These simulator tests do not validate native Mac Finder integration.
+
+Retained XCResult device records confirm the tested OS versions. The live JSON
+reports do not embed OS metadata, so their version attribution is the shared host
+context rather than independent per-run capture. The audit's current conflict
+matrix and OS-version section record exact run IDs, result bundles, and provenance.
+
+Retain this environment output with every future live run's log, alongside its run
+IDs and results:
+
+```sh
+sw_vers
+uname -m
+xcodebuild -version
+```
+
+Read actual simulator versions/builds from XCResult device records. An SDK version,
+deployment target, or moving CI runner label is not the OS version of a passing run.
+After a macOS upgrade, rerun the fresh and already-running Finder/Actions and conflict
+profiles before claiming compatibility; inspect panel/menu binding, real cancellation,
+Trash restoration, historical-copy recovery, and working-set delivery. No next-macOS
+compatibility is claimed from the current passes.
+
+### Earlier validation snapshots
+
 The complete six-case fresh and already-running profiles passed on implementation
 `d4b5323`, with twelve sealed evidence bundles. Independent verification confirmed
 one signed build, six fresh processes, a continuous warm process, actual competing

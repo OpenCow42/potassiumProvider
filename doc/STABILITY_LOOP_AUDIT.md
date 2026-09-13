@@ -2694,3 +2694,37 @@ CR-027 remains open; the UI warning and strict failed scenario result are preser
 The accepted limitation does not count as a passing test, establish full-suite
 acceptance, authorize permanent deletion, or close CR-013. Publish the current fixes
 and require CI for the updated PR head before assessing merge readiness.
+
+### OS versions covered by the current evidence (2026-09-13)
+
+The September 12 local validation used Xcode 26.5 (17F42) on an arm64 Mac running
+macOS 26.6.2 (25G83). The retained XCResult device records confirm these runtime
+versions; the host's `sw_vers` and `xcodebuild -version` were checked again on
+September 13.
+
+| Validation | OS runtime and build | Result |
+| --- | --- | --- |
+| Full macOS Stability unit target | macOS 26.6.2 (25G83), arm64 | 558 passed |
+| Focused shared-runtime tests, iPhone 17 Simulator | iOS 26.5 (23F73) | 24 passed |
+| Focused shared-runtime tests, Apple Vision Pro Simulator | visionOS 26.5 (23O470) | 24 passed |
+| Native Finder/Actions integration on the same Mac host | macOS 26.6.2 (25G83), arm64 | 14 passed, comments failed and accepted as non-blocking, permanent deletion unselected |
+| Six live conflict cases, fresh and already-running extension profiles, on the same Mac host | macOS 26.6.2 (25G83), arm64 | 12 independent passes |
+
+The unit-result bundles are `potassium-resume-stability-mac-06.xcresult`,
+`potassium-resume-share-patch-ios-02.xcresult`, and
+`potassium-resume-share-patch-vision-02.xcresult` under `/private/tmp` on this host.
+Inspect with `xcrun xcresulttool get test-results summary --path <bundle> --format json`;
+the runtime comes from `devicesAndConfigurations[].device`, not a deployment target
+or SDK label. Use the top-level test count; parameterized execution counts differ.
+
+The sealed live JSON reports do not embed an OS version. Their OS attribution here
+is the shared test-host context, supported by the contemporaneous XCResult records;
+it is not an independently captured per-run OS attestation. Existing sealed reports
+remain unchanged. For future live runs, retain `sw_vers`, `uname -m`, and
+`xcodebuild -version` with the run log and record them alongside the run IDs.
+
+These passes cover the versions listed above. They do not establish compatibility
+with the next macOS release. After an OS upgrade, rerun fresh and already-running
+Finder/Actions integration and conflict profiles, inspecting hosted panels, menus,
+cancellation, Trash restoration, version recovery, and working-set delivery before
+claiming compatibility. Preserve failures and adjust behavior only from new evidence.

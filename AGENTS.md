@@ -216,6 +216,9 @@ app.
 - Use Swift Testing (`import Testing`) for new unit tests unless the work is in
   existing XCTest UI test targets.
 - Use XCTest only for UI automation or when extending existing XCTest files.
+- Record the actual OS version/build and Xcode version with integration-test
+  evidence. Rerun native Finder integration after macOS upgrades before claiming
+  compatibility; an SDK or deployment target is not a tested runtime version.
 - Run the relevant `xcodebuild build` or `xcodebuild test` command before
   describing implementation work as complete, including Mac and visionOS
   destinations when changes affect runtime behavior. If validation cannot be

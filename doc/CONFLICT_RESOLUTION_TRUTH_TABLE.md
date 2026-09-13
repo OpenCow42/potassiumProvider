@@ -21,6 +21,13 @@ path. CR-027 remains open as a follow-up; the app's warning, strict scenario fai
 and retained evidence are unchanged. This decision does not establish full-suite
 acceptance or change CR-013 and the deferred permanent-deletion scenario.
 
+OS scope of the September 12 evidence: the live Finder/Actions and conflict runs
+used the same arm64 macOS 26.6.2 (25G83) host as the retained Mac unit results.
+Focused simulator results cover iOS 26.5 (23F73) and visionOS 26.5 (23O470), with
+Xcode 26.5 (17F42). Live reports do not embed OS metadata; see the audit's OS-version
+section for provenance and the required rerun after an OS upgrade. No compatibility
+with the next macOS release is established by these results.
+
 2026-09-12 continuation: fresh runs `c6d8e57e-ce9b-4179-b9c8-444835c00023`
 and `17d1e74b-8bb0-4672-89cf-fb84e3c7bf20` sealed 14 passed, one failed and
 permanent deletion unselected. Current warm run
