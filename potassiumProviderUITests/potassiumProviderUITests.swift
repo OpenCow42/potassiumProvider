@@ -106,11 +106,19 @@ final class potassiumProviderUITests: XCTestCase {
         app.buttons["setup.account.ui-account"].tap()
         app.buttons["account.drive.10"].tap()
 
+        #if os(macOS)
+        let driveManagement = app.descendants(matching: .any)["drive.management"]
+        XCTAssertTrue(driveManagement.waitForExistence(timeout: 5))
+        driveManagement.scroll(byDeltaX: 0, deltaY: -2_000)
+        #endif
+
         let remove = app.buttons["drive.removeFromFiles"]
         XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertTrue(remove.isEnabled)
         remove.tap()
 
-        XCTAssertTrue(app.buttons["Remove from Files"].waitForExistence(timeout: 5))
+        let confirmRemoval = app.buttons["drive.confirmRemoval"]
+        XCTAssertTrue(confirmRemoval.waitForExistence(timeout: 5))
         XCTAssertTrue(
             text(containing: "Remote kDrive files are not deleted", in: app).exists
         )
@@ -189,6 +197,13 @@ final class potassiumProviderUITests: XCTestCase {
         XCTAssertTrue(addToFiles.waitForExistence(timeout: 5))
         XCTAssertTrue(addToFiles.isEnabled)
         addToFiles.click()
+
+        let confirmStorage = app.buttons["storage-selection-confirm"]
+        XCTAssertTrue(confirmStorage.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["storage-location-on-this-mac"].exists)
+        XCTAssertTrue(app.buttons["storage-location-external-drive"].exists)
+        XCTAssertTrue(confirmStorage.isEnabled)
+        confirmStorage.click()
 
         XCTAssertTrue(app.buttons["drive.removeFromFiles"].waitForExistence(timeout: 5))
         XCTAssertTrue(text(containing: "Added UI Test Drive to Files.", in: app).exists)

@@ -224,6 +224,9 @@ struct KnownFolderLifecycleTests {
         let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
         let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
         let remote = KnownFolderLifecycleRemote(privateDirectoryFileID: 77)
+        // These cases start with an existing system registration. The Stability
+        // profile deliberately does not re-register an ordinary saved domain.
+        registrar.seedRegisteredConfiguration(configuration)
         let model = PotassiumProviderAppModel(
             accountStore: accountStore,
             domainStore: domainStore,
@@ -274,6 +277,7 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
     private(set) var events: [Event] = []
     private(set) var state: ProviderKnownFolderSyncState
     private let claimError: Error?
+    private var registeredConfiguration: ProviderDomainConfiguration?
     private let releaseError: Error?
 
     init(
@@ -290,12 +294,31 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
         events = []
     }
 
+    func seedRegisteredConfiguration(_ configuration: ProviderDomainConfiguration) {
+        registeredConfiguration = configuration
+    }
+
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {
         events.append(.add(domainIdentifier: configuration.domainIdentifier))
+        registeredConfiguration = configuration
     }
 
     func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
         events.append(.remove(domainIdentifier: configuration.domainIdentifier))
+        registeredConfiguration = nil
+    }
+
+    func registeredDomainStates() async throws -> [ProviderRegisteredDomainState] {
+        guard let registeredConfiguration else { return [] }
+        return [ProviderRegisteredDomainState(
+            configurationIdentifier: registeredConfiguration.configurationIdentifier,
+            domainIdentifier: registeredConfiguration.domainIdentifier,
+            displayName: registeredConfiguration.displayName,
+            volumeUUID: nil,
+            isDisconnected: false,
+            isUserEnabled: true,
+            knownFolderSyncState: state
+        )]
     }
 
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {

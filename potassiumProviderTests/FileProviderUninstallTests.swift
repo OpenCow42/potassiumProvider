@@ -313,6 +313,55 @@ struct FileProviderUninstallTests {
         #expect(await tokenStore.didDeleteToken() == false)
     }
 
+    @Test func cleanupSeparatesStableConfigurationsFromCurrentAndJournaledDomainState() async throws {
+        let configuration = ProviderDomainConfiguration(
+            configurationIdentifier: "configuration-1",
+            domainIdentifier: "domain-current",
+            displayName: "Team",
+            driveID: 42,
+            driveName: "Team"
+        )
+        let journal = ProviderDomainRelocationJournal(
+            configurationIdentifier: configuration.configurationIdentifier,
+            sourceConfiguration: ProviderDomainConfiguration(
+                configurationIdentifier: configuration.configurationIdentifier,
+                domainIdentifier: "domain-source",
+                displayName: "Team",
+                driveID: 42,
+                driveName: "Team"
+            ),
+            targetStorageLocation: .onThisMac,
+            targetDomainIdentifier: "domain-target",
+            knownFoldersWereActive: false,
+            phase: .needsRepair
+        )
+        let localState = RecordingUninstallLocalState(
+            storedConfigurations: [configuration],
+            storedRelocationJournals: [journal],
+            stateItems: []
+        )
+        let coordinator = FileProviderUninstallCoordinator(
+            domainManager: RecordingUninstallDomainManager(domains: [registeredDomain("domain-current")]),
+            localState: localState
+        )
+
+        let result = try await coordinator.run(options: FileProviderUninstallOptions(confirmed: true))
+
+        #expect(result.plan.cleanupConfigurationIdentifiers == ["configuration-1"])
+        #expect(result.plan.cleanupDomainIdentifiers == [
+            "domain-current",
+            "domain-source",
+            "domain-target",
+        ])
+        #expect(await localState.removedConfigurationIdentifiers() == ["configuration-1"])
+        #expect(await localState.removedJournalIdentifiers() == ["configuration-1"])
+        #expect(Set(result.removedLocalStateDomainIdentifiers) == Set([
+            "domain-current",
+            "domain-source",
+            "domain-target",
+        ]))
+    }
+
     private func parsedOptions(_ arguments: [String]) throws -> FileProviderUninstallOptions {
         guard case .run(let options) = try FileProviderUninstallArgumentParser.parse(arguments: arguments) else {
             throw FileProviderUninstallTestError.expectedRunInvocation
@@ -418,20 +467,25 @@ private actor RecordingUninstallDomainManager: FileProviderUninstallDomainManagi
 
 private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManaging {
     private let configurations: [ProviderDomainConfiguration]
+    private let relocationJournals: [ProviderDomainRelocationJournal]
     private let accounts: [ProviderAccount]
     private let plannedStateItems: [FileProviderUninstallStateItem]
     private let conflictStagingFileNames: [String]
     private var removedIdentifiers: [String] = []
+    private var removedConfigurationIDs: [String] = []
+    private var removedJournalIDs: [String] = []
     private var removedAccounts: [String] = []
     private var removedConflictStaging = false
 
     init(
         storedConfigurations: [ProviderDomainConfiguration],
+        storedRelocationJournals: [ProviderDomainRelocationJournal] = [],
         storedAccounts: [ProviderAccount] = [],
         stateItems: [FileProviderUninstallStateItem],
         conflictStagingFileNames: [String] = []
     ) {
         self.configurations = storedConfigurations
+        self.relocationJournals = storedRelocationJournals
         self.accounts = storedAccounts
         self.plannedStateItems = stateItems
         self.conflictStagingFileNames = conflictStagingFileNames
@@ -439,6 +493,10 @@ private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManag
 
     func storedConfigurations() -> [ProviderDomainConfiguration] {
         configurations
+    }
+
+    func storedRelocationJournals() -> [ProviderDomainRelocationJournal] {
+        relocationJournals
     }
 
     func storedAccounts() -> [ProviderAccount] {
@@ -470,6 +528,14 @@ private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManag
         removedIdentifiers.append(domainIdentifier)
     }
 
+    func removeConfiguration(configurationIdentifier: String) {
+        removedConfigurationIDs.append(configurationIdentifier)
+    }
+
+    func removeRelocationJournal(configurationIdentifier: String) {
+        removedJournalIDs.append(configurationIdentifier)
+    }
+
     func removeAccountRecords(accountIdentifiers: [String]) {
         removedAccounts.append(contentsOf: accountIdentifiers)
     }
@@ -480,6 +546,14 @@ private actor RecordingUninstallLocalState: FileProviderUninstallLocalStateManag
 
     func removedDomainIdentifiers() -> [String] {
         removedIdentifiers
+    }
+
+    func removedConfigurationIdentifiers() -> [String] {
+        removedConfigurationIDs
+    }
+
+    func removedJournalIdentifiers() -> [String] {
+        removedJournalIDs
     }
 
     func didRemoveConflictStaging() -> Bool {

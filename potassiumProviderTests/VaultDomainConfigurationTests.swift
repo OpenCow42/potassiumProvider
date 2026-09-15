@@ -11,6 +11,30 @@ struct VaultDomainConfigurationTests {
         #expect(ProviderEncryptionMode.opaqueVaultV1.isSupportedEncryptedVault == false)
     }
 
+    @Test func storageRelocationSupportIsPlaintextOnly() {
+        let plaintext = ProviderDomainConfiguration(
+            displayName: "Plaintext",
+            driveID: 1,
+            driveName: "Drive"
+        )
+        let vaultV1 = ProviderDomainConfiguration(
+            displayName: "Vault v1",
+            driveID: 1,
+            driveName: "Drive",
+            encryptionMode: .opaqueVaultV1
+        )
+        let vaultV2 = ProviderDomainConfiguration(
+            displayName: "Vault v2",
+            driveID: 1,
+            driveName: "Drive",
+            encryptionMode: .opaqueVaultV2
+        )
+
+        #expect(plaintext.supportsStorageRelocation)
+        #expect(vaultV1.supportsStorageRelocation == false)
+        #expect(vaultV2.supportsStorageRelocation == false)
+    }
+
     @Test func legacyConfigurationDefaultsToPlaintextMode() throws {
         let json = """
         {

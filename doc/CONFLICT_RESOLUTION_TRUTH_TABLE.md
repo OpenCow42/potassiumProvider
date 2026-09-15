@@ -1,7 +1,7 @@
 # Conflict Resolution Truth Table And Safety Register
 
 Status: normative data-safety register for legacy plaintext domains and
-encrypted vault format v2. Merge integration reviewed: 2026-08-10.
+encrypted vault format v2. Merge integration reviewed: 2026-09-15.
 
 This table is a release gate. Any change to encrypted File Provider mutations,
 versions, conflict policy, journal replay, trash, rollback, cleanup, recovery,
@@ -14,6 +14,18 @@ must never route through the plaintext implementation. The maintained tables
 below are independently normative for their respective domain type.
 
 ## Merge Integration Audit Status
+
+2026-09-15 external-storage integration: PR #6 incorporates `main` at `7ba89bf`.
+The external add path now enforces internal-drive membership and rejects ordinary
+registration in the Stability build. Reload, move, repair, and external runtime
+connection approval retain profile isolation; storage identity coding retains lab
+ownership evidence. Extension invalidation still cancels materialized work and
+records lifecycle spans, while external domains defer temporary-directory access
+and polling until connection approval. Cleanup retains separate configuration,
+snapshot, and profile-selected event-store removal, including JSONL events when
+no snapshot database exists. Existing mutation/conflict decisions and finding
+states remain unchanged. Automated validation and physical-drive limitations are
+recorded in [TESTING_AND_DEVELOPMENT.md](TESTING_AND_DEVELOPMENT.md).
 
 2026-09-13 merge scope: the operator accepted the unapplied file-comments setting
 as a non-blocking limitation for this PR because comments are outside the critical
@@ -521,14 +533,14 @@ The reproduced request defects have live rerun evidence above. CR-013 remains
 open; no underlying server permanent-delete guarantee has changed.
 
 - Integration reviewed: 2026-08-10.
-- Merge inputs: encrypted-vault head `a0e0839` and `origin/main` at `f042b7e`.
-- macOS `build-for-testing` and the complete `potassiumProviderTests` target
-  passed with signing and indexing disabled.
-- The iOS Simulator app and unit-test bundle built successfully. An initial
-  full local run did not launch because CoreSimulator's IPC server died. After
-  CI exposed a probabilistic support-log assertion, the corrected focused test
-  rebuilt and passed locally; the pull-request workflow remains the required
-  full clean-runner evidence.
+- Merge inputs: external-storage PR head `69e54fd` rebased onto `origin/main`
+  at `d006b17`, which includes encrypted-vault format v2.
+- macOS `build-for-testing` passed. The added external-storage lifecycle and
+  configuration suites passed by direct test-bundle execution, and the
+  previously failing removal-confirmation UI test passed through `xcodebuild`.
+- The complete `potassiumProviderTests` target passed on iPhone 17 / iOS 26.5
+  and Apple Vision Pro / visionOS 26.5 simulators after the final integration
+  guards and UI-fixture correction.
 - The generic visionOS app build passed with signing and indexing disabled.
 - Live kDrive validation was not performed. Server-dependent findings remain
   open as documented below.
@@ -551,6 +563,7 @@ open; no underlying server permanent-delete guarantee has changed.
 | A historical file version is restored | Authenticate and decrypt the selected immutable revision, then encrypt and publish it as a fresh content object with a fresh logical revision. A stale client holding the historical revision must not pass an ABA check. | No old ciphertext deletion | `VaultProvisioningTests.restoringVersionPublishesFreshRevisionAndRejectsABAStaleWrite` |
 | Siblings normalize to the same filename, including a pre-existing generated conflict name | Keep every item. Reserve all existing normalized names, then allocate deterministic numbered suffixes until unique. | No | `VaultJournalTests.siblingConflictAllocatorSkipsExistingGeneratedName` |
 | Remote journal omits a transaction previously trusted by this device | Reject synchronization as rollback; never fill the omission from cache and call it current. | No | `VaultProvisioningTests.returningDeviceRejectsOmittedRemoteJournalObject` |
+| File Provider storage relocation or external placement is requested for an encrypted vault | Reject before writing a relocation journal or changing the system domain. A replacement domain identifier would address a different local rollback witness; no trusted atomic migration exists. Persisted encrypted/external combinations fail runtime loading with `.cannotSynchronize`. | **No** | `PotassiumProviderAppModelExternalStorageLifecycleTests.encryptedVaultStorageRelocationFailsClosedBeforeSideEffects`, `VaultDomainConfigurationTests.storageRelocationSupportIsPlaintextOnly`, and the extension runtime guard |
 | Maintenance observes ciphertext unreferenced by this device's current state | Record/report it only. Never delete it because an offline device may later publish a valid reference. | **No** | `VaultProvisioningTests.maintenanceNeverDeletesCiphertextThatAnOfflineDeviceMayReference` |
 | A checkpoint is uploaded or opened | Use authenticated 64 KiB–256 MiB power-of-two padding. Reject unpadded, malformed, tampered, or out-of-range objects. | No | `VaultCryptographyTests.checkpointsHideExactMetadataSizeAndRejectUnpaddedObjects` |
 | User creates a vault or opens one with a recovery kit or iCloud Keychain | Show the complete-data-loss/no-support warning and enforce at least five seconds of monotonic elapsed time before any activation side effect. | No side effect before delay | `VaultUXAppModelTests.failedCloudPublicationKeepsRegisteredVaultAndRecoveryBoundary`, `recoveryAndICloudOpenCannotBypassRiskDelay`, and the warning UI test |
@@ -574,6 +587,7 @@ open; no underlying server permanent-delete guarantee has changed.
 | EV-012 | High | Open release gate | Safe plaintext-to-vault migration and destructive source purge are unavailable. Do not offer ownership cutover from a legacy Potassium domain. |
 | EV-013 | High | Open release gate | Account/drive identity, object counts and buckets, timing, IP metadata, access patterns, and fetched-object linkage remain visible to the service. This is an accepted architectural limitation, not zero-knowledge storage. |
 | EV-014 | Critical | Open release gate | Independent cryptographic and adversarial synchronization review has not approved v2. Both feature flags must remain off by default. |
+| EV-015 | High | Open release gate | Encrypted-vault File Provider placement cannot move to external storage because relocation replaces the domain identifier that keys the local rollback witness. The UI, app model, and extension fail closed until an atomic trust-state migration is designed, tested, and independently reviewed. |
 
 ## Encrypted-Vault Audit Evidence
 
@@ -595,9 +609,11 @@ Local success does not close EV-014.
   final fail-closed guards.
 - Builds: iOS Simulator and generic visionOS builds succeeded with signing
   disabled.
-- UI warning automation: the targeted macOS UI test passed and verifies the
-  warning copy and disabled continuation for creation; route unification and
-  the monotonic delay are covered in unit tests.
+- UI automation: targeted macOS tests passed for both the encrypted-vault risk
+  warning and the configured-drive removal alert. The removal regression now
+  verifies a connected fixture, an enabled remove action, a distinct
+  confirmation action, and the remote-file preservation warning. Route
+  unification and the monotonic risk-warning delay are covered in unit tests.
 - Independent security review: not completed.
 
 ### Encrypted-Vault Maintenance Rule
@@ -835,6 +851,8 @@ implementation audit for updated run/test results. `CR-013` is still **Open**.
 
 | Request or conflict | Predicate | Current action | Server mutation | Data-loss assessment | User recovery |
 | --- | --- | --- | --- | --- | --- |
+| Add ordinary domain on external storage | Standard runtime profile and a usable internal kDrive; eligible local volume | Apply the same profile and drive-membership guards as local registration before preparing or saving a domain | None | Fail closed. An external storage choice cannot bypass lab isolation or expose a shared-only kDrive. `PotassiumProviderAppModelExternalStorageLifecycleTests.externalAdditionEnforcesDriveMembershipAndRuntimeProfile` covers both profiles and excluded drive roles. | Use the standard app for ordinary drives; use verified lab provisioning in Stability. |
+| Reload, move, or repair a domain from the wrong runtime profile | Purpose or lab ownership configuration is incompatible with the current build | Do not register, relocate, stage a journal, or clear local state; external runtime connection approval also rejects incompatible configurations | None | Fail closed. `reloadMoveAndRepairRejectIncompatibleProfileBeforeSideEffects` and `ProviderDomainConfigurationIdentityTests.stableIdentityRoundTripRetainsStorageAndLabIsolation` preserve the boundary and ownership evidence. | Open the build that owns the domain and correct its configuration. |
 | Provision lab root | No saved or registered domain; selected drive has one internal non-maintenance discovery record; explicit drive root resolves as a directory | Verify the server-created `Private` directory and its drive-root parent, create one unique child below it, upload the fixed random marker with `conflict=error`, re-read both, persist exact root/marker evidence, then register File Provider | Creates a directory and marker file | Low. Internal discovery proves membership, while created-and-matched root/marker evidence proves lab ownership. Partial provisioning is never auto-cleaned, so a failed local save/registration can leave an orphaned development folder but cannot delete unrelated data. | Inspect the dedicated development drive and remove an abandoned folder manually only after verifying its marker. |
 | Marker collision or incomplete provisioning | Marker upload/verification fails | Stop, retain any created root, and do not register it or issue compensating deletion | No additional mutation after failure | Low data-loss risk; possible empty/orphaned lab root. | Verify the marker and remove the orphan manually from the dedicated account. |
 | Reset lab contents | Exact confirmation; root is a non-root child of its verified `Private` parent (or a historical top-level lab) and has matching created-and-persisted ownership evidence; marker and registered lab domain match; complete bounded listing | Exclude root and marker; before each action re-fetch root, marker, and target parent; call reversible trash only for a still-immediate child | Trashes verified immediate children | Low. There remains an unavoidable request-time race after the final metadata fetch, but trash is reversible and the target stable ID was inside the verified lab root at preflight. | Restore an item from kDrive trash if the reset intent was wrong. |

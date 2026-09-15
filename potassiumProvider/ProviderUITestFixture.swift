@@ -109,6 +109,9 @@ enum ProviderUITestFixture {
                     : [configuredDrive, availableDrive],
             ],
             initialDomains: fixtureName == "setup-empty-drives" ? [] : [configuration],
+            initialPlacementStatesByConfigurationIdentifier: fixtureName == "setup-empty-drives" ? [:] : [
+                configuration.configurationIdentifier: .connected,
+            ],
             encryptedVaultsEnabled: true
         )
         if fixtureName == "setup-error-banner" {
@@ -211,9 +214,30 @@ private final class ProviderUITestOAuthAuthenticator: KDriveOAuthAuthenticating 
 }
 
 @MainActor
-private struct ProviderUITestDomainRegistrar: ProviderDomainRegistering {
-    func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
-    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+private final class ProviderUITestDomainRegistrar: ProviderDomainRegistering {
+    private var configurations: [String: ProviderDomainConfiguration] = [:]
+
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        configurations[configuration.domainIdentifier] = configuration
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
+        configurations.removeValue(forKey: configuration.domainIdentifier)
+    }
+
+    func registeredDomainStates() async throws -> [ProviderRegisteredDomainState] {
+        configurations.values.map {
+            ProviderRegisteredDomainState(
+                configurationIdentifier: $0.configurationIdentifier,
+                domainIdentifier: $0.domainIdentifier,
+                displayName: $0.displayName,
+                volumeUUID: nil,
+                isDisconnected: false,
+                isUserEnabled: true,
+                knownFolderSyncState: .inactive
+            )
+        }
+    }
 }
 
 private actor ProviderUITestAccountStore: ProviderAccountStoring {
