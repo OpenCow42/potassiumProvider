@@ -388,15 +388,21 @@ private struct AppGroupFileProviderUninstallLocalState: FileProviderUninstallLoc
     }
 
     func removeLocalState(domainIdentifier: String) async throws {
-        guard FileManager.default.fileExists(atPath: snapshotsDatabaseURL.path) else {
-            return
+        if FileManager.default.fileExists(atPath: snapshotsDatabaseURL.path) {
+            let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: snapshotsDatabaseURL)
+            try await snapshotStore.removeSnapshots(domainIdentifier: domainIdentifier)
         }
 
-        let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: snapshotsDatabaseURL)
-        try await snapshotStore.removeSnapshots(domainIdentifier: domainIdentifier)
-
-        let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: snapshotsDatabaseURL)
-        try await eventStore.removeEvents(domainIdentifier: domainIdentifier)
+        if ProviderRuntimeProfile.current == .stability
+            || FileManager.default.fileExists(atPath: snapshotsDatabaseURL.path)
+        {
+            let eventStore = try ProviderEventStoreFactory.make(
+                profile: .current,
+                standardDatabaseURL: snapshotsDatabaseURL,
+                stabilityRootDirectoryURL: containerURL.appendingPathComponent("StabilityRuns", isDirectory: true)
+            )
+            try await eventStore?.removeEvents(domainIdentifier: domainIdentifier)
+        }
     }
 
     func removeConfiguration(configurationIdentifier: String) throws {

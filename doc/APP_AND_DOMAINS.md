@@ -49,11 +49,16 @@ Setup uses a three-level navigation hierarchy:
    on macOS, known-folder actions.
 
 Account creation has its own destination. Infomaniak OAuth is the primary path;
-manual access-token entry remains available in an Advanced section for
-development. While stored state is being restored, Setup shows an explicit
-loading row instead of briefly presenting the empty-account state. Setup errors
-appear in a nonmodal, dismissible banner so background refreshes do not interrupt
-navigation with a transient alert.
+manual access-token entry remains available in a collapsed Advanced section for
+development. On macOS, Setup, account login, and account drive selection use a
+centered, scrollable column with a readable maximum width so enlarging the window
+does not stretch or break the layout. While stored state is being restored, Setup
+shows an explicit loading row instead of briefly presenting the empty-account
+state. Drive discovery runs automatically after login and when Setup appears for
+eligible saved accounts; the account pages show loading, results, or an error
+state without an in-page load button. Toolbar refresh actions remain available
+for an intentional retry. Setup errors appear in a nonmodal, dismissible banner
+so background refreshes do not interrupt navigation with a transient alert.
 The Status empty state links to Setup, where accounts, domains, storage, and
 repairs are managed.
 
@@ -96,11 +101,18 @@ tokens and expired non-refreshable tokens are skipped silently so the account ca
 be refreshed manually or reconnected without creating repeated setup-page
 errors.
 
-An account's drive list is the union of current remote discovery and stored
+Discovery uses the account's bearer token to call the kDrive
+`GET /2/drive/init?with=drives` endpoint. A discovered drive is usable when its
+role is neither `none` nor `external`, matching the official iOS kDrive client.
+Admin and ordinary internal-user drives are shown; unavailable and external
+shared drives are excluded from new File Provider domains. The app does not
+call the general `/1/account` API or claim that eligibility proves product
+ownership.
+
+An account's drive list is the union of usable remote discovery and stored
 domain configurations. A configured drive therefore remains manageable when
-remote discovery is unavailable or no longer returns that drive. Its detail
-screen uses the saved drive name and explicitly marks remote details as
-unavailable.
+discovery is unavailable or no longer returns that drive. Its detail screen
+uses the saved drive name and explicitly marks remote details as unavailable.
 
 ## Domain Configuration
 
@@ -142,8 +154,10 @@ The add flow is:
 
 1. The user adds an account through OAuth or by saving a manual access token.
 2. The app creates a local account record and saves the token under that account.
-3. The app loads kDrives for that account through `PotassiumKDriveService.listDrives()`.
-4. The user opens a discovered drive and chooses **Add to Files** on its
+3. The app loads kDrives for that account through
+   `PotassiumKDriveService.listDrives()` and keeps drives whose role is neither
+   `none` nor `external`.
+4. The user opens a usable internal drive and chooses **Add to Files** on its
    management screen. On macOS, a storage sheet offers On This Mac or External
    Drive; other platforms use local storage.
 5. `PotassiumProviderAppModel.addDomain()` creates a stable
@@ -160,6 +174,12 @@ The add flow is:
 8. If registration fails, the app rolls back the saved configuration and removes
    any snapshots for that domain.
 
+If macOS reports `NSFileProviderErrorDomain` `-2014` (`applicationExtensionNotFound`)
+inside the registration failure, the app explains that the containing
+`potassiumProvider` app must be run on **My Mac** with its embedded File Provider
+extension. This commonly indicates a test-derived app or stale File Provider
+registration rather than a kDrive API failure.
+
 The configuration is saved before registration so the extension can find it when
 the system starts calling into the new domain.
 
@@ -171,6 +191,13 @@ display name and identifier. Missing or mismatched registrations and interrupted
 relocation journals become repair states instead of silent replacement domains.
 
 ## External Volume Storage On macOS 15 Or Later
+
+The storage-choice add path applies the same internal-drive membership checks as
+local registration. The Stability build rejects ordinary domain creation from
+either path; it provisions only a verified lab root. Reload, move, repair, and
+extension connection approval retain the current runtime-profile checks. Stable
+configuration identity and storage placement are persisted alongside the lab
+purpose and ownership marker, including across relocation journal recovery.
 
 External placement currently supports legacy plaintext domains only. Encrypted
 vault v1 and v2 configurations fail closed before relocation begins. A move

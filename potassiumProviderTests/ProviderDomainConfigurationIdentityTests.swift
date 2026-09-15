@@ -29,6 +29,35 @@ struct ProviderDomainConfigurationIdentityTests {
         #expect(configuration.domainIdentifier == "legacy-domain")
         #expect(configuration.id == "legacy-domain")
         #expect(configuration.storageLocation == .onThisMac)
+        #expect(configuration.isCompatible(with: .standard))
+        #expect(configuration.stabilityLab == nil)
+    }
+
+    @Test func stableIdentityRoundTripRetainsStorageAndLabIsolation() throws {
+        let marker = StabilityLabOwnershipMarker(driveID: 42, rootFileID: 20, parentFileID: 10)
+        let configuration = ProviderDomainConfiguration(
+            configurationIdentifier: "stable-lab-configuration",
+            domainIdentifier: "generated-domain",
+            displayName: "Test Lab",
+            driveID: marker.driveID,
+            driveName: "Test Drive",
+            rootFileID: marker.rootFileID,
+            storageLocation: .externalVolume(uuid: UUID(), displayName: "Test SSD"),
+            purpose: .stabilityLab,
+            stabilityLab: ProviderStabilityLabConfiguration(
+                driveRootFileID: 1,
+                markerFileID: 21,
+                ownershipMarker: marker
+            )
+        )
+        let decoded = try JSONDecoder().decode(
+            ProviderDomainConfiguration.self,
+            from: JSONEncoder().encode(configuration)
+        )
+
+        #expect(decoded == configuration)
+        #expect(decoded.isCompatible(with: .stability))
+        #expect(decoded.isCompatible(with: .standard) == false)
     }
 
     @Test func storeKeepsFilenameAndIdentityStableWhenDomainIdentifierChanges() async throws {

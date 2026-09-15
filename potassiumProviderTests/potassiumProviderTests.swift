@@ -78,6 +78,41 @@ struct PotassiumProviderCoreTests {
         #expect(configuration.accountIdentifier == ProviderConstants.legacyAccountIdentifier)
         #expect(configuration.driveID == 42)
         #expect(configuration.knownFolderLayout == .legacyPrivate)
+        #expect(configuration.purpose == .ordinary)
+        #expect(configuration.stabilityLab == nil)
+    }
+
+    @Test func stabilityLabDomainConfigurationRoundTripsOwnershipEvidence() throws {
+        let marker = StabilityLabOwnershipMarker(
+            identifier: UUID(uuidString: "4AAB04E6-E73B-4D4D-B99C-9A3CC0949797")!,
+            driveID: 42,
+            rootFileID: 84,
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let configuration = ProviderDomainConfiguration(
+            domainIdentifier: "stability-domain",
+            accountIdentifier: ProviderConstants.legacyAccountIdentifier,
+            displayName: "Stability Lab",
+            driveID: marker.driveID,
+            driveName: "Development",
+            rootFileID: marker.rootFileID,
+            purpose: .stabilityLab,
+            stabilityLab: ProviderStabilityLabConfiguration(
+                driveRootFileID: 1,
+                markerFileID: 85,
+                ownershipMarker: marker
+            ),
+            createdAt: marker.createdAt,
+            updatedAt: marker.createdAt
+        )
+
+        let encoded = try JSONEncoder().encode(configuration)
+        let decoded = try JSONDecoder().decode(ProviderDomainConfiguration.self, from: encoded)
+
+        #expect(decoded == configuration)
+        #expect(decoded.hasConsistentPurposeConfiguration)
+        #expect(decoded.isCompatible(with: .stability))
+        #expect(decoded.isCompatible(with: .standard) == false)
     }
 
     @Test func newDomainConfigurationUsesMachineNamespaceKnownFolderLayout() {
@@ -88,6 +123,8 @@ struct PotassiumProviderCoreTests {
         )
 
         #expect(configuration.knownFolderLayout == .machineNamespace)
+        #expect(configuration.isCompatible(with: .standard))
+        #expect(configuration.isCompatible(with: .stability) == false)
     }
 
     @Test func inMemoryTokenStoreScopesTokensAndMigratesLegacyToken() async throws {
@@ -1429,6 +1466,46 @@ struct PotassiumProviderCoreTests {
         #expect(KDriveRemoteErrorClassifier.apiRejection(from: NSError(domain: NSURLErrorDomain, code: -1009)) == nil)
     }
 
+    @Test func kdriveServiceLoadsDriveRolesFromDriveInitOnly() async throws {
+        await KDriveDiscoveryURLProtocol.reset()
+        let diagnostics = KDriveDiagnosticCapture()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveDiscoveryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            driveBaseURL: URL(string: "https://drive.example.test")!,
+            session: session,
+            diagnosticRecorder: diagnostics,
+            diagnosticSource: .app
+        )
+
+        let drives = try await service.listDrives()
+
+        #expect(drives.map(\.id) == [10, 20, 30, 40])
+        #expect(drives.map(\.role) == ["admin", "user", "none", "external"])
+        #expect(drives.map(\.isUsableInternalDrive) == [true, true, false, false])
+
+        let requests = await KDriveDiscoveryURLProtocol.requests()
+        #expect(requests.count == 1)
+        let driveRequest = try #require(requests.first)
+        let driveURL = try #require(driveRequest.url)
+        let driveComponents = try #require(URLComponents(url: driveURL, resolvingAgainstBaseURL: false))
+        #expect(driveURL.host == "drive.example.test")
+        #expect(driveComponents.path == "/2/drive/init")
+        #expect(driveComponents.queryItems?.contains(URLQueryItem(name: "with", value: "drives")) == true)
+        #expect(driveRequest.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
+
+        let diagnosticEvents = await diagnostics.events()
+        #expect(diagnosticEvents.map(\.phase) == [.started, .completed])
+        #expect(diagnosticEvents.map(\.operation) == [.listDrives, .listDrives])
+        #expect(diagnosticEvents.map(\.routeTemplate) == [.driveDiscovery, .driveDiscovery])
+        #expect(Set(diagnosticEvents.map(\.correlationID)).count == 1)
+    }
+
     @Test func kdriveServiceConditionallyReplacesFileByID() async throws {
         await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.fileUploadResponseData)
         let configuration = URLSessionConfiguration.ephemeral
@@ -1469,7 +1546,7 @@ struct PotassiumProviderCoreTests {
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
         #expect(request.value(forHTTPHeaderField: "If-Match") == "etag-before")
         #expect(query["total_size"] == "4")
-        #expect(query["with"] == "etag")
+        #expect(query["with"] == "etag,is_favorite")
         #expect(query["client_token"] == "0123456789abcdef0123456789abcdef")
         #expect(query["total_chunk_hash"] == "sha256:abcd")
         #expect(query["last_modified_at"] == "1700000001")
@@ -1528,6 +1605,7 @@ struct PotassiumProviderCoreTests {
 
     @Test func kdriveServiceExposesLazyObservableDownloadOperation() async throws {
         await KDriveDataRequestCapturingURLProtocol.reset()
+        let diagnostics = KDriveDiagnosticCapture()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [KDriveDataRequestCapturingURLProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -1536,18 +1614,82 @@ struct PotassiumProviderCoreTests {
         let service = PotassiumKDriveService(
             bearerToken: "redacted-token",
             apiBaseURL: URL(string: "https://api.example.test")!,
-            session: session
+            session: session,
+            diagnosticRecorder: diagnostics
         )
 
         let operation = try service.downloadFileOperation(driveID: 100, fileID: 42)
         #expect(operation.progress.totalUnitCount >= -1)
         #expect(await KDriveDataRequestCapturingURLProtocol.peekLastRequest() == nil)
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(await diagnostics.events().isEmpty)
 
         let data = try await operation.value
         let request = try #require(await KDriveDataRequestCapturingURLProtocol.lastRequest())
 
         #expect(data == KDriveDataRequestCapturingURLProtocol.responseData)
         #expect(request.url?.path == "/2/drive/100/files/42/download")
+        let diagnosticEvents = await diagnostics.events()
+        // Sampler cadence may produce several progress buckets, especially
+        // with weighted child progress. Assert lifecycle, not scheduler timing.
+        #expect(diagnosticEvents.filter { $0.phase != .progress }.map(\.phase) == [.started, .completed])
+        #expect(diagnosticEvents.first?.phase == .started)
+        #expect(diagnosticEvents.last?.phase == .completed)
+        let buckets = diagnosticEvents.filter { $0.phase == .progress }.compactMap(\.progressPercentBucket)
+        #expect(buckets.count == diagnosticEvents.filter { $0.phase == .progress }.count)
+        #expect(buckets == buckets.sorted())
+        #expect(Set(diagnosticEvents.compactMap(\.spanID)).count == 1)
+    }
+
+    @Test func missingShareLinkIsRecordedAsSuccessfulOptionalResult() async throws {
+        let diagnostics = KDriveDiagnosticCapture()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveNotFoundURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let service = PotassiumKDriveService(
+            bearerToken: "",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session,
+            diagnosticRecorder: diagnostics
+        )
+
+        let result = try await service.shareLink(driveID: 100, fileID: 42)
+
+        #expect(result == nil)
+        let events = await diagnostics.events()
+        #expect(events.map(\.phase) == [.started, .completed])
+        #expect(events.last?.statusClass == .success)
+        #expect(events.last?.errorClass == nil)
+    }
+
+    @Test func concurrentLazyTransferStartAndCancelShareOneDiagnosticSpan() async throws {
+        await KDriveDataRequestCapturingURLProtocol.reset()
+        let diagnostics = SuspendingKDriveDiagnosticCapture()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveDataRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let service = PotassiumKDriveService(
+            bearerToken: "",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session,
+            diagnosticRecorder: diagnostics
+        )
+        let operation = try service.downloadFileOperation(driveID: 100, fileID: 42)
+        let valueTask = Task { try? await operation.value }
+
+        await diagnostics.waitForFirstStart()
+        operation.cancel()
+        for _ in 0..<200 { await Task.yield() }
+        #expect(await diagnostics.startedCount() == 1)
+
+        await diagnostics.release()
+        _ = await valueTask.value
+        let events = await diagnostics.waitForTerminal()
+        #expect(events.filter { $0.phase == .started }.count == 1)
+        #expect(events.filter { [.completed, .failed, .cancelled].contains($0.phase) }.count == 1)
+        #expect(Set(events.compactMap(\.spanID)).count == 1)
     }
 
     @Test func kdriveServiceFetchesThumbnailThroughPotassiumRoute() async throws {
@@ -1580,6 +1722,39 @@ struct PotassiumProviderCoreTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer redacted-token")
     }
 
+    @Test(arguments: ["metadata", "directory", "trash", "working-set"], [false, true, nil] as [Bool?])
+    func favoriteStateIsRequestedAndUnknownRemainsUnknown(route: String, favorite: Bool?) async throws {
+        var response = try #require(JSONSerialization.jsonObject(with: Self.fileUploadResponseData) as? [String: Any])
+        var file = try #require(response["data"] as? [String: Any])
+        file["is_favorite"] = favorite
+        response["data"] = route == "metadata" ? file : [file] as Any
+        response["cursor"] = NSNull()
+        response["has_more"] = false
+        await KDriveJSONRequestCapturingURLProtocol.reset(responseData: try JSONSerialization.data(withJSONObject: response))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveJSONRequestCapturingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let service = PotassiumKDriveService(bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!, session: session)
+        let item: KDriveRemoteItem
+        switch route {
+        case "metadata": item = try await service.item(driveID: 100, fileID: 42)
+        case "directory": item = try #require(await service.listDirectory(driveID: 100, folderID: 7, cursor: nil, limit: 50).items.first)
+        case "trash": item = try #require(await service.listTrash(driveID: 100, cursor: nil, limit: 50).items.first)
+        default: item = try #require(await service.listWorkingSetRelevantItems(driveID: 100, latestLimit: 50).first)
+        }
+        #expect(item.id == 42)
+        #expect(item.parentID == 7)
+        #expect(item.name == "Edited.jpg")
+        #expect(item.size == 4)
+        #expect(item.isFavorite == favorite)
+        let request = try #require(await KDriveJSONRequestCapturingURLProtocol.lastRequest())
+        let requestURL = try #require(request.url)
+        let query = try #require(URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(query.contains(URLQueryItem(name: "with", value: "etag,is_favorite")))
+    }
+
     @Test func kdriveServiceFetchesInitialAdvancedListingThroughPotassiumRoute() async throws {
         await KDriveJSONRequestCapturingURLProtocol.reset(responseData: Self.advancedListingResponseData)
         let configuration = URLSessionConfiguration.ephemeral
@@ -1601,12 +1776,16 @@ struct PotassiumProviderCoreTests {
 
         #expect(request.httpMethod == "GET")
         #expect(components.path == "/3/drive/100/files/42/listing")
+        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")))
+        #expect(queryItems.contains { $0.name == "with" && $0.value?.contains("etag") == true } == false)
         #expect(queryItems.contains(URLQueryItem(name: "limit", value: "50")))
         #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "type")))
         #expect(queryItems.contains(URLQueryItem(name: "order_by", value: "name")))
         #expect(queryItems.contains(URLQueryItem(name: "order_for[name]", value: "asc")))
         #expect(queryItems.contains(URLQueryItem(name: "order_for[type]", value: "asc")))
         #expect(page.items.first?.id == 43)
+        #expect(page.items.first?.isFavorite == false)
+        #expect(page.actionItems.first?.isFavorite == true)
         #expect(page.actions.first?.action == "file_update")
         #expect(page.actions.last?.action == "file_rename")
         #expect(page.actionItems.first?.id == 44)
@@ -1635,7 +1814,111 @@ struct PotassiumProviderCoreTests {
 
         #expect(request.httpMethod == "GET")
         #expect(components.path == "/3/drive/100/files/42/listing/continue")
+        #expect(queryItems.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")))
+        #expect(queryItems.contains { $0.name == "with" && $0.value?.contains("etag") == true } == false)
         #expect(queryItems.contains(URLQueryItem(name: "cursor", value: "old-cursor")))
+    }
+
+    @Test func kdriveServicePropagatesInitialAdvancedListing422WithoutChangingListingModes() async throws {
+        await KDriveListing422URLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveListing422URLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        do {
+            _ = try await service.listAdvancedDirectory(
+                driveID: 100,
+                folderID: 42,
+                cursor: nil,
+                limit: 50
+            )
+            Issue.record("Expected advanced listing to propagate HTTP 422.")
+        } catch let APIClientError.unacceptableStatusCode(statusCode, _, _) {
+            #expect(statusCode == 422)
+        } catch {
+            Issue.record("Expected an advanced-listing HTTP 422 rejection.")
+        }
+
+        let requests = await KDriveListing422URLProtocol.requests()
+        #expect(requests.count == 1)
+
+        let advancedRequest = try #require(requests.first)
+        let advancedURL = try #require(advancedRequest.url)
+        let advancedComponents = try #require(URLComponents(url: advancedURL, resolvingAgainstBaseURL: false))
+        #expect(advancedComponents.path == "/3/drive/100/files/42/listing")
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")) == true)
+    }
+
+    @Test func kdriveServicePropagatesContinuedAdvancedListing422WithoutChangingListingModes() async throws {
+        await KDriveListing422URLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveListing422URLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        do {
+            _ = try await service.listAdvancedDirectory(
+                driveID: 100,
+                folderID: 42,
+                cursor: "advanced-cursor",
+                limit: 50
+            )
+            Issue.record("Expected advanced listing continuation to propagate HTTP 422.")
+        } catch let APIClientError.unacceptableStatusCode(statusCode, _, _) {
+            #expect(statusCode == 422)
+        } catch {
+            Issue.record("Expected an advanced-listing continuation HTTP 422 rejection.")
+        }
+
+        let requests = await KDriveListing422URLProtocol.requests()
+        #expect(requests.count == 1)
+
+        let advancedURL = try #require(requests.first?.url)
+        let advancedComponents = try #require(URLComponents(url: advancedURL, resolvingAgainstBaseURL: false))
+        #expect(advancedComponents.path == "/3/drive/100/files/42/listing/continue")
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "cursor", value: "advanced-cursor")) == true)
+        #expect(advancedComponents.queryItems?.contains(URLQueryItem(name: "with", value: "files.capabilities,files.is_favorite")) == true)
+    }
+
+    @Test func kdriveServiceFallsBackToDirectoryListingWithoutETagAfter422() async throws {
+        await KDriveListing422URLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KDriveListing422URLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = PotassiumKDriveService(
+            bearerToken: "redacted-token",
+            apiBaseURL: URL(string: "https://api.example.test")!,
+            session: session
+        )
+
+        let page = try await service.listDirectory(driveID: 100, folderID: 42, cursor: nil, limit: 50)
+        let requests = await KDriveListing422URLProtocol.requests()
+        #expect(requests.count == 2)
+        let firstURL = try #require(requests.first?.url)
+        let firstComponents = try #require(URLComponents(url: firstURL, resolvingAgainstBaseURL: false))
+        let firstQuery = firstComponents.queryItems ?? []
+        #expect(firstQuery.contains(URLQueryItem(name: "with", value: "etag,is_favorite")))
+        let secondURL = try #require(requests.last?.url)
+        let secondComponents = try #require(URLComponents(url: secondURL, resolvingAgainstBaseURL: false))
+        let secondQuery = secondComponents.queryItems ?? []
+        #expect(secondQuery.contains(URLQueryItem(name: "with", value: "is_favorite")))
+        #expect(page.items.map(\.id) == [43])
+        #expect(page.hasMore == false)
     }
 
     @MainActor
@@ -1680,6 +1963,107 @@ struct PotassiumProviderCoreTests {
         let savedToken = await tokenStore.loadToken(accountIdentifier: account.accountIdentifier)
         #expect(savedToken?.accessToken == "manual-token")
         #expect(savedToken?.scope == nil)
+    }
+
+    @MainActor
+    @Test func appModelPublishesOnlyUsableInternalDrivesAndPreservesConfiguredExcludedDrive() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Connected Account",
+            authenticationKind: .manualAccessToken
+        )
+        let configuredExcludedDrive = ProviderDomainConfiguration(
+            accountIdentifier: account.accountIdentifier,
+            displayName: "Saved Shared Drive",
+            driveID: 20,
+            driveName: "Saved Shared Drive"
+        )
+        let tokenStore = InMemoryOAuthTokenStore()
+        await tokenStore.saveToken(token(accessToken: "oauth-token"), accountIdentifier: account.accountIdentifier)
+        let userDrive = makeDiscoveredDrive(id: 10, name: "User Drive", role: "user")
+        let adminDrive = makeDiscoveredDrive(id: 30, name: "Admin Drive", role: "admin")
+        let externalDrive = makeDiscoveredDrive(id: 20, name: "Shared", role: "external")
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            initialAccounts: [account],
+            initialDomains: [configuredExcludedDrive],
+            fileProviderFactory: { _ in
+                FakeKDriveFileProvider(drives: [userDrive, externalDrive, adminDrive])
+            }
+        )
+
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.drives(for: account.accountIdentifier) == [userDrive, adminDrive])
+        #expect(model.selectedDriveID(for: account.accountIdentifier) == userDrive.id)
+        #expect(model.statusMessage == "Loaded 2 usable kDrives for Connected Account.")
+        let descriptors = ProviderDriveDescriptor.merge(
+            accountIdentifier: account.accountIdentifier,
+            drives: model.drives(for: account.accountIdentifier),
+            configurations: model.domains(for: account.accountIdentifier)
+        )
+        let savedDescriptor = try #require(descriptors.first { $0.driveID == externalDrive.id })
+        #expect(savedDescriptor.remote == nil)
+        #expect(savedDescriptor.configuration == configuredExcludedDrive)
+
+        await model.addDomain(accountIdentifier: account.accountIdentifier, drive: externalDrive)
+
+        #expect(model.domains == [configuredExcludedDrive])
+        #expect(model.errorMessage == "Only usable internal kDrives can be added to Files.")
+    }
+
+    @MainActor
+    @Test func appModelShowsUsableEmptyStateAfterExcludingExternalDrives() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = ProviderAccount(
+            accountIdentifier: "account-1",
+            displayName: "Connected Account",
+            authenticationKind: .manualAccessToken
+        )
+        let tokenStore = InMemoryOAuthTokenStore()
+        await tokenStore.saveToken(token(accessToken: "oauth-token"), accountIdentifier: account.accountIdentifier)
+        let sharedDrive = makeDiscoveredDrive(id: 20, name: "Shared", role: "external")
+        let model = PotassiumProviderAppModel(
+            accountStore: ProviderAccountFileStore(
+                directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true)
+            ),
+            domainStore: DomainConfigurationFileStore(
+                directoryURL: directory.appendingPathComponent("Domains", isDirectory: true)
+            ),
+            tokenStore: tokenStore,
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: NoopProviderDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            initialAccounts: [account],
+            fileProviderFactory: { _ in
+                FakeKDriveFileProvider(drives: [sharedDrive])
+            }
+        )
+        model.setManualDriveID("20", for: account.accountIdentifier)
+        model.setManualDriveName("Shared", for: account.accountIdentifier)
+
+        await model.loadDrives(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.hasCompletedDriveDiscovery(for: account.accountIdentifier))
+        #expect(model.drives(for: account.accountIdentifier).isEmpty)
+        #expect(model.selectedDriveID(for: account.accountIdentifier) == nil)
+        #expect(model.manualDriveID(for: account.accountIdentifier).isEmpty)
+        #expect(model.manualDriveName(for: account.accountIdentifier).isEmpty)
+        #expect(model.statusMessage == "No usable kDrives found for Connected Account.")
     }
 
     @MainActor
@@ -1777,6 +2161,7 @@ struct PotassiumProviderCoreTests {
         #expect(model.drives(for: account.accountIdentifier) == [drive])
     }
 
+    #if !STABILITY
     @MainActor
     @Test func appModelKeepsMultipleAccountsAndLogsOutIndependently() async throws {
         let directory = temporaryDirectory()
@@ -2008,6 +2393,42 @@ struct PotassiumProviderCoreTests {
     }
 
     @MainActor
+    @Test func appModelExplainsMissingFileProviderExtension() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let accountStore = ProviderAccountFileStore(directoryURL: directory.appendingPathComponent("Accounts", isDirectory: true))
+        let domainStore = DomainConfigurationFileStore(directoryURL: directory.appendingPathComponent("Domains", isDirectory: true))
+        let eventStore = FakeProviderEventStore(conflicts: [], activity: [])
+        let model = PotassiumProviderAppModel(
+            accountStore: accountStore,
+            domainStore: domainStore,
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: FakeKDriveOAuthAuthenticator(),
+            domainRegistrar: MissingFileProviderExtensionRegistrar(),
+            eventStore: eventStore,
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in FakeKDriveFileProvider(drives: []) }
+        )
+
+        model.manualAccessToken = "token"
+        await model.saveManualAccessToken()
+        let account = try #require(model.accounts.first)
+        model.setManualDriveID("42", for: account.accountIdentifier)
+        model.setManualDriveName("Work Drive", for: account.accountIdentifier)
+
+        await model.addDomain(accountIdentifier: account.accountIdentifier)
+
+        #expect(model.errorMessage?.contains("macOS cannot find this app's File Provider extension") == true)
+        let failure = try #require(await eventStore.activities().first)
+        #expect(failure.underlyingErrorDomain == "NSFileProviderErrorDomain")
+        #expect(failure.underlyingErrorCode == -2014)
+        #expect(failure.recoverySuggestion?.contains("My Mac") == true)
+        #expect(failure.diagnosticSummary?.contains("usable File Provider extension") == true)
+    }
+    #endif
+
+    @MainActor
     @Test func appModelRevealsAndSignalsOneConfiguredDrive() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2092,6 +2513,21 @@ struct PotassiumProviderCoreTests {
         #expect(failure.summary == "Could not load kDrives.")
         #expect(failure.summary.contains("secret-token") == false)
         #expect(failure.diagnosticSummary?.contains("secret-token") == false)
+    }
+
+    private func makeDiscoveredDrive(
+        id: Int,
+        name: String,
+        role: String = "admin"
+    ) -> KDriveDriveSummary {
+        KDriveDriveSummary(
+            id: id,
+            name: name,
+            accountID: id,
+            role: role,
+            status: "active",
+            isInMaintenance: false
+        )
     }
 
     private func makeItem(
@@ -2514,6 +2950,28 @@ private final class KDriveDataRequestCapturingURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+private final class KDriveNotFoundURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 404,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("{}".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
     private static let capture = CapturedURLRequestStore()
     private static let responseStore = CapturedResponseStore()
@@ -2581,6 +3039,213 @@ private final class KDriveJSONRequestCapturingURLProtocol: URLProtocol {
             data.append(buffer, count: bytesRead)
         }
         return data
+    }
+}
+
+private final class KDriveListing422URLProtocol: URLProtocol {
+    private static let capture = KDriveDiscoveryCapture()
+
+    static func reset() async {
+        await capture.reset()
+    }
+
+    static func requests() async -> [URLRequest] {
+        await capture.requests()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let request = request
+        Task {
+            await Self.capture.record(request)
+            let isAdvancedListing = request.url?.path.contains("/listing") == true
+            let hasETag = request.url?.query?.contains("with=etag") == true
+            let statusCode = isAdvancedListing || hasETag ? 422 : 200
+            let data = isAdvancedListing || hasETag ? Data(#"{"result":"error","error":{"code":422}}"#.utf8) : Self.directoryResponseData
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static let directoryResponseData = Data(#"""
+    {
+      "result": "success",
+      "data": [
+        {
+          "id": 43,
+          "name": "Nested.pdf",
+          "path": "/Documents/Nested.pdf",
+          "type": "file",
+          "status": "active",
+          "visibility": "is_private_space",
+          "drive_id": 100,
+          "parent_id": 42,
+          "depth": 3,
+          "created_at": 1710000000,
+          "last_modified_at": 1710000100,
+          "updated_at": 1710000200,
+          "size": 1024,
+          "mime_type": "application/pdf",
+          "is_favorite": false,
+          "etag": "etag-43"
+        }
+      ],
+      "cursor": null,
+      "has_more": false,
+      "response_at": 1710000300
+    }
+    """#.utf8)
+}
+
+private actor KDriveDiagnosticCapture: ProviderDiagnosticRecording {
+    private var recordedEvents: [ProviderDiagnosticEvent] = []
+
+    func recordDiagnostic(_ event: ProviderDiagnosticEvent) {
+        recordedEvents.append(event)
+    }
+
+    func events() -> [ProviderDiagnosticEvent] {
+        recordedEvents
+    }
+}
+
+private actor SuspendingKDriveDiagnosticCapture: ProviderDiagnosticRecording {
+    private var isBlocked = true
+    private var recordedEvents: [ProviderDiagnosticEvent] = []
+
+    func recordDiagnostic(_ event: ProviderDiagnosticEvent) async {
+        recordedEvents.append(event)
+        if event.phase == .started {
+            while isBlocked {
+                await Task.yield()
+            }
+        }
+    }
+
+    func waitForFirstStart() async {
+        while recordedEvents.contains(where: { $0.phase == .started }) == false {
+            await Task.yield()
+        }
+    }
+
+    func startedCount() -> Int {
+        recordedEvents.filter { $0.phase == .started }.count
+    }
+
+    func release() {
+        isBlocked = false
+    }
+
+    func waitForTerminal() async -> [ProviderDiagnosticEvent] {
+        while recordedEvents.contains(where: {
+            [.completed, .failed, .cancelled].contains($0.phase)
+        }) == false {
+            await Task.yield()
+        }
+        return recordedEvents
+    }
+}
+
+private final class KDriveDiscoveryURLProtocol: URLProtocol {
+    private static let capture = KDriveDiscoveryCapture()
+
+    static func reset() async {
+        await capture.reset()
+    }
+
+    static func requests() async -> [URLRequest] {
+        await capture.requests()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let request = request
+        Task {
+            await Self.capture.record(request)
+            let data = Self.responseData(for: request)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func responseData(for request: URLRequest) -> Data {
+        switch request.url?.path {
+        case "/2/drive/init":
+            return """
+            {
+              "result": "success",
+              "data": {
+                "drives": [
+                  { "id": 10, "name": "Admin", "account_id": 10, "role": "admin" },
+                  { "id": 20, "name": "User", "account_id": 20, "role": "user" },
+                  { "id": 30, "name": "Unavailable", "account_id": 30, "role": "none" },
+                  { "id": 40, "name": "Shared", "account_id": 40, "role": "external" }
+                ]
+              }
+            }
+            """.data(using: .utf8)!
+        default:
+            return Data()
+        }
+    }
+}
+
+private actor KDriveDiscoveryCapture {
+    private var recordedRequests: [URLRequest] = []
+    private var waiters: [CheckedContinuation<[URLRequest], Never>] = []
+
+    func reset() {
+        recordedRequests = []
+        waiters.removeAll()
+    }
+
+    func record(_ request: URLRequest) {
+        recordedRequests.append(request)
+        guard recordedRequests.count >= 1 else { return }
+
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        waiters.forEach { $0.resume(returning: recordedRequests) }
+    }
+
+    func requests() async -> [URLRequest] {
+        guard recordedRequests.isEmpty else { return recordedRequests }
+
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }
 
@@ -2978,4 +3643,25 @@ private enum FailingProviderDomainRegistrarError: LocalizedError {
     var errorDescription: String? {
         "The application cannot be used right now"
     }
+}
+
+@MainActor
+private struct MissingFileProviderExtensionRegistrar: ProviderDomainRegistering {
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        let underlyingError = NSError(
+            domain: "NSFileProviderErrorDomain",
+            code: -2014,
+            userInfo: [NSLocalizedDescriptionKey: "The File Provider extension could not be found."]
+        )
+        throw NSError(
+            domain: "NSFileProviderErrorDomain",
+            code: -2001,
+            userInfo: [
+                NSLocalizedDescriptionKey: "The application cannot be used right now.",
+                NSUnderlyingErrorKey: underlyingError
+            ]
+        )
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
 }

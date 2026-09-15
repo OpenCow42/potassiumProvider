@@ -25,7 +25,7 @@ final class potassiumProviderUITests: XCTestCase {
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        let app = UITestApplication.make(for: self)
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -34,22 +34,31 @@ final class potassiumProviderUITests: XCTestCase {
     }
 
     @MainActor
-    func testSetupNavigatesFromAccountToAvailableDriveManagement() throws {
+    func testSetupNavigatesFromAccountCellToAvailableDriveManagement() throws {
         let app = launchSetupFixture()
         openSetup(in: app)
 
         let account = app.buttons["setup.account.ui-account"]
         XCTAssertTrue(account.waitForExistence(timeout: 5))
-        account.tap()
+        let accountTrailingSpace = account.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
+        )
+        #if os(macOS)
+        accountTrailingSpace.click()
+        #else
+        accountTrailingSpace.tap()
+        #endif
 
         let availableDrive = app.buttons["account.drive.20"]
         XCTAssertTrue(availableDrive.waitForExistence(timeout: 5))
+        #if os(macOS)
+        availableDrive.click()
+        #else
         availableDrive.tap()
+        #endif
 
-        XCTAssertTrue(
-            app.buttons["drive.createEncryptedVault"].waitForExistence(timeout: 5)
-        )
-        XCTAssertTrue(app.buttons["drive.addToFiles"].exists)
+        XCTAssertTrue(app.buttons["drive.addToFiles"].waitForExistence(timeout: 5), app.windows["net.weavee.potassiumProvider.main-window"].debugDescription)
+        XCTAssertTrue(app.buttons["drive.createEncryptedVault"].exists)
         XCTAssertTrue(app.staticTexts["This drive is currently in maintenance."].exists)
     }
 
@@ -122,12 +131,101 @@ final class potassiumProviderUITests: XCTestCase {
 
         let addAccount = app.buttons["setup.addAccount"]
         XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        #if os(macOS)
+        XCTAssertLessThanOrEqual(addAccount.frame.width, 700)
+        #endif
         addAccount.tap()
 
         XCTAssertTrue(app.buttons["addAccount.oauth"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].exists)
+        #if os(macOS)
+        XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
+        let advanced = app.disclosureTriangles["Advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 5))
+        advanced.click()
+        #endif
+        XCTAssertTrue(app.secureTextFields["addAccount.manualToken"].waitForExistence(timeout: 5), app.windows["net.weavee.potassiumProvider.main-window"].debugDescription)
+        #if os(macOS)
+        XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
+        #else
         XCTAssertTrue(app.staticTexts["Advanced"].exists)
+        #endif
+
     }
+
+    #if os(macOS)
+    @MainActor
+    func testFakeOAuthLoginPresentsTheMacSignInScreen() throws {
+        let app = launchSetupFixture(named: "setup-fake-oauth-login")
+        openSetup(in: app)
+
+        let addAccount = app.buttons["setup.addAccount"]
+        XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        addAccount.click()
+
+        XCTAssertTrue(text(containing: "Sign in to Infomaniak", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["addAccount.oauth"].exists)
+        XCTAssertTrue(app.disclosureTriangles["Advanced"].exists)
+        XCTAssertFalse(app.secureTextFields["addAccount.manualToken"].exists)
+    }
+
+    @MainActor
+    func testFakeOAuthLoginDiscoversAndAddsDriveToFileProvider() throws {
+        let app = launchSetupFixture(named: "setup-fake-oauth-login")
+        openSetup(in: app)
+
+        let addAccount = app.buttons["setup.addAccount"]
+        XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+        addAccount.click()
+
+        let continueWithInfomaniak = app.buttons["addAccount.oauth"]
+        XCTAssertTrue(continueWithInfomaniak.waitForExistence(timeout: 5))
+        continueWithInfomaniak.click()
+
+        let account = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "Deterministic Driver")
+        ).firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        account.click()
+
+        let drive = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "UI Test Drive")
+        ).firstMatch
+        XCTAssertTrue(drive.waitForExistence(timeout: 5))
+        drive.click()
+
+        let addToFiles = app.buttons["drive.addToFiles"]
+        XCTAssertTrue(addToFiles.waitForExistence(timeout: 5))
+        XCTAssertTrue(addToFiles.isEnabled)
+        addToFiles.click()
+
+        let confirmStorage = app.buttons["storage-selection-confirm"]
+        XCTAssertTrue(confirmStorage.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["storage-location-on-this-mac"].exists)
+        XCTAssertTrue(app.buttons["storage-location-external-drive"].exists)
+        XCTAssertTrue(confirmStorage.isEnabled)
+        confirmStorage.click()
+
+        XCTAssertTrue(app.buttons["drive.removeFromFiles"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text(containing: "Added UI Test Drive to Files.", in: app).exists)
+    }
+
+    @MainActor
+    func testEmptyDriveStateHasNoInlineLoadButtonAndKeepsToolbarRefresh() throws {
+        let app = launchSetupFixture(named: "setup-empty-drives")
+        openSetup(in: app)
+
+        let account = app.buttons["setup.account.ui-account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        account.tap()
+
+        XCTAssertTrue(
+            app.staticTexts["No Owned kDrives Available"].waitForExistence(timeout: 5)
+        )
+        XCTAssertFalse(app.scrollViews.buttons["Load Drives"].exists)
+        XCTAssertFalse(app.scrollViews.buttons["Refresh Drives"].exists)
+        XCTAssertTrue(app.buttons["account.refreshDrives"].waitForExistence(timeout: 5))
+    }
+    #endif
 
     @MainActor
     func testSetupPresentsErrorsAsDismissibleBannerInsteadOfAlert() throws {
@@ -315,16 +413,29 @@ final class potassiumProviderUITests: XCTestCase {
     #endif
 
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+    func testLaunchToSetupReadinessPerformance() throws {
+        let app = UITestApplication.make(for: self)
+        let options = XCTMeasureOptions()
+        options.invocationOptions = [.manuallyStart]
+        // Measure the complete launch-to-interaction interval. XCTest's system
+        // launch signposts intermittently omit samples on the hosted Mac even
+        // when every app launch and window assertion succeeds. This benchmark
+        // includes automation overhead and is not a first-frame measurement.
+        measure(metrics: [XCTClockMetric()], options: options) {
+            app.terminate()
+            startMeasuring()
+            app.launch()
+            app.activate()
+            openSetup(in: app)
+            let addAccount = app.buttons["setup.addAccount"]
+            XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+            XCTAssertTrue(addAccount.isEnabled)
         }
     }
 
     @MainActor
     private func launchSetupFixture(named fixtureName: String = "setup-navigation") -> XCUIApplication {
-        let app = XCUIApplication()
+        let app = UITestApplication.make(for: self)
         app.launchEnvironment["POTASSIUM_UI_TEST_FIXTURE"] = fixtureName
         app.launch()
         return app

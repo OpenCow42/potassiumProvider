@@ -8,7 +8,7 @@ struct potassiumProviderApp: App {
     #endif
 
     init() {
-        #if DEBUG
+        #if DEBUG && !STABILITY
         _model = StateObject(wrappedValue: ProviderUITestFixture.makeModel() ?? PotassiumProviderAppModel())
         #else
         _model = StateObject(wrappedValue: PotassiumProviderAppModel())
@@ -36,6 +36,11 @@ enum PotassiumProviderMain {
         if FileProviderUninstallCommandLine.shouldHandle(arguments: CommandLine.arguments) {
             exit(FileProviderUninstallCommandLine.runInCurrentProcess(arguments: CommandLine.arguments))
         }
+        #if os(macOS) && STABILITY
+        if FinderStabilityCommandLine.shouldHandle(arguments: CommandLine.arguments) {
+            exit(FinderStabilityCommandLine.runInCurrentProcess(arguments: CommandLine.arguments))
+        }
+        #endif
 
         potassiumProviderApp.main()
     }

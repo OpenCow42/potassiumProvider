@@ -18,6 +18,7 @@ protocol ProviderDomainRegistering {
     func waitForStabilization(for configuration: ProviderDomainConfiguration) async throws
     func removeDomainPreservingDirtyUserData(for configuration: ProviderDomainConfiguration) async throws -> URL?
     func reconnectDomain(for configuration: ProviderDomainConfiguration) async throws
+    func registeredDomainIdentifiers() async throws -> Set<String>
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState]
     func claimKnownFolders(for configuration: ProviderDomainConfiguration, parentFileID: Int) async throws
     func claimKnownFolders(
@@ -138,6 +139,10 @@ extension ProviderDomainRegistering {
 
     func reconnectDomain(for _: ProviderDomainConfiguration) async throws {
         throw ProviderDomainRegistrationError.reconnectionUnsupported
+    }
+
+    func registeredDomainIdentifiers() async throws -> Set<String> {
+        []
     }
 
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {
@@ -307,6 +312,10 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
         #endif
     }
 
+    func registeredDomainIdentifiers() async throws -> Set<String> {
+        Set(try await registeredDomains().map { $0.identifier.rawValue })
+    }
+
     func knownFolderSyncStates() async throws -> [String: ProviderKnownFolderSyncState] {
         #if os(macOS)
         let domains = try await registeredDomains()
@@ -383,7 +392,13 @@ struct FileProviderDomainRegistrar: ProviderDomainRegistering {
 
     func userVisibleRootURL(for configuration: ProviderDomainConfiguration) async throws -> URL {
         let manager = try await manager(for: configuration)
-        return try await manager.getUserVisibleURL(for: .rootContainer)
+        return try await StabilityCallbackWaiter<URL>().wait { completion in
+            manager.getUserVisibleURL(for: .rootContainer) { url, error in
+                if let error { completion(.failure(error)) }
+                else if let url { completion(.success(url)) }
+                else { completion(.failure(StabilityDeadlineError.expired)) }
+            }
+        }
     }
 
     func signalWorkingSet(for configuration: ProviderDomainConfiguration) async throws {

@@ -198,7 +198,12 @@ Purpose: update contents, parent, name, or metadata for an existing item.
 
 Behavior:
 
-- If the item is moved to `.trashContainer`, call `trashItem(...)` and return.
+- If the plaintext item is moved to `.trashContainer`, apply other requested fields,
+  call `trashItem(...)`, and return the managed item's metadata with the Trash parent
+  and `userInfo.isTrashed=true`. A nil callback result asks the system to delete the
+  local replica. If the edit preserved a conflict copy, trash both versions and return
+  the local copy's identity/version. Do not republish trashed metadata into the active
+  working set. `ModificationCallbackTests` covers the simple and combined-field paths.
 - If `.contents` changed, expose upload byte progress, read the local contents
   URL with mapped storage where available, and call `replaceFileOperation(...)`
   under the shared transfer permit.

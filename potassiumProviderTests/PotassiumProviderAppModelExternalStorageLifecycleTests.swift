@@ -230,6 +230,56 @@ struct PotassiumProviderAppModelExternalStorageLifecycleTests {
         #expect(context.model.errorMessage == nil)
     }
 
+    @Test(arguments: ProviderRuntimeProfile.current == .standard
+        ? ["external", "none"] : ["external", "none", "admin"])
+    func externalAdditionEnforcesDriveMembershipAndRuntimeProfile(role: String) async throws {
+        let context = try await makeContext(knownFolderState: .inactive)
+        defer { try? FileManager.default.removeItem(at: context.directoryURL) }
+        let before = try await context.domainStore.allConfigurations()
+        let drive = KDriveDriveSummary(
+            id: 43, name: "Other Drive", accountID: 100,
+            role: role, status: "active", isInMaintenance: false
+        )
+
+        await context.model.addDomain(
+            accountIdentifier: context.sourceConfiguration.accountIdentifier,
+            drive: drive,
+            externalVolume: context.externalVolume
+        )
+
+        #expect(try await context.domainStore.allConfigurations() == before)
+        #expect(context.registrar.events.isEmpty)
+        #expect(try await context.journalStore.allJournals().isEmpty)
+        #expect(context.model.errorMessage?.contains(
+            ProviderRuntimeProfile.current == .standard ? "usable internal" : "Stability build"
+        ) == true)
+    }
+
+    @Test func reloadMoveAndRepairRejectIncompatibleProfileBeforeSideEffects() async throws {
+        let context = try await makeContext(knownFolderState: .inactive)
+        defer { try? FileManager.default.removeItem(at: context.directoryURL) }
+        var incompatible = context.sourceConfiguration
+        incompatible.purpose = ProviderRuntimeProfile.current == .standard ? .stabilityLab : .ordinary
+        incompatible.stabilityLab = nil
+        try await context.domainStore.save(incompatible)
+
+        await context.model.reloadStoredState()
+        #expect(context.registrar.events == [.refreshKnownFolders, .refreshRegisteredDomains])
+        context.registrar.resetEvents()
+        await context.model.moveDomain(incompatible, toExternalVolume: context.externalVolume)
+        #expect(context.model.errorMessage?.contains("cannot be managed by this build") == true)
+        await context.model.repairDomain(incompatible)
+
+        #expect(context.model.errorMessage?.contains("cannot be managed by this build") == true)
+        #expect(context.registrar.events.isEmpty)
+        #expect(try await context.journalStore.allJournals().isEmpty)
+        #expect(await context.snapshotStore.removedDomainIdentifiers.isEmpty)
+        #expect(await context.eventStore.removedDomainIdentifiers.isEmpty)
+        #expect(try await context.domainStore.configuration(
+            configurationIdentifier: incompatible.configurationIdentifier
+        ) == incompatible)
+    }
+
     private func makeContext(
         knownFolderState: ProviderKnownFolderSyncState,
         encryptionMode: ProviderEncryptionMode = .legacyPlaintext,
@@ -257,7 +307,7 @@ struct PotassiumProviderAppModelExternalStorageLifecycleTests {
             displayName: "Test Account",
             authenticationKind: .manualAccessToken
         )
-        let sourceConfiguration = ProviderDomainConfiguration(
+        var sourceConfiguration = ProviderDomainConfiguration(
             configurationIdentifier: "configuration-1",
             domainIdentifier: "source-domain-1",
             accountIdentifier: account.accountIdentifier,
@@ -270,6 +320,19 @@ struct PotassiumProviderAppModelExternalStorageLifecycleTests {
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 1)
         )
+        if ProviderRuntimeProfile.current == .stability, encryptionMode == .legacyPlaintext {
+            sourceConfiguration.purpose = .stabilityLab
+            sourceConfiguration.rootFileID = 20
+            sourceConfiguration.stabilityLab = ProviderStabilityLabConfiguration(
+                driveRootFileID: 1,
+                markerFileID: 21,
+                ownershipMarker: StabilityLabOwnershipMarker(
+                    driveID: sourceConfiguration.driveID,
+                    rootFileID: sourceConfiguration.rootFileID,
+                    parentFileID: 10
+                )
+            )
+        }
         try await accountStore.save(account)
         try await domainStore.save(sourceConfiguration)
         await tokenStore.setToken(

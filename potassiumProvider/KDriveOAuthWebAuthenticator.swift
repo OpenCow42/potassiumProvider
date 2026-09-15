@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Foundation
+import OSLog
 import PotassiumProviderCore
 
 #if os(macOS)
@@ -25,6 +26,9 @@ final class KDriveOAuthWebAuthenticator: NSObject, KDriveOAuthAuthenticating, AS
     func authenticate() async throws -> KDriveOAuthToken {
         let configuration = self.configuration
         let request = try KDriveOAuthClient.makeAuthorizationRequest(configuration: configuration)
+        ProviderLog.authentication.info(
+            "oauth authorization request callbackScheme(\(request.callbackScheme, privacy: .public))"
+        )
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
@@ -32,6 +36,10 @@ final class KDriveOAuthWebAuthenticator: NSObject, KDriveOAuthAuthenticating, AS
                 callbackURLScheme: request.callbackScheme
             ) { callbackURL, error in
                 if let error {
+                    let nsError = error as NSError
+                    ProviderLog.authentication.error(
+                        "oauth browser session failure errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))"
+                    )
                     continuation.resume(throwing: error)
                     return
                 }
@@ -52,8 +60,15 @@ final class KDriveOAuthWebAuthenticator: NSObject, KDriveOAuthAuthenticating, AS
                             codeVerifier: request.codeVerifier,
                             configuration: configuration
                         )
+                        ProviderLog.authentication.info(
+                            "oauth token received tokenType(\(token.tokenType, privacy: .public)) hasRefreshToken(\(token.refreshToken != nil, privacy: .public)) hasGrantedScope(\(token.scope?.isEmpty == false, privacy: .public)) hasExpiration(\(token.expiresAt != nil, privacy: .public))"
+                        )
                         continuation.resume(returning: token)
                     } catch {
+                        let nsError = error as NSError
+                        ProviderLog.authentication.error(
+                            "oauth token exchange failure errorDomain(\(nsError.domain, privacy: .public)) errorCode(\(nsError.code, privacy: .public))"
+                        )
                         continuation.resume(throwing: error)
                     }
                 }

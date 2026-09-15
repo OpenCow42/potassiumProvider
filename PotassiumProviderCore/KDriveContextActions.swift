@@ -3,6 +3,7 @@ import Foundation
 public struct KDriveShareLinkConfiguration: Equatable, Sendable {
     public enum Access: String, CaseIterable, Equatable, Sendable {
         case `public`
+        case inherit
         case password
     }
 
@@ -44,6 +45,18 @@ public struct KDriveShareLinkConfiguration: Equatable, Sendable {
 
     public func isValid(preservingPasswordFor existingAccess: Access?) -> Bool {
         isValid || (access == .password && existingAccess == .password)
+    }
+
+    /// Compare the settings kDrive reports after a write. Passwords are not
+    /// returned by the service, and expiration is transported in whole seconds.
+    /// A successful HTTP response alone does not prove that these values stuck.
+    public func hasSameReportedSettings(as other: Self) -> Bool {
+        access == other.access &&
+            validUntil.map { $0.timeIntervalSince1970.rounded(.towardZero) } ==
+                other.validUntil.map { $0.timeIntervalSince1970.rounded(.towardZero) } &&
+            allowsDownload == other.allowsDownload && allowsComments == other.allowsComments &&
+            allowsEditing == other.allowsEditing && allowsAccessRequests == other.allowsAccessRequests &&
+            showsFileInformation == other.showsFileInformation && showsStatistics == other.showsStatistics
     }
 }
 
@@ -101,7 +114,7 @@ public struct KDriveFileVersionPage: Equatable, Sendable {
 
 public protocol KDriveContextActionProviding: Sendable {
     func setFavorite(driveID: Int, fileID: Int, isFavorite: Bool) async throws
-    func duplicateItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem
+    func duplicateItem(driveID: Int, fileID: Int, name: String) async throws -> KDriveRemoteItem
     func trashedItem(driveID: Int, fileID: Int) async throws -> KDriveRemoteItem
     func existingFileIDs(driveID: Int, fileIDs: [Int]) async throws -> Set<Int>
     func restoreTrashedItem(driveID: Int, fileID: Int, destinationParentID: Int) async throws
@@ -131,6 +144,8 @@ public enum KDriveContextActionError: Error, Equatable, LocalizedError, Sendable
     case invalidShareLinkURL
     case passwordRequired
     case restoredItemUnavailable
+    case unsupportedShareLinkAccess
+    case shareLinkSettingsNotApplied
 
     public var errorDescription: String? {
         switch self {
@@ -140,6 +155,10 @@ public enum KDriveContextActionError: Error, Equatable, LocalizedError, Sendable
             return "Enter a password for the protected share link."
         case .restoredItemUnavailable:
             return "kDrive restored the version, but its metadata is not available yet."
+        case .unsupportedShareLinkAccess:
+            return "kDrive returned an unsupported share-link access policy."
+        case .shareLinkSettingsNotApplied:
+            return "kDrive did not apply all requested sharing settings. The current server settings are shown; review them before sharing the link."
         }
     }
 }
@@ -215,6 +234,21 @@ public struct KDriveContextActionExecution: Equatable, Sendable {
     }
 }
 
+public enum KDriveDuplicateNamePolicy {
+    /// Produces an explicit, human-readable destination name. The duplicate
+    /// endpoint's empty-body/server-selected naming behavior is not part of the
+    /// pinned public contract, so callers never rely on it.
+    public static func duplicateName(for sourceName: String) -> String {
+        let path = sourceName as NSString
+        let pathExtension = path.pathExtension
+        let baseName = path.deletingPathExtension
+        guard pathExtension.isEmpty == false, baseName.isEmpty == false else {
+            return "\(sourceName) copy"
+        }
+        return "\(baseName) copy.\(pathExtension)"
+    }
+}
+
 /// Coordinates action-specific remote calls and returns the exact provider
 /// containers that must be invalidated after the server mutation succeeds.
 public struct KDriveContextActionCoordinator: Sendable {
@@ -246,7 +280,13 @@ public struct KDriveContextActionCoordinator: Sendable {
             return try await setFavorite(false, fileID: fileID, action: action)
         case .duplicate:
             try Task.checkCancellation()
-            let duplicate = try await actions.duplicateItem(driveID: driveID, fileID: fileID)
+            let source = try await remote.item(driveID: driveID, fileID: fileID)
+            try Task.checkCancellation()
+            let duplicate = try await actions.duplicateItem(
+                driveID: driveID,
+                fileID: fileID,
+                name: KDriveDuplicateNamePolicy.duplicateName(for: source.name)
+            )
             let authoritativeDuplicate = try await remote.item(driveID: driveID, fileID: duplicate.id)
             return KDriveContextActionExecution(
                 action: action,

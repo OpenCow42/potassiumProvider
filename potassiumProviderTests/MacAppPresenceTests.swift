@@ -93,7 +93,7 @@ struct MacAppPresenceTests {
         let projectFile = try String(contentsOf: projectFileURL, encoding: .utf8)
         let readWriteSetting = "ENABLE_USER_SELECTED_FILES = readwrite;"
 
-        #expect(projectFile.components(separatedBy: readWriteSetting).count - 1 == 2)
+        #expect(projectFile.components(separatedBy: readWriteSetting).count - 1 == 3)
         #expect(projectFile.contains("ENABLE_USER_SELECTED_FILES = readonly;") == false)
     }
 }

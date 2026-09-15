@@ -95,6 +95,46 @@ struct ProviderDriveDescriptor: Identifiable, Equatable {
     }
 }
 
+#if os(macOS)
+private struct MacSetupColumn<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView {
+            content
+                .frame(maxWidth: 640, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 28)
+        }
+        .scrollIndicators(.automatic)
+    }
+}
+
+private struct MacSetupCard<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(.quaternary, lineWidth: 1)
+            }
+    }
+}
+#endif
+
 struct ProviderSetupView: View {
     @ObservedObject var model: PotassiumProviderAppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -102,7 +142,7 @@ struct ProviderSetupView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            accountList
+            setupRoot
                 .navigationDestination(for: ProviderSetupRoute.self) { route in
                     destination(for: route)
                 }
@@ -139,6 +179,111 @@ struct ProviderSetupView: View {
         }
         #endif
     }
+
+    @ViewBuilder
+    private var setupRoot: some View {
+        #if os(macOS)
+        macAccountList
+        #else
+        accountList
+        #endif
+    }
+
+    #if os(macOS)
+    private var macAccountList: some View {
+        MacSetupColumn {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Connect your kDrives")
+                        .font(.title2.weight(.semibold))
+                    Text("Sign in with Infomaniak to discover the kDrives you own and choose which ones appear in Finder.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                NavigationLink(value: ProviderSetupRoute.addAccount) {
+                    Label("Add Infomaniak Account", systemImage: "person.crop.circle.badge.plus")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(model.isReloadingStoredState)
+                .accessibilityIdentifier("setup.addAccount")
+
+                if model.isReloadingStoredState && model.accounts.isEmpty {
+                    MacSetupCard {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading saved accounts…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Loading saved accounts")
+                    }
+                } else if model.accounts.isEmpty {
+                    MacSetupCard {
+                        ContentUnavailableView {
+                            Label("No Accounts Connected", systemImage: "person.crop.circle.badge.questionmark")
+                        } description: {
+                            Text("Add an Infomaniak account above to discover its kDrives.")
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Connected Accounts")
+                            .font(.headline)
+
+                        ForEach(model.accounts) { account in
+                            NavigationLink(value: ProviderSetupRoute.account(account.accountIdentifier)) {
+                                MacSetupCard {
+                                    ProviderAccountRow(
+                                        account: account,
+                                        loadedDriveCount: model.drives(for: account.accountIdentifier).count,
+                                        configuredDriveCount: model.domains(for: account.accountIdentifier).count,
+                                        isLoading: model.isLoadingDrives(for: account.accountIdentifier)
+                                    )
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            .accessibilityIdentifier("setup.account.\(account.accountIdentifier)")
+                        }
+                    }
+                }
+
+                if model.isReloadingStoredState == false, let statusMessage = model.statusMessage {
+                    ProviderFeedbackLabel(message: statusMessage)
+                        .padding(.horizontal, 4)
+                }
+            }
+        }
+        .navigationTitle("Setup")
+        .providerNavigationAnimation(animatesInitialAppearance: false)
+        .task(id: setupAutoLoadTaskID) {
+            await model.loadDrivesForAccountsIfPossible()
+        }
+        .toolbar {
+            ToolbarItem(placement: refreshToolbarPlacement) {
+                Button {
+                    Task {
+                        for account in model.accounts {
+                            await model.loadDrives(accountIdentifier: account.accountIdentifier)
+                        }
+                    }
+                } label: {
+                    Label("Refresh All Accounts", systemImage: "arrow.clockwise")
+                }
+                .disabled(
+                    model.isReloadingStoredState ||
+                    model.accounts.isEmpty ||
+                    model.loadingDriveAccountIdentifiers.isEmpty == false
+                )
+                .accessibilityIdentifier("setup.refreshAll")
+            }
+        }
+    }
+    #endif
 
     private var accountList: some View {
         List {
@@ -177,6 +322,7 @@ struct ProviderSetupView: View {
                                 isLoading: model.isLoadingDrives(for: account.accountIdentifier)
                             )
                         }
+                        .contentShape(Rectangle())
                         .accessibilityIdentifier("setup.account.\(account.accountIdentifier)")
                     }
                 }
@@ -278,7 +424,7 @@ private struct ProviderAccountRow: View {
                 Text(account.authenticationKind.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("\(loadedDriveCount) discovered · \(configuredDriveCount) in Files")
+                Text("\(loadedDriveCount) owned · \(configuredDriveCount) in Files")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -298,8 +444,17 @@ private struct ProviderAccountRow: View {
 private struct ProviderAddAccountView: View {
     @ObservedObject var model: PotassiumProviderAppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var isAdvancedExpanded = false
 
     var body: some View {
+        #if os(macOS)
+        macBody
+        #else
+        legacyBody
+        #endif
+    }
+
+    private var legacyBody: some View {
         Form {
             Section {
                 Button {
@@ -357,6 +512,85 @@ private struct ProviderAddAccountView: View {
         }
         .navigationTitle("Add Account")
     }
+
+    #if os(macOS)
+    private var macBody: some View {
+        MacSetupColumn {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Sign in to Infomaniak")
+                        .font(.title2.weight(.semibold))
+                    Text("Your account is used to find the kDrives you own. You can choose which drives to add to Finder after signing in.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                MacSetupCard {
+                    Button {
+                        Task {
+                            let existingAccountIDs = Set(model.accounts.map(\.accountIdentifier))
+                            await model.connectWithOAuth()
+                            if model.accounts.contains(where: { existingAccountIDs.contains($0.accountIdentifier) == false }) {
+                                dismiss()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Label(
+                                model.isConnecting ? "Connecting…" : "Continue with Infomaniak",
+                                systemImage: "person.crop.circle.badge.plus"
+                            )
+                            Spacer()
+                            if model.isConnecting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(model.isConnecting)
+                    .accessibilityIdentifier("addAccount.oauth")
+                }
+
+                DisclosureGroup(isExpanded: $isAdvancedExpanded) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Manual tokens are intended for development and may stop working when they expire.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        SecureField("Access token", text: $model.manualAccessToken)
+                            .platformPasswordEntry()
+                            .accessibilityIdentifier("addAccount.manualToken")
+
+                        Button {
+                            Task {
+                                let existingAccountIDs = Set(model.accounts.map(\.accountIdentifier))
+                                await model.saveManualAccessToken()
+                                if model.accounts.contains(where: { existingAccountIDs.contains($0.accountIdentifier) == false }) {
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            Label("Save Access Token", systemImage: "key.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.manualAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("addAccount.saveManualToken")
+                    }
+                    .padding(.top, 10)
+                } label: {
+                    Text("Advanced")
+                        .contentShape(Rectangle())
+                        .onTapGesture { isAdvancedExpanded.toggle() }
+                }
+            }
+        }
+        .navigationTitle("Add Account")
+    }
+    #endif
 }
 
 private struct ProviderAccountManagementView: View {
@@ -371,7 +605,11 @@ private struct ProviderAccountManagementView: View {
     var body: some View {
         Group {
             if let account {
+                #if os(macOS)
+                macAccountForm(account)
+                #else
                 accountForm(account)
+                #endif
             } else {
                 ContentUnavailableView {
                     Label("Account Unavailable", systemImage: "person.crop.circle.badge.exclamationmark")
@@ -467,6 +705,17 @@ private struct ProviderAccountManagementView: View {
                         Text("Loading kDrives…")
                     }
                     .accessibilityElement(children: .combine)
+                } else if driveDescriptors.isEmpty, model.hasCompletedDriveDiscovery(for: accountIdentifier) {
+                    ContentUnavailableView {
+                        Label("No Owned kDrives Available", systemImage: "externaldrive.badge.questionmark")
+                    } description: {
+                        Text("This account does not own any kDrives available for setup. Shared kDrives are not shown.")
+                    } actions: {
+                        Button("Refresh Drives") {
+                            Task { await model.loadDrives(accountIdentifier: accountIdentifier) }
+                        }
+                        .disabled(model.canLoadDrives(for: accountIdentifier) == false)
+                    }
                 } else if driveDescriptors.isEmpty {
                     ContentUnavailableView {
                         Label("No kDrives Available", systemImage: "externaldrive.badge.questionmark")
@@ -505,6 +754,98 @@ private struct ProviderAccountManagementView: View {
             }
         }
     }
+
+    #if os(macOS)
+    private func macAccountForm(_ account: ProviderAccount) -> some View {
+        MacSetupColumn {
+            VStack(alignment: .leading, spacing: 20) {
+                MacSetupCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(account.displayName)
+                            .font(.title2.weight(.semibold))
+                        LabeledContent("Authentication", value: account.authenticationKind.title)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Your kDrives")
+                            .font(.headline)
+                        Spacer()
+                        if model.isLoadingDrives(for: accountIdentifier) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("Loading drives")
+                        }
+                    }
+
+                    MacSetupCard {
+                        if model.isLoadingDrives(for: accountIdentifier) && driveDescriptors.isEmpty {
+                            HStack(spacing: 12) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Discovering your kDrives…")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                        } else if driveDescriptors.isEmpty, model.hasCompletedDriveDiscovery(for: accountIdentifier) {
+                            ContentUnavailableView {
+                                Label("No Owned kDrives Available", systemImage: "externaldrive.badge.questionmark")
+                            } description: {
+                                Text("This account does not own any kDrives available for setup. Shared kDrives are not shown.")
+                            }
+                        } else if driveDescriptors.isEmpty {
+                            ContentUnavailableView {
+                                Label("Could Not Load kDrives", systemImage: "externaldrive.badge.exclamationmark")
+                            } description: {
+                                Text("Drive discovery did not complete. Use Refresh Drives in the toolbar to try again.")
+                            }
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(Array(driveDescriptors.enumerated()), id: \.element.id) { index, descriptor in
+                                    NavigationLink(value: ProviderSetupRoute.drive(descriptor.id)) {
+                                        ProviderDriveRow(descriptor: descriptor)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("account.drive.\(descriptor.driveID)")
+
+                                    if index < driveDescriptors.count - 1 {
+                                        Divider()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                MacSetupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Button {
+                            renameDraft = account.displayName
+                            isRenamePresented = true
+                        } label: {
+                            Label("Rename Account", systemImage: "pencil")
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("account.rename")
+
+                        Button("Log Out", role: .destructive) {
+                            isLogoutConfirmationPresented = true
+                        }
+                        .disabled(model.isPerformingDriveAction(for: accountIdentifier))
+                        .accessibilityIdentifier("account.logout")
+
+                        Text("Logging out removes this account’s File Provider domains and local state. It does not delete remote files.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+    #endif
 
     private var refreshToolbarPlacement: ToolbarItemPlacement {
         #if os(macOS)
@@ -743,7 +1084,7 @@ private struct ProviderDriveManagementView: View {
     }
 
     private func driveForm(_ descriptor: ProviderDriveDescriptor) -> some View {
-        List {
+        let content = Group {
             Section("Drive") {
                 LabeledContent("Name", value: descriptor.name)
                 LabeledContent("Drive ID", value: String(descriptor.driveID))
@@ -790,7 +1131,7 @@ private struct ProviderDriveManagementView: View {
                     } label: {
                         actionLabel(
                             title: "Add to Files",
-                            systemImage: "folder.badge.plus",
+                            systemImage: "externaldrive.badge.plus",
                             action: .addingToFiles
                         )
                     }
@@ -974,7 +1315,15 @@ private struct ProviderDriveManagementView: View {
                 }
             }
         }
-        .accessibilityIdentifier("drive.management")
+        #if os(macOS)
+        // A grouped form exposes its controls individually to Accessibility;
+        // macOS List rows otherwise combine the action into an unnamed row.
+        return Form { content }.formStyle(.grouped)
+            .accessibilityIdentifier("drive.management")
+        #else
+        return List { content }
+            .accessibilityIdentifier("drive.management")
+        #endif
     }
 
     @ViewBuilder
@@ -1376,6 +1725,10 @@ private struct ProviderSetupErrorBanner: View {
                 .stroke(.quaternary, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+#if os(macOS)
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
+#endif
         .padding()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("setup.errorBanner")

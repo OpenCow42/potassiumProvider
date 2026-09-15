@@ -67,6 +67,9 @@ struct ProviderDomainRegistrarExternalVolumeTests {
         let registrar = FileProviderDomainRegistrar(system: system.client)
 
         let states = try await registrar.registeredDomainStates()
+        #expect(try await registrar.registeredDomainIdentifiers() == [
+            externalDomain.identifier.rawValue, localDomain.identifier.rawValue,
+        ])
 
         let externalState = try #require(states.first {
             $0.domainIdentifier == externalDomain.identifier.rawValue

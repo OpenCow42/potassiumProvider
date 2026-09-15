@@ -9,7 +9,20 @@ public struct KDriveDriveSummary: Codable, Equatable, Identifiable, Sendable {
     public let status: String
     public let isInMaintenance: Bool
 
-    public init(id: Int, name: String, accountID: Int, role: String, status: String, isInMaintenance: Bool) {
+    /// Matches the official iOS kDrive eligibility rule for a drive belonging
+    /// to the signed-in user rather than an unavailable or external share.
+    public var isUsableInternalDrive: Bool {
+        role != "none" && role != "external"
+    }
+
+    public init(
+        id: Int,
+        name: String,
+        accountID: Int,
+        role: String,
+        status: String,
+        isInMaintenance: Bool
+    ) {
         self.id = id
         self.name = name
         self.accountID = accountID

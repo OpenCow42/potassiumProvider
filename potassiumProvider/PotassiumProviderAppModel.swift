@@ -40,6 +40,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     private static let log = ProviderLog.app
     static let encryptedVaultRiskWarningDelaySeconds: TimeInterval = 5
 
+    private(set) var lastDriveDiscoveryErrorClass: ProviderDiagnosticErrorClass?
+    private(set) var lastDriveDiscoveryErrorCode: Int?
+
     @Published private(set) var accounts: [ProviderAccount] = []
     @Published private(set) var drivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:]
     @Published private(set) var domains: [ProviderDomainConfiguration] = []
@@ -69,6 +72,9 @@ final class PotassiumProviderAppModel: ObservableObject {
     @Published private(set) var placementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState] = [:]
     @Published var preservedDataLocation: ProviderPreservedDataLocation?
     @Published private(set) var statusMessage: String?
+    @Published private(set) var stabilityLabPreflightResult: StabilityLabPreflightResult?
+    @Published private(set) var isPerformingStabilityLabOperation = false
+    @Published private(set) var activeStabilityRunID: UUID?
     @Published var errorMessage: String?
     @Published var manualAccessToken = ""
     @Published var selectedDriveIDs: [String: Int] = [:]
@@ -83,7 +89,8 @@ final class PotassiumProviderAppModel: ObservableObject {
     private let relocationJournalStore: any ProviderDomainRelocationJournaling
     private let externalVolumeSelector: any ProviderExternalVolumeSelecting
     private let snapshotStore: (any KDriveSnapshotStoring)?
-    private let eventStore: (any KDriveProviderEventStoring)?
+    private let injectedEventStore: (any KDriveProviderEventStoring)?
+    private let defaultEventStore: (any KDriveProviderEventStoring)?
     private let fileProviderFactory: (String) -> any KDriveFileProviding
     private let objectStoreFactory: (Int, String) -> any KDriveObjectStoreProviding
     private let vaultKeyStore: any VaultKeyStoring
@@ -101,6 +108,20 @@ final class PotassiumProviderAppModel: ObservableObject {
     private var automaticallyLoadedDriveAccountIdentifiers: Set<String> = []
     private var fileProviderDomainChangeCancellable: AnyCancellable?
 
+    var stabilityLabConfiguration: ProviderDomainConfiguration? {
+        domains.first { $0.purpose == .stabilityLab }
+    }
+
+    private var eventStore: (any KDriveProviderEventStoring)? {
+        if let injectedEventStore {
+            return injectedEventStore
+        }
+        if ProviderRuntimeProfile.current == .stability {
+            return Self.makeDefaultEventStore()
+        }
+        return defaultEventStore
+    }
+
     init(
         accountStore: (any ProviderAccountStoring)? = nil,
         domainStore: (any DomainConfigurationStoring)? = nil,
@@ -116,7 +137,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         initialDrivesByAccountIdentifier: [String: [KDriveDriveSummary]] = [:],
         initialDomains: [ProviderDomainConfiguration] = [],
         initialPlacementStatesByConfigurationIdentifier: [String: ProviderDomainPlacementState] = [:],
-        fileProviderFactory: @escaping (String) -> any KDriveFileProviding = { PotassiumKDriveService(bearerToken: $0) },
+        fileProviderFactory: ((String) -> any KDriveFileProviding)? = nil,
         objectStoreFactory: @escaping (Int, String) -> any KDriveObjectStoreProviding = {
             PotassiumKDriveObjectStore(driveID: $0, bearerToken: $1)
         },
@@ -144,8 +165,27 @@ final class PotassiumProviderAppModel: ObservableObject {
         self.relocationJournalStore = relocationJournalStore ?? Self.makeDefaultRelocationJournalStore()
         self.externalVolumeSelector = externalVolumeSelector ?? ProviderExternalVolumeSelectionService()
         self.snapshotStore = snapshotStore ?? Self.makeDefaultSnapshotStore()
-        self.eventStore = eventStore ?? Self.makeDefaultEventStore()
-        self.fileProviderFactory = fileProviderFactory
+        let resolvedEventStore = eventStore ?? Self.makeDefaultEventStore()
+        self.injectedEventStore = eventStore
+        self.defaultEventStore = resolvedEventStore
+        if let injectedRecorder = eventStore as? any ProviderDiagnosticRecording {
+            self.fileProviderFactory = fileProviderFactory ?? { token in
+                PotassiumKDriveService(
+                    bearerToken: token,
+                    diagnosticRecorder: injectedRecorder,
+                    diagnosticSource: .app
+                )
+            }
+        } else {
+            self.fileProviderFactory = fileProviderFactory ?? { token in
+                PotassiumKDriveService(
+                    bearerToken: token,
+                    diagnosticRecorder: Self.makeDefaultEventStore()
+                        as? any ProviderDiagnosticRecording,
+                    diagnosticSource: .app
+                )
+            }
+        }
         self.objectStoreFactory = objectStoreFactory
         let defaultVaultKeyStore = KeychainVaultKeyStore(
             accessGroup: ProviderConstants.keychainAccessGroup
@@ -206,6 +246,10 @@ final class PotassiumProviderAppModel: ObservableObject {
 
     func drives(for accountIdentifier: String) -> [KDriveDriveSummary] {
         drivesByAccountIdentifier[accountIdentifier] ?? []
+    }
+
+    func hasCompletedDriveDiscovery(for accountIdentifier: String) -> Bool {
+        drivesByAccountIdentifier[accountIdentifier] != nil
     }
 
     func domains(for accountIdentifier: String) -> [ProviderDomainConfiguration] {
@@ -474,6 +518,8 @@ final class PotassiumProviderAppModel: ObservableObject {
             return
         }
 
+        lastDriveDiscoveryErrorClass = nil
+        lastDriveDiscoveryErrorCode = nil
         loadingDriveAccountIdentifiers.insert(accountIdentifier)
         defer { loadingDriveAccountIdentifiers.remove(accountIdentifier) }
 
@@ -481,28 +527,38 @@ final class PotassiumProviderAppModel: ObservableObject {
             let token = try await usableToken(accountIdentifier: accountIdentifier)
             errorMessage = nil
 
-            let drives = try await fileProviderFactory(token.accessToken).listDrives()
-            drivesByAccountIdentifier[accountIdentifier] = drives
+            let discoveredDrives = try await fileProviderFactory(token.accessToken).listDrives()
+            let usableDrives = discoveredDrives.filter(\.isUsableInternalDrive)
+            drivesByAccountIdentifier[accountIdentifier] = usableDrives
             await refreshVaultAccessState()
             if selectedDriveIDs[accountIdentifier] == nil ||
-                drives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
-                selectedDriveIDs[accountIdentifier] = drives.first?.id
+                usableDrives.contains(where: { $0.id == selectedDriveIDs[accountIdentifier] }) == false {
+                selectedDriveIDs[accountIdentifier] = usableDrives.first?.id
             }
             refreshDraftFromSelectedDrive(accountIdentifier: accountIdentifier)
-            statusMessage = drives.isEmpty ? "No kDrives returned for \(account.displayName)." : "Loaded \(drives.count) kDrive\(drives.count == 1 ? "" : "s") for \(account.displayName)."
+            statusMessage = usableDrives.isEmpty
+                ? "No usable kDrives found for \(account.displayName)."
+                : "Loaded \(usableDrives.count) usable kDrive\(usableDrives.count == 1 ? "" : "s") for \(account.displayName)."
         } catch {
+            lastDriveDiscoveryErrorClass = ProviderDiagnosticErrorClassifier.classify(error)
+            lastDriveDiscoveryErrorCode = KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode
             await recordAppFailure(
                 kind: .driveDiscovery,
                 summary: "Could not load kDrives.",
                 error: error,
                 category: .api
             )
-            errorMessage = "Could not load kDrives: \(error.localizedDescription)"
+            errorMessage = "Could not load kDrives. Refresh and try again."
             statusMessage = nil
         }
     }
 
     func addDomain(accountIdentifier: String) async {
+        guard ProviderRuntimeProfile.current == .standard else {
+            errorMessage = "The Stability build registers only a verified Stability Lab root. Use the Stability Lab tab."
+            statusMessage = nil
+            return
+        }
         guard let account = account(accountIdentifier: accountIdentifier) else {
             errorMessage = "Choose an account before adding a domain."
             statusMessage = nil
@@ -554,16 +610,208 @@ final class PotassiumProviderAppModel: ObservableObject {
                 error: error,
                 category: .fileProvider
             )
-            errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
+            if FileProviderDomainRegistrationDiagnostics
+                .applicationExtensionNotFoundError(in: error) != nil {
+                errorMessage = FileProviderDomainRegistrationDiagnostics.userFacingMessage
+            } else {
+                errorMessage = "Could not add the provider domain: \(error.localizedDescription)"
+            }
             statusMessage = nil
         }
     }
 
     func addDomain(accountIdentifier: String, drive: KDriveDriveSummary) async {
+        guard canCreateDomain(for: drive) else { return }
         selectedDriveIDs[accountIdentifier] = drive.id
         manualDriveIDs[accountIdentifier] = String(drive.id)
         manualDriveNames[accountIdentifier] = drive.name
         await addDomain(accountIdentifier: accountIdentifier)
+    }
+
+    func provisionStabilityLab(
+        accountIdentifier: String,
+        drive: KDriveDriveSummary
+    ) async {
+        guard beginStabilityLabOperation() else { return }
+        defer { isPerformingStabilityLabOperation = false }
+
+        do {
+            try requireStabilityRuntime()
+            guard drive.isUsableInternalDrive else {
+                throw StabilityLabAppError.driveAccessNotVerified
+            }
+            let storedConfigurations = try await domainStore.allConfigurations()
+            let registeredIdentifiers = try await domainRegistrar.registeredDomainIdentifiers()
+            guard storedConfigurations.isEmpty, registeredIdentifiers.isEmpty else {
+                throw StabilityLabAppError.domainIsolationRequired
+            }
+
+            let token = try await usableToken(accountIdentifier: accountIdentifier)
+            let remote = fileProviderFactory(token.accessToken)
+            let coordinator = StabilityLabRemoteCoordinator(remote: remote)
+            let privateParentID = try await KDrivePrivateDirectoryResolver.resolveFileID(
+                driveID: drive.id, rootFileID: ProviderConstants.defaultRootFileID, remote: remote
+            )
+            let provisioned = try await coordinator.provision(
+                driveID: drive.id,
+                driveRootFileID: ProviderConstants.defaultRootFileID,
+                privateParentFileID: privateParentID,
+                registeredDomainsProvider: { [weak self] in
+                    guard let self else { throw StabilityLabAppError.domainIsolationRequired }
+                    return try await self.provisioningDomainEvidence()
+                }
+            )
+            let now = Date()
+            let configuration = ProviderDomainConfiguration(
+                accountIdentifier: accountIdentifier,
+                displayName: "Potassium Stability Lab",
+                driveID: provisioned.driveID,
+                driveName: drive.name,
+                rootFileID: provisioned.rootFileID,
+                knownFolderLayout: .machineNamespace,
+                encryptionMode: .legacyPlaintext,
+                purpose: .stabilityLab,
+                stabilityLab: ProviderStabilityLabConfiguration(
+                    driveRootFileID: provisioned.driveRootFileID,
+                    markerFileID: provisioned.ownershipMarkerFileID,
+                    ownershipMarker: provisioned.ownershipMarker
+                ),
+                createdAt: now,
+                updatedAt: now
+            )
+
+            // Persist ownership evidence before registering the domain. If
+            // registration fails, keep the record so the remote root never
+            // becomes an untracked automatic-cleanup candidate.
+            try await domainStore.save(configuration)
+            domains = try await domainStore.allConfigurations()
+            do {
+                let finalStoredConfigurations = try await domainStore.allConfigurations()
+                let finalRegisteredIdentifiers = try await domainRegistrar.registeredDomainIdentifiers()
+                guard finalStoredConfigurations == [configuration],
+                      finalRegisteredIdentifiers.isEmpty else {
+                    throw StabilityLabAppError.domainIsolationRequired
+                }
+                try await domainRegistrar.addDomain(for: configuration)
+            } catch {
+                throw StabilityLabAppError.domainRegistrationFailed
+            }
+            stabilityLabPreflightResult = nil
+            errorMessage = nil
+            statusMessage = "Stability Lab provisioned. Verify it before starting a Finder run."
+        } catch {
+            await refreshDomainListAfterStabilityLabOperation()
+#if STABILITY
+            print("stability lab failure: type \(String(reflecting: type(of: error))); class \(ProviderDiagnosticErrorClassifier.classify(error).rawValue); code \(KDriveRemoteErrorClassifier.apiRejection(from: error)?.statusCode ?? 0)")
+#endif
+            errorMessage = stabilityLabMessage(for: error)
+            statusMessage = nil
+        }
+    }
+
+    /// Retry only registration for a previously provisioned, positively identified lab.
+    func resumeStabilityLabRegistration() async throws {
+        guard beginStabilityLabOperation() else { throw StabilityLabAppError.domainIsolationRequired }
+        defer { isPerformingStabilityLabOperation = false }
+        let context = try await makeStabilityLabContext(requireRegisteredDomain: false)
+        _ = try await context.coordinator.observe(configuration: context.remoteConfiguration)
+        let registered = try await domainRegistrar.registeredDomainIdentifiers()
+        guard registered.isEmpty || registered == [context.domain.domainIdentifier] else {
+            throw StabilityLabAppError.domainIsolationRequired
+        }
+        if registered.isEmpty { try await domainRegistrar.addDomain(for: context.domain) }
+        _ = try await verifyStabilityLabWhileHoldingOperationGate()
+    }
+
+    func verifyStabilityLab() async {
+        guard beginStabilityLabOperation() else { return }
+        defer { isPerformingStabilityLabOperation = false }
+
+        do {
+            _ = try await verifyStabilityLabWhileHoldingOperationGate()
+            errorMessage = nil
+            statusMessage = "Stability Lab ownership, root, marker, and domain isolation are verified."
+        } catch {
+            stabilityLabPreflightResult = nil
+            errorMessage = stabilityLabMessage(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func resetStabilityLab(typedConfirmation: String) async {
+        guard beginStabilityLabOperation() else { return }
+        defer { isPerformingStabilityLabOperation = false }
+
+        do {
+            let runCoordinator = try StabilityRunCoordinator()
+            let context = try await makeStabilityLabContext(requireRegisteredDomain: true)
+            let confirmation = try StabilityLabResetConfirmation(
+                typedPhrase: typedConfirmation,
+                marker: context.remoteConfiguration.ownershipMarker
+            )
+            let result = try await runCoordinator.withInactiveRunLease {
+                try await context.coordinator.reset(
+                    configuration: context.remoteConfiguration,
+                    configuredEncryptionMode: context.domain.encryptionMode,
+                    registeredDomainsProvider: { [weak self] in
+                        guard let self else { throw StabilityLabAppError.domainIsolationRequired }
+                        return try await self.registeredLabDomainEvidence(for: context.domain)
+                    },
+                    confirmation: confirmation
+                )
+            }
+            stabilityLabPreflightResult = nil
+            errorMessage = nil
+            statusMessage = "Stability Lab reset completed safely; \(result.trashedImmediateChildCount) immediate item(s) moved to trash. The root and ownership marker were preserved."
+        } catch {
+            stabilityLabPreflightResult = nil
+            errorMessage = stabilityLabMessage(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func startStabilityRun() async {
+        guard beginStabilityLabOperation() else { return }
+        defer { isPerformingStabilityLabOperation = false }
+
+        do {
+            _ = try await verifyStabilityLabWhileHoldingOperationGate()
+            let coordinator = try StabilityRunCoordinator()
+            let handle = try await coordinator.startRun()
+            activeStabilityRunID = handle.runID
+            statusMessage = "Stability diagnostics run started."
+        } catch {
+            stabilityLabPreflightResult = nil
+            errorMessage = stabilityLabMessage(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func finishStabilityRun() async {
+        guard beginStabilityLabOperation() else { return }
+        defer { isPerformingStabilityLabOperation = false }
+        do {
+            let coordinator = try StabilityRunCoordinator()
+            guard let handle = try await coordinator.activeRun() else {
+                activeStabilityRunID = nil
+                throw StabilityLabAppError.noActiveRun
+            }
+            try await coordinator.finishRun(
+                runID: handle.runID,
+                summary: StabilityRunSummary(
+                    assertionCount: 0,
+                    failedAssertionCount: 0,
+                    checkpointCount: 0
+                )
+            )
+            _ = try await coordinator.pruneCompletedRuns()
+            activeStabilityRunID = nil
+            errorMessage = nil
+            statusMessage = "Stability diagnostics run finished and sealed."
+        } catch {
+            errorMessage = stabilityLabMessage(for: error)
+            statusMessage = nil
+        }
     }
 
     /// Begins encrypted-vault onboarding without creating remote objects. The
@@ -573,6 +821,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         accountIdentifier: String,
         drive: KDriveDriveSummary
     ) async {
+        guard canCreateDomain(for: drive) else { return }
         beginEncryptedVaultActivation(.create(
             accountIdentifier: accountIdentifier,
             drive: drive
@@ -584,6 +833,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         drive: KDriveDriveSummary,
         recoveryKitText: String
     ) {
+        guard canCreateDomain(for: drive) else { return }
         beginEncryptedVaultActivation(.recoveryKit(
             accountIdentifier: accountIdentifier,
             drive: drive,
@@ -596,6 +846,7 @@ final class PotassiumProviderAppModel: ObservableObject {
         drive: KDriveDriveSummary,
         vaultID: VaultIdentifier
     ) {
+        guard canCreateDomain(for: drive) else { return }
         guard encryptedVaultICloudKeychainEnabled else {
             errorMessage = "iCloud Keychain vault access is disabled until its security review is complete."
             return
@@ -1147,6 +1398,12 @@ final class PotassiumProviderAppModel: ObservableObject {
         drive: KDriveDriveSummary,
         externalVolume: ProviderExternalVolume
     ) async {
+        guard ProviderRuntimeProfile.current == .standard else {
+            errorMessage = "The Stability build registers only a verified Stability Lab root. Use the Stability Lab tab."
+            statusMessage = nil
+            return
+        }
+        guard canCreateDomain(for: drive) else { return }
         selectedDriveIDs[accountIdentifier] = drive.id
         manualDriveIDs[accountIdentifier] = String(drive.id)
         manualDriveNames[accountIdentifier] = drive.name
@@ -1239,6 +1496,11 @@ final class PotassiumProviderAppModel: ObservableObject {
             statusMessage = nil
             return
         }
+        guard configuration.isCompatible(with: .current) else {
+            errorMessage = "This domain cannot be managed by this build of Potassium."
+            statusMessage = nil
+            return
+        }
 
         let targetStorageLocation: ProviderDomainStorageLocation
         if let externalVolume {
@@ -1293,6 +1555,11 @@ final class PotassiumProviderAppModel: ObservableObject {
     func repairDomain(_ configuration: ProviderDomainConfiguration) async {
         guard configuration.supportsStorageRelocation else {
             errorMessage = PotassiumProviderAppModelError.unsupportedStorageRelocation.localizedDescription
+            statusMessage = nil
+            return
+        }
+        guard configuration.isCompatible(with: .current) else {
+            errorMessage = "This domain cannot be managed by this build of Potassium."
             statusMessage = nil
             return
         }
@@ -2529,6 +2796,156 @@ final class PotassiumProviderAppModel: ObservableObject {
         }
     }
 
+    private func beginStabilityLabOperation() -> Bool {
+        guard isPerformingStabilityLabOperation == false else { return false }
+        isPerformingStabilityLabOperation = true
+        errorMessage = nil
+        return true
+    }
+
+    private func requireStabilityRuntime() throws {
+        guard ProviderRuntimeProfile.current == .stability else {
+            throw StabilityLabAppError.stabilityBuildRequired
+        }
+    }
+
+    private func makeStabilityLabContext(
+        requireRegisteredDomain: Bool
+    ) async throws -> StabilityLabAppContext {
+        try requireStabilityRuntime()
+        let storedConfigurations = try await domainStore.allConfigurations()
+        guard storedConfigurations.contains(where: { $0.purpose == .ordinary }) == false else {
+            throw StabilityLabAppError.domainIsolationRequired
+        }
+        let labConfigurations = storedConfigurations.filter { $0.purpose == .stabilityLab }
+        guard labConfigurations.count == 1,
+              let domain = labConfigurations.first else {
+            throw StabilityLabAppError.singleLabRequired
+        }
+        guard domain.hasConsistentPurposeConfiguration,
+              let lab = domain.stabilityLab else {
+            throw StabilityLabAppError.invalidLocalOwnershipEvidence
+        }
+
+        let registeredIdentifiers = try await domainRegistrar.registeredDomainIdentifiers()
+        if requireRegisteredDomain {
+            guard registeredIdentifiers == [domain.domainIdentifier] else {
+                throw StabilityLabAppError.domainIsolationRequired
+            }
+        } else if registeredIdentifiers.subtracting([domain.domainIdentifier]).isEmpty == false {
+            throw StabilityLabAppError.domainIsolationRequired
+        }
+        let token = try await usableToken(accountIdentifier: domain.accountIdentifier)
+        let remote = fileProviderFactory(token.accessToken)
+        let remoteConfiguration = StabilityLabRemoteConfiguration(
+            driveID: domain.driveID,
+            driveRootFileID: lab.driveRootFileID,
+            rootFileID: domain.rootFileID,
+            ownershipMarkerFileID: lab.markerFileID,
+            ownershipMarker: lab.ownershipMarker
+        )
+        return StabilityLabAppContext(
+            domain: domain,
+            remoteConfiguration: remoteConfiguration,
+            coordinator: StabilityLabRemoteCoordinator(remote: remote)
+        )
+    }
+
+    private func verifyStabilityLabWhileHoldingOperationGate() async throws
+        -> StabilityLabAppContext
+    {
+        let context = try await makeStabilityLabContext(requireRegisteredDomain: true)
+        let observation = try await context.coordinator.observe(
+            configuration: context.remoteConfiguration
+        )
+        let freshRegisteredDomains = try await registeredLabDomainEvidence(
+            for: context.domain
+        )
+        let result = StabilityLabSafety.preflight(StabilityLabPreflightInput(
+            expectedMarker: context.remoteConfiguration.ownershipMarker,
+            expectedOwnershipMarkerFileID: context.remoteConfiguration.ownershipMarkerFileID,
+            configuredEncryptionMode: context.domain.encryptionMode,
+            root: observation,
+            registeredDomains: freshRegisteredDomains
+        ))
+        stabilityLabPreflightResult = result
+        guard result.isAllowed else {
+            throw StabilityLabAppError.preflightRejected
+        }
+        return context
+    }
+
+    private func provisioningDomainEvidence() async throws -> [StabilityLabRegisteredDomain] {
+        let storedConfigurations = try await domainStore.allConfigurations()
+        let registeredIdentifiers = try await domainRegistrar.registeredDomainIdentifiers()
+        guard storedConfigurations.isEmpty, registeredIdentifiers.isEmpty else {
+            return [StabilityLabRegisteredDomain(
+                purpose: .ordinary,
+                driveID: 0,
+                rootFileID: 0,
+                encryptionMode: .legacyPlaintext
+            )]
+        }
+        return []
+    }
+
+    private func registeredLabDomainEvidence(
+        for expectedDomain: ProviderDomainConfiguration
+    ) async throws -> [StabilityLabRegisteredDomain] {
+        let storedConfigurations = try await domainStore.allConfigurations()
+        let registeredIdentifiers = try await domainRegistrar.registeredDomainIdentifiers()
+        guard storedConfigurations.count == 1,
+              storedConfigurations.first == expectedDomain,
+              registeredIdentifiers == [expectedDomain.domainIdentifier],
+              let lab = expectedDomain.stabilityLab,
+              expectedDomain.hasConsistentPurposeConfiguration else {
+            throw StabilityLabAppError.domainIsolationRequired
+        }
+        return [StabilityLabRegisteredDomain(
+            purpose: .stabilityLab,
+            driveID: expectedDomain.driveID,
+            rootFileID: expectedDomain.rootFileID,
+            encryptionMode: expectedDomain.encryptionMode,
+            ownershipMarkerIdentifier: lab.ownershipMarker.identifier
+        )]
+    }
+
+    private func refreshDomainListAfterStabilityLabOperation() async {
+        if let configurations = try? await domainStore.allConfigurations() {
+            domains = configurations
+        }
+    }
+
+    private func stabilityLabMessage(for error: Error) -> String {
+        switch error {
+        case StabilityLabAppError.domainIsolationRequired:
+            return "Stability Lab isolation failed. Run scripts/uninstall-file-provider.sh --dry-run, review it, then run the explicit safe --yes cleanup. Hard purge is never automatic."
+        case StabilityLabAppError.stabilityBuildRequired:
+            return "Open the macOS Stability build to use the Stability Lab."
+        case StabilityLabAppError.driveAccessNotVerified:
+            return "Choose an available internal drive reached through the dedicated development account."
+        case StabilityLabAppError.singleLabRequired:
+            return "Exactly one saved Stability Lab configuration is required."
+        case StabilityLabAppError.invalidLocalOwnershipEvidence:
+            return "The saved Stability Lab ownership evidence is incomplete or inconsistent. No remote change was made."
+        case StabilityLabAppError.domainRegistrationFailed:
+            return "The lab root was provisioned and its ownership evidence was saved, but File Provider registration failed. The root was not cleaned automatically."
+        case StabilityLabAppError.preflightRejected:
+            return "Stability Lab preflight rejected the root or domain state. No remote change was made."
+        case StabilityLabAppError.noActiveRun:
+            return "There is no active Stability diagnostics run."
+        case ProviderDiagnosticStoreError.runAlreadyActive:
+            return "Finish and seal the active Stability diagnostics run before resetting its lab contents."
+        case is StabilityLabResetConfirmationError:
+            return "Type the exact reset phrase before moving lab contents to trash."
+        case is StabilityLabRemoteCoordinatorError,
+             is StabilityLabResetPlanningError:
+            return "The Stability Lab safety coordinator rejected the operation. No unverified target was changed."
+        default:
+            return "The Stability Lab operation could not be completed safely."
+        }
+    }
+
     private func usableToken(accountIdentifier: String) async throws -> KDriveOAuthToken {
         guard account(accountIdentifier: accountIdentifier) != nil else {
             throw PotassiumProviderAppModelError.missingAccount
@@ -2710,10 +3127,21 @@ final class PotassiumProviderAppModel: ObservableObject {
         guard let selectedDriveID = selectedDriveIDs[accountIdentifier],
               let selectedDrive = drivesByAccountIdentifier[accountIdentifier]?.first(where: { $0.id == selectedDriveID })
         else {
+            manualDriveIDs[accountIdentifier] = ""
+            manualDriveNames[accountIdentifier] = ""
             return
         }
         manualDriveIDs[accountIdentifier] = String(selectedDrive.id)
         manualDriveNames[accountIdentifier] = selectedDrive.name
+    }
+
+    private func canCreateDomain(for drive: KDriveDriveSummary) -> Bool {
+        guard drive.isUsableInternalDrive else {
+            errorMessage = "Only usable internal kDrives can be added to Files."
+            statusMessage = nil
+            return false
+        }
+        return true
     }
 
     private func resolvedDriveDraft(accountIdentifier: String) -> (id: Int, name: String)? {
@@ -2778,7 +3206,7 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 
     private static func makeDefaultEventStore() -> (any KDriveProviderEventStoring)? {
-        try? KDriveProviderEventSQLiteStore(appGroupIdentifier: ProviderConstants.appGroupIdentifier)
+        try? ProviderEventStoreFactory.makeDefault()
     }
 
     private func trimmed(_ value: String) -> String {
@@ -2854,6 +3282,11 @@ final class PotassiumProviderAppModel: ObservableObject {
             guard configurations[index].encryptionMode != .opaqueVaultV1 else {
                 continue
             }
+
+            // Stability Lab domains and ordinary user domains have disjoint
+            // build identities. Never let launching the wrong profile silently
+            // register the other profile's saved domain.
+            guard configurations[index].isCompatible(with: .current) else { continue }
 
             if case .onThisMac = configurations[index].storageLocation,
                pendingRelocationConfigurationIdentifiers.contains(
@@ -2962,13 +3395,21 @@ final class PotassiumProviderAppModel: ObservableObject {
         category preferredCategory: KDriveProviderActivityErrorCategory
     ) -> KDriveProviderActivityErrorDiagnostic {
         let nsError = error as NSError
+        let diagnosticError = FileProviderDomainRegistrationDiagnostics
+            .applicationExtensionNotFoundError(in: error) ?? nsError
         let category = appErrorCategory(for: error, nsError: nsError, preferredCategory: preferredCategory)
+        let recoverySuggestion = FileProviderDomainRegistrationDiagnostics
+            .recoverySuggestion(for: error)
+            ?? (error as? LocalizedError)?.recoverySuggestion
+        let diagnosticSummary = FileProviderDomainRegistrationDiagnostics
+            .diagnosticSummary(for: error)
+            ?? appDiagnosticSummary(for: category)
         return KDriveProviderActivityErrorDiagnostic(
             errorCategory: category,
-            underlyingErrorDomain: nsError.domain,
-            underlyingErrorCode: nsError.code,
-            recoverySuggestion: (error as? LocalizedError)?.recoverySuggestion,
-            diagnosticSummary: appDiagnosticSummary(for: category)
+            underlyingErrorDomain: diagnosticError.domain,
+            underlyingErrorCode: diagnosticError.code,
+            recoverySuggestion: recoverySuggestion,
+            diagnosticSummary: diagnosticSummary
         )
     }
 
@@ -3021,6 +3462,41 @@ final class PotassiumProviderAppModel: ObservableObject {
     }
 }
 
+private enum FileProviderDomainRegistrationDiagnostics {
+    static let userFacingMessage =
+        "macOS cannot find this app's File Provider extension. Run potassiumProvider on My Mac from Xcode (not a test build), then try again."
+
+    private static let errorDomain = "NSFileProviderErrorDomain"
+    private static let applicationExtensionNotFoundCode = -2014
+
+    static func applicationExtensionNotFoundError(in error: Error) -> NSError? {
+        var candidate: NSError? = error as NSError
+
+        // File Provider commonly wraps -2014 in a generic -2001 error. Keep
+        // following NSUnderlyingErrorKey so the activity shows the actionable
+        // cause rather than only the outer wrapper.
+        for _ in 0..<16 {
+            guard let current = candidate else { return nil }
+            if current.domain == errorDomain,
+               current.code == applicationExtensionNotFoundCode {
+                return current
+            }
+            candidate = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return nil
+    }
+
+    static func recoverySuggestion(for error: Error) -> String? {
+        guard applicationExtensionNotFoundError(in: error) != nil else { return nil }
+        return "Run the containing potassiumProvider app with the My Mac destination, not an XCTest/test-derived app. If it still fails, clean stale File Provider registrations and relaunch the app."
+    }
+
+    static func diagnosticSummary(for error: Error) -> String? {
+        guard applicationExtensionNotFoundError(in: error) != nil else { return nil }
+        return "macOS rejected domain registration because the app bundle did not expose a usable File Provider extension (NSFileProviderErrorDomain -2014)."
+    }
+}
+
 enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
     case missingAccount
     case missingToken
@@ -3051,6 +3527,23 @@ enum PotassiumProviderAppModelError: Error, Equatable, LocalizedError {
             return "The storage move failed (\(move)) and the original placement could not be recovered (\(recovery))."
         }
     }
+}
+
+private struct StabilityLabAppContext {
+    let domain: ProviderDomainConfiguration
+    let remoteConfiguration: StabilityLabRemoteConfiguration
+    let coordinator: StabilityLabRemoteCoordinator
+}
+
+private enum StabilityLabAppError: Error, Equatable {
+    case stabilityBuildRequired
+    case driveAccessNotVerified
+    case domainIsolationRequired
+    case singleLabRequired
+    case invalidLocalOwnershipEvidence
+    case domainRegistrationFailed
+    case preflightRejected
+    case noActiveRun
 }
 
 private enum VaultDomainRegistrationError: Error, LocalizedError {

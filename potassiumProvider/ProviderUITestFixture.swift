@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG && !STABILITY
 import Foundation
 import PotassiumProviderCore
 
@@ -10,7 +10,9 @@ enum ProviderUITestFixture {
         guard let fixtureName = ProcessInfo.processInfo.environment[environmentKey],
               [
                   "setup-navigation",
+                  "setup-empty-drives",
                   "setup-error-banner",
+                  "setup-fake-oauth-login",
                   "activities-pagination",
                   "activities-action-errors",
                   "activities-unavailable",
@@ -53,6 +55,9 @@ enum ProviderUITestFixture {
                 eventStore: ProviderUITestActivityStore(activity: [event]),
                 automaticallyReloadStoredState: false
             )
+        }
+        if fixtureName == "setup-fake-oauth-login" {
+            return makeFakeOAuthLoginModel()
         }
 
         let account = ProviderAccount(
@@ -99,10 +104,12 @@ enum ProviderUITestFixture {
             automaticallyReloadStoredState: false,
             initialAccounts: [account],
             initialDrivesByAccountIdentifier: [
-                account.accountIdentifier: [configuredDrive, availableDrive],
+                account.accountIdentifier: fixtureName == "setup-empty-drives"
+                    ? []
+                    : [configuredDrive, availableDrive],
             ],
-            initialDomains: [configuration],
-            initialPlacementStatesByConfigurationIdentifier: [
+            initialDomains: fixtureName == "setup-empty-drives" ? [] : [configuration],
+            initialPlacementStatesByConfigurationIdentifier: fixtureName == "setup-empty-drives" ? [:] : [
                 configuration.configurationIdentifier: .connected,
             ],
             encryptedVaultsEnabled: true
@@ -111,6 +118,30 @@ enum ProviderUITestFixture {
             model.errorMessage = "Could not refresh kDrive details."
         }
         return model
+    }
+
+    private static func makeFakeOAuthLoginModel() -> PotassiumProviderAppModel {
+        let drive = KDriveDriveSummary(
+            id: 42,
+            name: "UI Test Drive",
+            accountID: 7,
+            role: "admin",
+            status: "active",
+            isInMaintenance: false
+        )
+
+        return PotassiumProviderAppModel(
+            accountStore: ProviderUITestAccountStore(),
+            domainStore: ProviderUITestDomainStore(),
+            tokenStore: InMemoryOAuthTokenStore(),
+            oauthAuthenticator: ProviderUITestOAuthAuthenticator(),
+            domainRegistrar: ProviderUITestDomainRegistrar(),
+            automaticallyReloadStoredState: false,
+            fileProviderFactory: { _ in
+                ProviderUITestDriveService(drives: [drive])
+            },
+            encryptedVaultsEnabled: true
+        )
     }
 
     private static func makeActivitiesModel() -> PotassiumProviderAppModel {
@@ -172,20 +203,190 @@ enum ProviderUITestFixture {
 private final class ProviderUITestOAuthAuthenticator: KDriveOAuthAuthenticating {
     func authenticate() async throws -> KDriveOAuthToken {
         KDriveOAuthToken(
-            accessToken: "ui-test-token",
+            accessToken: "ui-test-access-token",
             tokenType: "Bearer",
-            refreshToken: nil,
+            refreshToken: "ui-test-refresh-token",
             scope: nil,
-            idToken: nil,
+            idToken: "fixture.eyJuYW1lIjoiRGV0ZXJtaW5pc3RpYyBEcml2ZXIifQ.signature",
             expiresAt: nil
         )
     }
 }
 
 @MainActor
-private struct ProviderUITestDomainRegistrar: ProviderDomainRegistering {
-    func addDomain(for configuration: ProviderDomainConfiguration) async throws {}
-    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {}
+private final class ProviderUITestDomainRegistrar: ProviderDomainRegistering {
+    private var configurations: [String: ProviderDomainConfiguration] = [:]
+
+    func addDomain(for configuration: ProviderDomainConfiguration) async throws {
+        configurations[configuration.domainIdentifier] = configuration
+    }
+
+    func removeDomain(for configuration: ProviderDomainConfiguration) async throws {
+        configurations.removeValue(forKey: configuration.domainIdentifier)
+    }
+
+    func registeredDomainStates() async throws -> [ProviderRegisteredDomainState] {
+        configurations.values.map {
+            ProviderRegisteredDomainState(
+                configurationIdentifier: $0.configurationIdentifier,
+                domainIdentifier: $0.domainIdentifier,
+                displayName: $0.displayName,
+                volumeUUID: nil,
+                isDisconnected: false,
+                isUserEnabled: true,
+                knownFolderSyncState: .inactive
+            )
+        }
+    }
+}
+
+private actor ProviderUITestAccountStore: ProviderAccountStoring {
+    private var accounts: [String: ProviderAccount] = [:]
+
+    func allAccounts() -> [ProviderAccount] {
+        accounts.values.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    func account(accountIdentifier: String) -> ProviderAccount? {
+        accounts[accountIdentifier]
+    }
+
+    func save(_ account: ProviderAccount) {
+        accounts[account.accountIdentifier] = account
+    }
+
+    func remove(accountIdentifier: String) {
+        accounts.removeValue(forKey: accountIdentifier)
+    }
+}
+
+private actor ProviderUITestDomainStore: DomainConfigurationStoring {
+    private var configurations: [String: ProviderDomainConfiguration] = [:]
+
+    func allConfigurations() -> [ProviderDomainConfiguration] {
+        configurations.values.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    func configuration(domainIdentifier: String) -> ProviderDomainConfiguration? {
+        configurations[domainIdentifier]
+    }
+
+    func save(_ configuration: ProviderDomainConfiguration) {
+        configurations[configuration.domainIdentifier] = configuration
+    }
+
+    func remove(domainIdentifier: String) {
+        configurations.removeValue(forKey: domainIdentifier)
+    }
+}
+
+private struct ProviderUITestDriveService: KDriveFileProviding {
+    let drives: [KDriveDriveSummary]
+
+    func listDrives() async throws -> [KDriveDriveSummary] {
+        drives
+    }
+
+    func item(driveID _: Int, fileID _: Int) async throws -> KDriveRemoteItem {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func listDirectory(
+        driveID _: Int,
+        folderID _: Int,
+        cursor _: String?,
+        limit _: Int
+    ) async throws -> KDriveItemPage {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func listAdvancedDirectory(
+        driveID _: Int,
+        folderID _: Int,
+        cursor _: String?,
+        limit _: Int
+    ) async throws -> KDriveAdvancedItemPage {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func listTrash(driveID _: Int, cursor _: String?, limit _: Int) async throws -> KDriveItemPage {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func downloadFile(driveID _: Int, fileID _: Int) async throws -> Data {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func thumbnail(
+        driveID _: Int,
+        fileID _: Int,
+        width _: Int?,
+        height _: Int?
+    ) async throws -> Data {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func uploadFile(
+        driveID _: Int,
+        parentID _: Int,
+        fileName _: String,
+        contents _: Data,
+        lastModifiedAt _: Date?,
+        conflictStrategy _: KDriveUploadConflictStrategy,
+        clientToken _: String?,
+        contentHash _: String?
+    ) async throws -> KDriveRemoteItem {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func replaceFile(
+        driveID _: Int,
+        fileID _: Int,
+        expectedETag _: String,
+        clientToken _: String,
+        contentHash _: String,
+        contents _: Data,
+        lastModifiedAt _: Date?
+    ) async throws -> KDriveRemoteItem {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func createDirectory(driveID _: Int, parentID _: Int, name _: String) async throws -> KDriveRemoteItem {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func renameItem(driveID _: Int, fileID _: Int, name _: String) async throws {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func moveItem(
+        driveID _: Int,
+        fileID _: Int,
+        destinationParentID _: Int,
+        name _: String?
+    ) async throws {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func updateModificationDate(driveID _: Int, fileID _: Int, date _: Date) async throws {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func trashItem(driveID _: Int, fileID _: Int) async throws {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+
+    func deleteTrashedItem(driveID _: Int, fileID _: Int) async throws {
+        throw ProviderUITestFixtureError.unsupportedDriveOperation
+    }
+}
+
+private enum ProviderUITestFixtureError: Error {
+    case unsupportedDriveOperation
 }
 
 private actor ProviderUITestActivityStore: KDriveProviderEventStoring, KDriveProviderEventTimelinePaging, KDriveProviderEventExporting {

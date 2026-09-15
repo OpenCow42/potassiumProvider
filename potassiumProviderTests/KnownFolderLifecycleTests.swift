@@ -224,6 +224,9 @@ struct KnownFolderLifecycleTests {
         let snapshotStore = try KDriveSnapshotSQLiteStore(databaseURL: databaseURL)
         let eventStore = try KDriveProviderEventSQLiteStore(databaseURL: databaseURL)
         let remote = KnownFolderLifecycleRemote(privateDirectoryFileID: 77)
+        // These cases start with an existing system registration. The Stability
+        // profile deliberately does not re-register an ordinary saved domain.
+        registrar.seedRegisteredConfiguration(configuration)
         let model = PotassiumProviderAppModel(
             accountStore: accountStore,
             domainStore: domainStore,
@@ -289,6 +292,10 @@ private final class RecordingKnownFolderRegistrar: ProviderDomainRegistering {
 
     func resetEvents() {
         events = []
+    }
+
+    func seedRegisteredConfiguration(_ configuration: ProviderDomainConfiguration) {
+        registeredConfiguration = configuration
     }
 
     func addDomain(for configuration: ProviderDomainConfiguration) async throws {

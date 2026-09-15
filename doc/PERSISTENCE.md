@@ -123,6 +123,21 @@ On initialization, the store configures SQLite with:
 - a 5 second busy timeout, so short-lived concurrent writers can wait instead of
   failing immediately
 
+Snapshot saves, poll claims, working-set commits, and known-mutation publication
+use `BEGIN IMMEDIATE` before reading their conditions. SQLite's default deferred
+transaction can read under another WAL writer but fail immediately when upgrading
+that read to a write; the busy timeout cannot resolve that upgrade. Reserving the
+writer first lets the existing timeout cover contention, then evaluates the current
+snapshot, anchor, item, and throttle predicates under that reservation. All writes
+remain atomic; network work stays outside the transaction. A writer that exceeds
+the five-second timeout still fails without committing partial state.
+
+`SnapshotWriteContentionTests` reproduces the four paths with an independent
+connection holding a temporary WAL write lock. Snapshot-generation and working-set
+regressions separately verify stale-state rejection, rollback, and watermark rules.
+See SQLite's [transaction modes](https://www.sqlite.org/lang_transaction.html)
+and [WAL isolation](https://www.sqlite.org/isolation.html).
+
 Listing snapshots use three active tables:
 
 `snapshot_heads` identifies the active generation for each domain/container.

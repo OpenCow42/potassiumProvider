@@ -1,4 +1,5 @@
 import PotassiumProviderCore
+import FileProvider
 import SwiftUI
 
 struct ProviderActionRootView: View {
@@ -44,14 +45,32 @@ struct ProviderActionRootView: View {
                 }
             }
             .navigationTitle(navigationTitle)
+            #if os(macOS)
+            // A hosted FPUI sheet does not install a NavigationStack toolbar in
+            // Finder's window. Keep dismissal in the actual hosted view tree.
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Spacer()
+                    Button("Done", action: complete)
+                        .disabled(model.isWorking)
+                }
+                .padding()
+            }
+            #else
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: complete)
-                        .disabled(model.isLoading || model.isWorking)
+                        .disabled(model.isWorking)
                 }
             }
+            #endif
         }
         .frame(minWidth: 360, minHeight: 440)
+        #if STABILITY
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("provider.stability.action." +
+            (model.stabilityPanelAlias?.uuidString ?? "unbound"))
+        #endif
     }
 
     private var navigationTitle: String {
@@ -170,8 +189,10 @@ private struct ShareLinkActionView: View {
             Section("Access") {
                 Picker("Access", selection: $model.configuration.access) {
                     Text("Public").tag(KDriveShareLinkConfiguration.Access.public)
+                    Text("Inherit Access").tag(KDriveShareLinkConfiguration.Access.inherit)
                     Text("Password Protected").tag(KDriveShareLinkConfiguration.Access.password)
                 }
+                .accessibilityIdentifier("provider.share.access")
                 if model.configuration.access == .password {
                     SecureField(
                         model.shareLink == nil ? "Password" : "New password (leave blank to keep current)",
@@ -247,7 +268,9 @@ private struct VersionHistoryActionView: View {
     @State private var pendingRestore: KDriveFileVersionSummary?
 
     var body: some View {
-        List {
+        // A hosted macOS List flattens the row and hides its Restore control.
+        // Form preserves the separate button and its stable accessibility identity.
+        Form {
             Section {
                 Label(item.name, systemImage: "doc")
                     .lineLimit(2)
@@ -323,7 +346,9 @@ private struct VersionRow: View {
             }
             Spacer()
             Button("Restore", action: restore)
+                .accessibilityIdentifier("provider.version.restore." + KDriveMutationIdentity.clientToken([String(version.id)]))
                 .buttonStyle(.borderless)
         }
+        .accessibilityElement(children: .contain)
     }
 }
